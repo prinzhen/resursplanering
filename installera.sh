@@ -70,12 +70,29 @@ apt-get install -y --no-install-recommends tailscale
 
 # Proxmox LXC saknar ibland TUN. Tailscale Serve fungerar i userspace-läge.
 if [[ ! -c /dev/net/tun ]]; then
-  install -d -m 0755 /etc/systemd/system/tailscaled.service.d
-  printf '%s\n' '[Service]' 'Environment="FLAGS=--tun=userspace-networking"' \
-    > /etc/systemd/system/tailscaled.service.d/10-userspace.conf
+  if grep -q '^FLAGS=' /etc/default/tailscaled; then
+    sed -i 's|^FLAGS=.*|FLAGS="--tun=userspace-networking"|' /etc/default/tailscaled
+  else
+    printf '%s\n' 'FLAGS="--tun=userspace-networking"' >> /etc/default/tailscaled
+  fi
 fi
 systemctl daemon-reload
-systemctl enable --now tailscaled
+systemctl enable tailscaled
+systemctl restart tailscaled
+
+tailscaled_ready=false
+for _ in $(seq 1 15); do
+  if systemctl is-active --quiet tailscaled; then
+    tailscaled_ready=true
+    break
+  fi
+  sleep 1
+done
+if [[ ${tailscaled_ready} != true ]]; then
+  systemctl status --no-pager tailscaled || true
+  journalctl -u tailscaled -n 100 --no-pager || true
+  die "Tailscale-tjänsten kunde inte startas. Diagnostiken visas ovan."
+fi
 
 step "Skapar tjänstekonto och datakatalog"
 getent group "${APP_GROUP}" >/dev/null || groupadd --system "${APP_GROUP}"
