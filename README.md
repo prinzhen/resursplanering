@@ -2,18 +2,47 @@
 
 Webbapplikation för projekt, uppdrag, aktiviteter, bemanning, beläggning, personliga planeringar, Gantt-scheman samt import och export.
 
-Den rekommenderade egna driftsättningen använder Docker på en Debian- eller Ubuntu-server. Applikationen publiceras endast på serverns loopback-adress och nås via Tailscale Serve. Inga inkommande portar behöver öppnas i internetbrandväggen.
+Den rekommenderade egna driftsättningen på Ubuntu 24.04 använder Node.js och en systemd-tjänst, helt utan Docker. Applikationen publiceras endast på serverns loopback-adress och nås via Tailscale Serve. Inga inkommande portar behöver öppnas i internetbrandväggen.
+
+## Snabbinstallation på Ubuntu 24.04
+
+Kör följande kommando på servern:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/prinzhen/resursplanering/main/installera.sh | sudo bash
+```
+
+Installationsskriptet installerar Node.js, pnpm och Tailscale, hämtar och bygger applikationen, skapar en systemd-tjänst och aktiverar privat HTTPS med Tailscale Serve. När Tailscale visar en inloggningslänk öppnar du den och godkänner servern.
+
+Applikationsdata sparas i `/var/lib/resursplanering/data` och påverkas inte när installationsskriptet körs igen.
+
+```bash
+# Status
+sudo systemctl status resursplanering
+
+# Logg
+sudo journalctl -u resursplanering -f
+
+# Uppdatera till senaste versionen
+curl -fsSL https://raw.githubusercontent.com/prinzhen/resursplanering/main/installera.sh | sudo bash
+```
+
+Docker-instruktionerna längre ned finns kvar som ett alternativ för miljöer där Docker redan fungerar.
 
 ## Arkitektur
 
 - Vinext/React för webbgränssnitt och API.
 - Lokal Cloudflare Worker-körning via Wrangler/Miniflare.
-- Lokal beständig SQLite/D1-databas i Docker-volymen `resursplanering-data`.
-- Docker Compose för start, uppdatering och automatisk omstart.
+- Lokal beständig SQLite/D1-databas i `/var/lib/resursplanering/data`.
+- systemd för start, övervakning och automatisk omstart.
 - Tailscale Serve som privat HTTPS-proxy inom ditt tailnet.
 - GitHub Actions bygger automatiskt en containerbild till GitHub Container Registry.
 
-## Förutsättningar
+## Alternativ installation med Docker
+
+Följande avsnitt beskriver den äldre Docker-baserade installationen.
+
+### Förutsättningar
 
 - En Linuxserver med Debian eller Ubuntu och 64-bitars x86 eller ARM.
 - Docker Engine med Docker Compose-plugin.
@@ -26,7 +55,7 @@ Officiella instruktioner:
 - [Installera Tailscale på Linux](https://tailscale.com/download/linux)
 - [Tailscale Serve](https://tailscale.com/docs/reference/tailscale-cli/serve)
 
-## Installation på servern
+### Installation på servern
 
 ### 1. Klona projektet
 
