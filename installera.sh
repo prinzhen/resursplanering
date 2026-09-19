@@ -103,6 +103,8 @@ if [[ "${source_real}" != "${app_real}" ]]; then
 fi
 touch "${APP_DIR}/.native-resursplanering"
 chown -R "${APP_USER}:${APP_GROUP}" "${APP_DIR}"
+install -d -m 0750 -o "${APP_USER}" -g "${APP_GROUP}" \
+  "${APP_DIR}/selfhost/.wrangler/tmp"
 
 step "Installerar beroenden och bygger applikationen"
 runuser -u "${APP_USER}" -- env HOME="${STATE_DIR}" CI=true \
@@ -138,7 +140,7 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
-ReadWritePaths=${STATE_DIR}
+ReadWritePaths=${STATE_DIR} ${APP_DIR}/selfhost/.wrangler
 
 [Install]
 WantedBy=multi-user.target
@@ -150,7 +152,7 @@ systemctl enable --now "${APP_NAME}.service"
 step "Kontrollerar applikationen"
 healthy=false
 for _ in $(seq 1 30); do
-  if curl -fsS --max-time 3 http://127.0.0.1:3000/api/data >/dev/null; then
+  if curl -fsS --max-time 5 http://127.0.0.1:3000/api/data >/dev/null 2>&1; then
     healthy=true
     break
   fi
