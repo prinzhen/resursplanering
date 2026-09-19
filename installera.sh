@@ -147,7 +147,8 @@ WantedBy=multi-user.target
 EOF
 
 systemctl daemon-reload
-systemctl enable --now "${APP_NAME}.service"
+systemctl enable "${APP_NAME}.service"
+systemctl restart "${APP_NAME}.service"
 
 step "Kontrollerar applikationen"
 healthy=false
