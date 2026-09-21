@@ -11,6 +11,10 @@ export const projects = sqliteTable("projects", {
   name: text("name").notNull(), color: text("color").notNull().default("#2563eb"),
   description: text("description"), status: text("status").notNull().default("Aktivt"),
 });
+export const projectMembers = sqliteTable("project_members", {
+  projectId: integer("project_id").notNull().references(() => projects.id),
+  employeeId: integer("employee_id").notNull().references(() => employees.id),
+}, (table) => [uniqueIndex("idx_project_members_project_employee").on(table.projectId, table.employeeId)]);
 export const workPackages = sqliteTable("work_packages", {
   id: integer("id").primaryKey({ autoIncrement: true }),
   projectId: integer("project_id").notNull().references(() => projects.id),
