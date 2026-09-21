@@ -2,7 +2,7 @@
 
 Webbapplikation för projekt, uppdrag, aktiviteter, bemanning, beläggning, personliga planeringar, Gantt-scheman samt import och export.
 
-Den rekommenderade egna driftsättningen på Ubuntu 24.04 använder Node.js och en systemd-tjänst, helt utan Docker. Applikationen publiceras endast på serverns loopback-adress och nås via Tailscale Serve. Inga inkommande portar behöver öppnas i internetbrandväggen.
+Den rekommenderade egna driftsättningen på Ubuntu 24.04 använder Node.js och en systemd-tjänst, helt utan Docker. Applikationen ligger på serverns loopback-adress, skyddas med Nginx Basic Authentication och publiceras med HTTPS via Tailscale Funnel. Inga inkommande portar behöver öppnas i internetbrandväggen.
 
 ## Snabbinstallation på Ubuntu 24.04
 
@@ -12,7 +12,9 @@ Kör följande kommando på servern:
 curl -fsSL https://raw.githubusercontent.com/prinzhen/resursplanering/main/installera.sh | sudo bash
 ```
 
-Installationsskriptet installerar Node.js, pnpm och Tailscale, hämtar och bygger applikationen, skapar en systemd-tjänst och aktiverar privat HTTPS med Tailscale Serve. När Tailscale visar en inloggningslänk öppnar du den och godkänner servern.
+Installationsskriptet installerar Node.js, pnpm, Nginx och Tailscale, hämtar och bygger applikationen samt skapar systemd-tjänsterna. Första gången får du välja användarnamn och ett lösenord på minst 14 tecken. Endast lösenordets bcrypt-hash sparas. När Tailscale visar en inloggningslänk öppnar du den och godkänner servern.
+
+Tailscale Funnel gör adressen publik på internet, men alla sidor och API-anrop skyddas av Nginx-inloggningen. Använd ett unikt och långt lösenord.
 
 Applikationsdata sparas i `/var/lib/resursplanering/data` och påverkas inte när installationsskriptet körs igen.
 
@@ -22,6 +24,9 @@ sudo systemctl status resursplanering
 
 # Logg
 sudo journalctl -u resursplanering -f
+
+# Byt lösenord för ett befintligt användarnamn
+sudo htpasswd /etc/nginx/resursplanering.htpasswd DITT_ANVÄNDARNAMN
 
 # Uppdatera till senaste versionen
 curl -fsSL https://raw.githubusercontent.com/prinzhen/resursplanering/main/installera.sh | sudo bash
@@ -35,7 +40,8 @@ Docker-instruktionerna längre ned finns kvar som ett alternativ för miljöer d
 - Lokal Cloudflare Worker-körning via Wrangler/Miniflare.
 - Lokal beständig SQLite/D1-databas i `/var/lib/resursplanering/data`.
 - systemd för start, övervakning och automatisk omstart.
-- Tailscale Serve som privat HTTPS-proxy inom ditt tailnet.
+- Nginx Basic Authentication på `127.0.0.1:3001`.
+- Tailscale Funnel som publik HTTPS-proxy till Nginx.
 - GitHub Actions bygger automatiskt en containerbild till GitHub Container Registry.
 
 ## Alternativ installation med Docker
