@@ -7,6 +7,8 @@ APP_GROUP="resursplanering"
 APP_DIR="/opt/resursplanering"
 STATE_DIR="/var/lib/resursplanering"
 SERVICE_FILE="/etc/systemd/system/resursplanering.service"
+AUTH_FILE="/etc/nginx/resursplanering.htpasswd"
+NGINX_SITE="/etc/nginx/sites-available/resursplanering"
 REPO_ARCHIVE="https://github.com/prinzhen/resursplanering/archive/refs/heads/main.tar.gz"
 NODE_MAJOR="24"
 PNPM_VERSION="11.25.0"
@@ -182,17 +184,81 @@ if [[ ${healthy} != true ]]; then
   die "Applikationen startade inte. Diagnostiken visas ovan."
 fi
 
+step "Installerar inloggningsskydd"
+apt-get install -y --no-install-recommends nginx apache2-utils
+
+if [[ ! -s "${AUTH_FILE}" ]]; then
+  [[ -r /dev/tty && -w /dev/tty ]] || \
+    die "En interaktiv terminal krävs för att skapa inloggningen."
+
+  read -r -p "Användarnamn för Resursplanering [admin]: " AUTH_USER </dev/tty
+  AUTH_USER="${AUTH_USER:-admin}"
+  [[ "${AUTH_USER}" =~ ^[A-Za-z0-9._-]+$ ]] || \
+    die "Användarnamnet får bara innehålla bokstäver, siffror, punkt, bindestreck och understreck."
+
+  read -r -s -p "Lösenord (minst 14 tecken): " AUTH_PASSWORD </dev/tty
+  printf '\n' >/dev/tty
+  read -r -s -p "Upprepa lösenordet: " AUTH_PASSWORD_CONFIRM </dev/tty
+  printf '\n' >/dev/tty
+  [[ ${#AUTH_PASSWORD} -ge 14 ]] || die "Lösenordet måste vara minst 14 tecken."
+  [[ "${AUTH_PASSWORD}" == "${AUTH_PASSWORD_CONFIRM}" ]] || \
+    die "Lösenorden stämmer inte överens."
+
+  printf '%s\n' "${AUTH_PASSWORD}" | htpasswd -i -c -B "${AUTH_FILE}" "${AUTH_USER}" >/dev/null
+  unset AUTH_PASSWORD AUTH_PASSWORD_CONFIRM
+  chown root:www-data "${AUTH_FILE}"
+  chmod 0640 "${AUTH_FILE}"
+else
+  printf 'Befintlig inloggning behålls för användaren %s.\n' "$(cut -d: -f1 "${AUTH_FILE}")"
+fi
+
+cat > "${NGINX_SITE}" <<'EOF'
+server {
+    listen 127.0.0.1:3001;
+    server_name _;
+
+    auth_basic "Resursplanering";
+    auth_basic_user_file /etc/nginx/resursplanering.htpasswd;
+
+    client_max_body_size 25m;
+    add_header X-Content-Type-Options nosniff always;
+    add_header Referrer-Policy same-origin always;
+
+    location / {
+        proxy_pass http://127.0.0.1:3000;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_buffering off;
+    }
+}
+EOF
+
+ln -sfn "${NGINX_SITE}" /etc/nginx/sites-enabled/resursplanering
+if [[ -L /etc/nginx/sites-enabled/default ]]; then
+  unlink /etc/nginx/sites-enabled/default
+fi
+nginx -t
+systemctl enable nginx
+systemctl restart nginx
+
+auth_status="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 5 http://127.0.0.1:3001/)"
+[[ "${auth_status}" == "401" ]] || \
+  die "Inloggningsskyddet svarade med HTTP ${auth_status}, förväntat svar är 401."
+
 step "Ansluter Tailscale"
 if ! tailscale ip -4 >/dev/null 2>&1; then
   printf 'Öppna Tailscale-länken som visas och godkänn servern.\n'
   tailscale up
 fi
 
-step "Aktiverar privat HTTPS"
-tailscale serve --bg --yes http://127.0.0.1:3000
+step "Aktiverar publik HTTPS med Tailscale Funnel"
+tailscale funnel --bg --yes http://127.0.0.1:3001
 
 printf '\nINSTALLATIONEN ÄR KLAR\n\n'
-tailscale serve status || true
+tailscale funnel status || true
 printf '\nStatus: systemctl status %s\n' "${APP_NAME}"
 printf 'Logg:   journalctl -u %s -f\n' "${APP_NAME}"
 printf 'Data:   %s/data\n' "${STATE_DIR}"
