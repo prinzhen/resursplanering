@@ -43,3 +43,20 @@ En tom lista tar inte bort befintliga projekt eller aktiviteter. Radera/avsluta 
 
 ## Drift
 Installationsskriptet kör redan `wrangler d1 migrations apply` vid start. Testa den nya migrationen `0003_weekly_status.sql` på en kopia av databasen före uppdatering.
+
+
+## Förslag på ersättning för HTTP Basic Authentication
+
+Den befintliga Nginx-konfigurationen använder `auth_basic`, vilket triggar webbläsarens inbyggda HTTP 401-dialog. Detta är inte en popup.
+
+Rekommenderat säkert alternativ för självhostad drift: en dedikerad autentiseringsproxy (exempelvis oauth2-proxy med verifierad OIDC-identitetsleverantör) framför applikationen och Nginx `auth_request`. Inloggning sker som vanlig navigering till en sida och med en serververifierad sessionscookie.
+
+Säkerhetskrav innan aktivering:
+- Ge bara autentiserade användare åtkomst till såväl `/api/data` som `/api/weekly`, inte enbart webbsidor.
+- Introducera individuella behörigheter innan användare får hämta eller redigera andra personers data.
+- Använd HTTPS, Secure, HttpOnly och SameSite för cookies samt CSRF-skydd.
+- Låt aldrig publika klienter nå port 3000 direkt. Nginx/autentiseringsproxyn måste vara enda ingången.
+- Konfigurera Tailscale Serve/Funnel och proxy-headers för den faktiska driftsmiljön.
+- Behåll `auth_basic` tills ersättningen har end-to-end-testats, inklusive nekad åtkomst till API för oinloggade användare.
+
+Att bara rita en lösenordsruta i React utan serververifiering är **inte** ett säkert alternativ. Denna gren innehåller ännu ingen sådan autentiseringsproxy.
