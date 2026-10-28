@@ -1,14 +1,14 @@
 "use client";
-import {useEffect,useState} from "react";
+import {useState} from "react";
 import Link from "next/link";
 type Item={uid:string;week:string;category:string;title:string;projectCode:string;hours:number;outcome:string;note:string};
 type Member={projectCode:string;projectName:string;state:string};
-const monday=(d:Date)=>{const x=new Date(d);x.setDate(x.getDate()-(x.getDay()+6)%7);return x.toISOString().slice(0,10)};
+const monday=(d:Date)=>{const x=new Date(Date.UTC(d.getFullYear(),d.getMonth(),d.getDate()));x.setUTCDate(x.getUTCDate()-(x.getUTCDay()+6)%7);return x.toISOString().slice(0,10)};
 const addDays=(s:string,n:number)=>{const d=new Date(s+"T12:00:00Z");d.setUTCDate(d.getUTCDate()+n);return d.toISOString().slice(0,10)};
 const makeUid=()=>globalThis.crypto?.randomUUID?.()??"item-"+Date.now()+"-"+Math.random().toString(36).slice(2);
 const categories=["previous","current","next","upcoming"];
 const titles:Record<string,string>={previous:"Föregående vecka – uppföljning",current:"Denna vecka",next:"Nästa vecka",upcoming:"Start inom två månader"};
-function csvRow(v:unknown[]){return v.map(x=>'"'+String(x??"").replace(/"/g,'""')+'"').join(";")}
+function csvRow(v:unknown[]){return v.map(x=>{let value=String(x??"");if(/^[\s]*[=+@-]/.test(value))value="'"+value;return '"'+value.replace(/"/g,'""')+'"'}).join(";")}
 function parseCSV(raw:string){const rows:string[][]=[];let row:string[]=[],field="",q=false;raw=raw.replace(/^\uFEFF/,"");for(let i=0;i<raw.length;i++){const c=raw[i];if(c==='"'){if(q&&raw[i+1]==='"'){field+='"';i++}else q=!q}else if(c===';'&&!q){row.push(field);field=""}else if((c==='\n'||c==='\r')&&!q){if(c==='\r'&&raw[i+1]==='\n')i++;row.push(field);if(row.some(x=>x))rows.push(row);row=[];field=""}else field+=c}if(q)throw Error("Ogiltig CSV: felaktiga citattecken");row.push(field);if(row.some(x=>x))rows.push(row);return rows}
 export default function WeeklyPage(){
  const [email,setEmail]=useState(""),[name,setName]=useState(""),[week,setWeek]=useState(monday(new Date())),[items,setItems]=useState<Item[]>([]),[members,setMembers]=useState<Member[]>([]),[message,setMessage]=useState(""),[busy,setBusy]=useState(false);
