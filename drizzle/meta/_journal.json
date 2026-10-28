@@ -15,6 +15,20 @@
       "when": 1789760932974,
       "tag": "0001_low_molten_man",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1793180000000,
+      "tag": "0002_project_members",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1793180100000,
+      "tag": "0003_weekly_status",
+      "breakpoints": true
     }
   ]
 }
