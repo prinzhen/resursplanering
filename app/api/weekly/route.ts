@@ -3,7 +3,7 @@ export const dynamic = "force-dynamic";
 type Item = {uid:string;week:string;category:string;title:string;projectCode?:string;hours?:number;outcome?:string;note?:string};
 type Member = {projectCode:string;projectName?:string;state:string};
 type Payload = {email:string;name:string;week:string;items:Item[];members:Member[]};
-const validWeek = (s:string) => /^\d{4}-\d{2}-\d{2}$/.test(s) && new Date(s+"T00:00:00Z").getUTCDay()===1;
+const validWeek = (s:string) => { if(!/^\d{4}-\d{2}-\d{2}$/.test(s))return false;const d=new Date(s+"T00:00:00Z");return !Number.isNaN(d.getTime())&&d.toISOString().slice(0,10)===s&&d.getUTCDay()===1; };
 const clean = (v:unknown,max=250) => String(v??"").trim().slice(0,max);
 function addMinus7(s:string){const d=new Date(s+"T12:00:00Z");d.setUTCDate(d.getUTCDate()-7);return d.toISOString().slice(0,10)}
 function fail(message:string,status=400){return Response.json({error:message},{status})}
@@ -14,8 +14,13 @@ async function load(email:string,week:string){
  if(!employee)return {employee:null,items:[],members:[]};
  const items=await db.prepare("SELECT w.item_uid uid,w.week_start week,w.category,w.title,w.planned_hours hours,w.outcome,w.note,p.code projectCode FROM weekly_items w LEFT JOIN projects p ON p.id=w.project_id WHERE w.employee_id=? AND w.week_start IN (?,date(?,'-7 days')) ORDER BY w.week_start,w.id").bind(employee.id,week,week).all();
  const members=await db.prepare("SELECT p.code projectCode,p.name projectName,coalesce(s.activity_state,'Aktiv') state FROM project_members m JOIN projects p ON p.id=m.project_id LEFT JOIN weekly_project_state s ON s.project_id=m.project_id AND s.employee_id=m.employee_id WHERE m.employee_id=? ORDER BY p.code").bind(employee.id).all();
- const all=items.results as unknown as Item[]; const reviewIds=new Set(all.filter(i=>i.category==="previous").map(i=>i.uid)); const rows=all.filter(i=>i.week===week || i.category==="current").map(i=> i.week===week?i:{...i,uid:"review:"+i.uid+":"+week,category:"previous",outcome:"Planerad",week:addMinus7(week)}).filter(i=>!reviewIds.has(i.uid));
- return {employee,items:rows,members:members.results};
+ const all=items.results as unknown as Item[];
+ const prior=addMinus7(week);
+ const rows=all.filter(i=>i.week===week || (i.week===prior&&["current","next"].includes(i.category)));
+ // A previously planned activity is shown as review, keeping the same stable ID.
+ // The stored previous week's plan is not mutated by GET.
+ const mapped=rows.map(i=>i.week===prior?{...i,uid:"review:"+i.uid+":"+week,category:"previous",outcome:"Planerad"}:i);
+ return {employee,items:mapped,members:members.results};
 }
 export async function GET(request:Request){
  try{const u=new URL(request.url),email=clean(u.searchParams.get("email"),254).toLowerCase(),week=clean(u.searchParams.get("week"),10);
@@ -24,6 +29,8 @@ export async function GET(request:Request){
 }
 export async function POST(request:Request){
  try{
+ const origin=request.headers.get("origin");
+ if(origin){const host=request.headers.get("x-forwarded-host")||request.headers.get("host");if(!host||new URL(origin).host!==host)return fail("Otillåtet ursprung.",403)}
  const raw=await request.json() as Payload;
  const email=clean(raw.email,254).toLowerCase(),name=clean(raw.name,120),week=clean(raw.week,10);
  if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)||!name||!validWeek(week))return fail("Ogiltig medarbetare eller veckostart.");
