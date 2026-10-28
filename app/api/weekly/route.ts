@@ -5,6 +5,7 @@ type Member = {projectCode:string;projectName?:string;state:string};
 type Payload = {email:string;name:string;week:string;items:Item[];members:Member[]};
 const validWeek = (s:string) => /^\d{4}-\d{2}-\d{2}$/.test(s) && new Date(s+"T00:00:00Z").getUTCDay()===1;
 const clean = (v:unknown,max=250) => String(v??"").trim().slice(0,max);
+function addMinus7(s:string){const d=new Date(s+"T12:00:00Z");d.setUTCDate(d.getUTCDate()-7);return d.toISOString().slice(0,10)}
 function fail(message:string,status=400){return Response.json({error:message},{status})}
 function getDb(){if(!env.DB)throw new Error("Databas saknas");return env.DB}
 async function load(email:string,week:string){
@@ -13,7 +14,8 @@ async function load(email:string,week:string){
  if(!employee)return {employee:null,items:[],members:[]};
  const items=await db.prepare("SELECT w.item_uid uid,w.week_start week,w.category,w.title,w.planned_hours hours,w.outcome,w.note,p.code projectCode FROM weekly_items w LEFT JOIN projects p ON p.id=w.project_id WHERE w.employee_id=? AND w.week_start IN (?,date(?,'-7 days')) ORDER BY w.week_start,w.id").bind(employee.id,week,week).all();
  const members=await db.prepare("SELECT p.code projectCode,p.name projectName,coalesce(s.activity_state,'Aktiv') state FROM project_members m JOIN projects p ON p.id=m.project_id LEFT JOIN weekly_project_state s ON s.project_id=m.project_id AND s.employee_id=m.employee_id WHERE m.employee_id=? ORDER BY p.code").bind(employee.id).all();
- return {employee,items:items.results,members:members.results};
+ const all=items.results as unknown as Item[]; const reviewIds=new Set(all.filter(i=>i.category==="previous").map(i=>i.uid)); const rows=all.filter(i=>i.week===week || i.category==="current").map(i=> i.week===week?i:{...i,uid:"review:"+i.uid+":"+week,category:"previous",outcome:"Planerad",week:addMinus7(week)}).filter(i=>!reviewIds.has(i.uid));
+ return {employee,items:rows,members:members.results};
 }
 export async function GET(request:Request){
  try{const u=new URL(request.url),email=clean(u.searchParams.get("email"),254).toLowerCase(),week=clean(u.searchParams.get("week"),10);
