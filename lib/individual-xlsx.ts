@@ -105,7 +105,9 @@ export function createIndividualXlsx(values:FormValues){
   const offset=i===0?-1:i<69?i-1:-(i-67);
   const monday=new Date(Date.UTC(base.year,0,4));monday.setUTCDate(monday.getUTCDate()-(monday.getUTCDay()+6)%7+(base.week-1+offset)*7);
   const yw=currentISOWeek(monday);
-  rows.push(row(i+2,{24:weekLabel(yw.year,yw.week,base)},0))
+  const target=i+2, extra=row(target,{24:weekLabel(yw.year,yw.week,base)},0);
+  const at=rows.findIndex(x=>x.startsWith(`<row r="${target}">`));
+  if(at<0)rows.push(extra);else rows[at]=rows[at].replace("</row>",extra.replace(/^<row[^>]*>/,"").replace("</row>","")+"</row>")
  }
  const maxRow=110,validations=[
  '<dataValidation type="list" allowBlank="1" showErrorMessage="0" sqref="A9:A68 K9:K68"><formula1>$X$2:$X$86</formula1></dataValidation>',
