@@ -15,6 +15,20 @@
       "when": 1789760932974,
       "tag": "0001_low_molten_man",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1793170000000,
+      "tag": "0002_project_members",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1793171000000,
+      "tag": "0003_individual_excel",
+      "breakpoints": true
     }
   ]
 }
