@@ -15,12 +15,38 @@ function zip(entries:Record<string,string>){
  const locals:Uint8Array[]=[],central:Uint8Array[]=[];let at=0;
  for(const [name,value] of Object.entries(entries)){
    const file=utf8.encode(value),nm=utf8.encode(name),checksum=crc(file);
-   const local=new Uint8Array([...toUint(0x04034b50,4),20,0,0,0,0,0,0,0,0,0,0,...toUint(checksum,4),...toUint(file.length,4),...toUint(file.length,4),...toUint(nm.length,2),0,0,...nm]);
-   const dir=new Uint8Array([...toUint(0x02014b50,4),20,0,20,0,0,0,0,0,0,0,0,...toUint(checksum,4),...toUint(file.length,4),...toUint(file.length,4),...toUint(nm.length,2),0,0,0,0,0,0,0,0,0,0,0,0,...toUint(at,4),...nm]);
-   locals.push(local,file);central.push(dir);at+=local.length+file.length;
+   const local=new Uint8Array(30+nm.length),l=new DataView(local.buffer);
+   l.setUint32(0,0x04034b50,true);
+   l.setUint16(4,20,true);
+   l.setUint16(6,0x0800,true);
+   l.setUint16(8,0,true);
+   l.setUint32(14,checksum,true);
+   l.setUint32(18,file.length,true);
+   l.setUint32(22,file.length,true);
+   l.setUint16(26,nm.length,true);
+   local.set(nm,30);
+   const dir=new Uint8Array(46+nm.length),d=new DataView(dir.buffer);
+   d.setUint32(0,0x02014b50,true);
+   d.setUint16(4,20,true);
+   d.setUint16(6,20,true);
+   d.setUint16(8,0x0800,true);
+   d.setUint16(10,0,true);
+   d.setUint32(16,checksum,true);
+   d.setUint32(20,file.length,true);
+   d.setUint32(24,file.length,true);
+   d.setUint16(28,nm.length,true);
+   d.setUint32(42,at,true);
+   dir.set(nm,46);
+   locals.push(local,file);central.push(dir);
+   at+=local.length+file.length;
  }
- const cent=concat(central),end=new Uint8Array([...toUint(0x06054b50,4),0,0,0,0,...toUint(central.length,2),...toUint(central.length,2),...toUint(cent.length,4),...toUint(at,4),0,0]);
- return new Blob([...locals,cent,end],{type:"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"});
+ const cdir=concat(central),end=new Uint8Array(22),e=new DataView(end.buffer);
+ e.setUint32(0,0x06054b50,true);
+ e.setUint16(8,central.length,true);
+ e.setUint16(10,central.length,true);
+ e.setUint32(12,cdir.length,true);
+ e.setUint32(16,at,true);
+ return new Blob([...locals,cdir,end],{type:"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"});
 }
 async function unzip(bytes:Uint8Array){
  const v=new DataView(bytes.buffer,bytes.byteOffset,bytes.byteLength);let e=-1;
