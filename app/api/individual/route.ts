@@ -5,7 +5,7 @@ const db=()=>{if(!env.DB)throw Error("Databasen saknas.");return env.DB};
 const txt=(v:unknown)=>String(v??"").trim();
 function week(raw:string,now=new Date()):string{
  let s=raw.toLowerCase().trim().replace(/\([^)]*\)/g,"").replace(/v\.\s*/g,"").replace(/v\s*/g,"").trim();
- const match=/^(?:(\d{4})\s+)?(\d{1,2})$/.exec(s);
+ const match=/^(?:(\d{4})(?:\s*[- ]\s*w|\s+))?(\d{1,2})$/.exec(s);
  if(!match)throw Error("Felaktig vecka: "+raw);
  const ref=new Date(Date.UTC(now.getUTCFullYear(),now.getUTCMonth(),now.getUTCDate()));
  ref.setUTCDate(ref.getUTCDate()+4-(ref.getUTCDay()||7));
