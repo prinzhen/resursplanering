@@ -1,0 +1,94 @@
+import {env} from "cloudflare:workers";
+import type {FormValues} from "@/lib/individual-xlsx";
+export const dynamic="force-dynamic";
+const db=()=>{if(!env.DB)throw Error("Databasen saknas.");return env.DB};
+const txt=(v:unknown)=>String(v??"").trim();
+function week(raw:string,now=new Date()):string{
+ let s=raw.toLowerCase().trim().replace(/\([^)]*\)/g,"").replace(/v\.\s*/g,"").replace(/v\s*/g,"").trim();
+ const match=/^(?:(\d{4})\s+)?(\d{1,2})$/.exec(s);
+ if(!match)throw Error("Felaktig vecka: "+raw);
+ const ref=new Date(Date.UTC(now.getUTCFullYear(),now.getUTCMonth(),now.getUTCDate()));
+ ref.setUTCDate(ref.getUTCDate()+4-(ref.getUTCDay()||7));
+ const year=match[1]?Number(match[1]):ref.getUTCFullYear(),w=Number(match[2]);
+ if(year<1900||year>2100||w<1||w>53)throw Error("Ogiltig vecka: "+raw);
+ const test=new Date(Date.UTC(year,0,4));test.setUTCDate(test.getUTCDate()-(test.getUTCDay()+6)%7+(w-1)*7);
+ const thu=new Date(test);thu.setUTCDate(thu.getUTCDate()+3);
+ if(thu.getUTCFullYear()!==year)throw Error("Vecka finns inte detta år: "+raw);
+ return year+"-W"+String(w).padStart(2,"0");
+}
+function monday(raw:string):string{const [y,w]=raw.split("-W").map(Number),d=new Date(Date.UTC(y,0,4));d.setUTCDate(d.getUTCDate()-(d.getUTCDay()+6)%7+(w-1)*7);return d.toISOString().slice(0,10)}
+function friday(raw:string):string{const d=new Date(monday(raw)+"T00:00:00Z");d.setUTCDate(d.getUTCDate()+4);return d.toISOString().slice(0,10)}
+const validStates=new Set(["Planerad","Pågående","Pausad","Klar","Fryst"]);
+const cleanStatus=(s:string)=>s==="Pågår"?"Pågående":s||"Planerad";
+const safeUID=(s:string)=>/^[a-zA-Z0-9_-]{1,100}$/.test(s);
+async function employee(d:D1Database,email:string){return d.prepare("SELECT id,name,email FROM employees WHERE lower(email)=lower(?)").bind(email).first<{id:number;name:string;email:string}>()}
+export async function GET(req:Request){
+ try{
+  const d=db(),u=new URL(req.url),email=txt(u.searchParams.get("email"));
+  if(!email)return Response.json({error:"Välj en medarbetare."},{status:400});
+  const e=await employee(d,email);if(!e)return Response.json({error:"Medarbetaren saknas."},{status:404});
+  const items=await d.prepare(\`SELECT i.item_uid uid,i.current_week week,i.first_week firstWeek,
+ a.name,a.description comment,a.status,a.estimated_hours hours,a.code,
+ p.code projectCode,p.name projectName,p.id projectId,
+ CASE WHEN p.code='INTERNAL-VERK' THEN 'Verksamhet' WHEN p.code='INTERNAL-OVR' THEN 'Övrigt' ELSE 'Projekt' END kind
+ FROM individual_form_items i JOIN activities a ON a.id=i.activity_id JOIN projects p ON p.id=a.project_id
+ WHERE i.employee_id=? ORDER BY i.current_week,a.name\`).bind(e.id).all<Record<string,unknown>>();
+  const memberships=await d.prepare(\`SELECT p.code,p.name,COALESCE(s.state,'Aktiv') state
+ FROM project_members m JOIN projects p ON p.id=m.project_id
+ LEFT JOIN individual_project_state s ON s.employee_id=m.employee_id AND s.project_id=p.id
+ WHERE m.employee_id=? AND p.code NOT LIKE 'INTERNAL-%' ORDER BY p.code\`).bind(e.id).all<{code:string;name:string;state:string}>();
+  const result:FormValues={name:e.name,email:e.email,activities:items.results.filter(a=>["Planerad","Pågående","Pausad","Pågår"].includes(String(a.status))).map(a=>({
+   uid:String(a.uid),week:String(a.week),name:String(a.name),kind:String(a.kind),
+   link:String(a.projectName||""),projectCode:String(a.projectCode).startsWith("INTERNAL-")?"":String(a.projectCode),
+   hours:Number(a.hours||0),status:cleanStatus(String(a.status)),priority:"",dueDate:"",
+   comment:String(a.comment||""),firstWeek:String(a.firstWeek),reason:""
+  })),members:memberships.results};
+  return Response.json(result);
+ }catch(e){console.error(e);return Response.json({error:"Kunde inte läsa veckoplaneringen. Kontrollera att migrationen är körd."},{status:500})}
+}
+export async function POST(req:Request){
+ try{
+  const d=db(),input=await req.json() as FormValues;
+  if(!input||!Array.isArray(input.activities)||input.activities.length>60||!Array.isArray(input.members)||input.members.length>34)return Response.json({error:"Ogiltig eller för stor import."},{status:400});
+  const email=txt(input.email),e=await employee(d,email);if(!e)return Response.json({error:"E-postadressen måste motsvara en befintlig medarbetare."},{status:400});
+  const changes:{uid:string;week:string;firstWeek:string;name:string;kind:string;projectCode:string;hours:number;status:string;description:string;reason:string;activityId:number|null}[]=[];
+  for(let i=0;i<input.activities.length;i++){
+   const a=input.activities[i];const status=cleanStatus(txt(a.status));
+   if(!txt(a.name)||txt(a.name).length>200)throw Error("Aktivitetsnamn saknas eller är för långt på rad "+(i+9));
+   if(!validStates.has(status))throw Error("Ogiltig status på rad "+(i+9));
+   const current=week(txt(a.week)),first=a.firstWeek?week(txt(a.firstWeek)):current;
+   const hrs=Number(a.hours||0);if(!Number.isFinite(hrs)||hrs<0||hrs>100000)throw Error("Ogiltiga timmar på rad "+(i+9));
+   const kind=txt(a.kind)||"Övrigt";if(!["Projekt","Verksamhet","Övrigt"].includes(kind))throw Error("Ogiltig typ på rad "+(i+9));
+   const code=kind==="Verksamhet"?"INTERNAL-VERK":kind==="Övrigt"?"INTERNAL-OVR":txt(a.projectCode);
+   if(!code)throw Error("Projektkod saknas på rad "+(i+9));
+   const uid=txt(a.uid)||crypto.randomUUID();
+   if(!safeUID(uid))throw Error("Ogiltigt aktivitets-ID på rad "+(i+9));
+   const existing=await d.prepare("SELECT i.activity_id activityId FROM individual_form_items i WHERE i.item_uid=? AND i.employee_id=?").bind(uid,e.id).first<{activityId:number}>();
+   if(a.uid&&!existing)throw Error("Aktivitets-ID "+uid+" tillhör inte denna medarbetare eller finns inte. Avbryter för att undvika dubbletter.");
+   if(kind==="Projekt"){const p=await d.prepare("SELECT id FROM projects WHERE code=?").bind(code).first();if(!p)throw Error("Projektkoden "+code+" finns inte. Lägg upp projektet först.")}
+   changes.push({uid,week:current,firstWeek:first,name:txt(a.name),kind,projectCode:code,hours:hrs,status,description:txt(a.comment).slice(0,500),reason:txt(a.reason).slice(0,500),activityId:existing?.activityId??null});
+  }
+  const memberChanges:{projectId:number;state:string}[]=[];
+  for(const m of input.members){const code=txt(m.code);if(!code)continue;const project=await d.prepare("SELECT id FROM projects WHERE code=?").bind(code).first<{id:number}>();if(!project)throw Error("Projektet "+code+" hittas inte.");const state=txt(m.state)||"Aktiv";if(!["Aktiv","Vilande"].includes(state))throw Error("Ogiltigt projektmedlemskap");memberChanges.push({projectId:project.id,state})}
+  // No writes until all rows validated.
+  const queries:D1PreparedStatement[]=[];
+  for(const code of ["INTERNAL-VERK","INTERNAL-OVR"]){const p=await d.prepare("SELECT id FROM projects WHERE code=?").bind(code).first();if(!p)queries.push(d.prepare("INSERT INTO projects(code,name,color,status) VALUES (?,?,?,?)").bind(code,code==="INTERNAL-VERK"?"Verksamhetsarbete":"Övrigt arbete","#64748b","Aktivt"))}
+  if(queries.length)await d.batch(queries);
+  let created=0,updated=0;
+  for(const a of changes){
+   const p=await d.prepare("SELECT id FROM projects WHERE code=?").bind(a.projectCode).first<{id:number}>();if(!p)throw Error("Projektet saknas.");
+   if(a.activityId){
+    const prev=await d.prepare("SELECT current_week currentWeek FROM individual_form_items WHERE item_uid=?").bind(a.uid).first<{currentWeek:string}>();
+    const statements=[d.prepare("UPDATE activities SET name=?,description=?,project_id=?,start_date=?,end_date=?,estimated_hours=?,status=? WHERE id=?").bind(a.name,a.description||"Aktivitet från individuellt formulär",p.id,monday(a.week),friday(a.week),a.hours,a.status,a.activityId),d.prepare("UPDATE individual_form_items SET current_week=?,updated_at=CURRENT_TIMESTAMP WHERE item_uid=?").bind(a.week,a.uid)];
+    if(prev&&prev.currentWeek!==a.week)statements.push(d.prepare("INSERT INTO individual_week_moves(item_uid,from_week,to_week,reason) VALUES(?,?,?,?)").bind(a.uid,prev.currentWeek,a.week,a.reason||null));
+    await d.batch(statements);updated++;
+   }else{
+    const result=await d.prepare("INSERT INTO activities (project_id,name,description,start_date,end_date,estimated_hours,status) VALUES(?,?,?,?,?,?,?)").bind(p.id,a.name,a.description||"Aktivitet från individuellt formulär",monday(a.week),friday(a.week),a.hours,a.status).run();
+    const activityId=Number(result.meta.last_row_id);
+    await d.batch([d.prepare("INSERT INTO assignments (activity_id,employee_id,effort_percent,start_date,end_date) VALUES(?,?,?,?,?)").bind(activityId,e.id,0,monday(a.week),friday(a.week)),d.prepare("INSERT INTO individual_form_items(item_uid,employee_id,activity_id,first_week,current_week) VALUES(?,?,?,?,?)").bind(a.uid,e.id,activityId,a.firstWeek,a.week)]);created++;
+   }
+  }
+  for(const m of memberChanges)await d.batch([d.prepare("INSERT OR IGNORE INTO project_members(project_id,employee_id) VALUES(?,?)").bind(m.projectId,e.id),d.prepare("INSERT INTO individual_project_state(employee_id,project_id,state) VALUES(?,?,?) ON CONFLICT(employee_id,project_id) DO UPDATE SET state=excluded.state,updated_at=CURRENT_TIMESTAMP").bind(e.id,m.projectId,m.state)]);
+  return Response.json({ok:true,created,updated,members:memberChanges.length});
+ }catch(e){console.error(e);return Response.json({error:e instanceof Error?e.message:"Importen misslyckades."},{status:400})}
+}
