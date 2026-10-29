@@ -27,16 +27,16 @@ export async function GET(req:Request){
   const d=db(),u=new URL(req.url),email=txt(u.searchParams.get("email"));
   if(!email)return Response.json({error:"Välj en medarbetare."},{status:400});
   const e=await employee(d,email);if(!e)return Response.json({error:"Medarbetaren saknas."},{status:404});
-  const items=await d.prepare(\`SELECT i.item_uid uid,i.current_week week,i.first_week firstWeek,
+  const items=await d.prepare(`SELECT i.item_uid uid,i.current_week week,i.first_week firstWeek,
  a.name,a.description comment,a.status,a.estimated_hours hours,a.code,
  p.code projectCode,p.name projectName,p.id projectId,
  CASE WHEN p.code='INTERNAL-VERK' THEN 'Verksamhet' WHEN p.code='INTERNAL-OVR' THEN 'Övrigt' ELSE 'Projekt' END kind
  FROM individual_form_items i JOIN activities a ON a.id=i.activity_id JOIN projects p ON p.id=a.project_id
- WHERE i.employee_id=? ORDER BY i.current_week,a.name\`).bind(e.id).all<Record<string,unknown>>();
-  const memberships=await d.prepare(\`SELECT p.code,p.name,COALESCE(s.state,'Aktiv') state
+ WHERE i.employee_id=? ORDER BY i.current_week,a.name`).bind(e.id).all<Record<string,unknown>>();
+  const memberships=await d.prepare(`SELECT p.code,p.name,COALESCE(s.state,'Aktiv') state
  FROM project_members m JOIN projects p ON p.id=m.project_id
  LEFT JOIN individual_project_state s ON s.employee_id=m.employee_id AND s.project_id=p.id
- WHERE m.employee_id=? AND p.code NOT LIKE 'INTERNAL-%' ORDER BY p.code\`).bind(e.id).all<{code:string;name:string;state:string}>();
+ WHERE m.employee_id=? AND p.code NOT LIKE 'INTERNAL-%' ORDER BY p.code`).bind(e.id).all<{code:string;name:string;state:string}>();
   const result:FormValues={name:e.name,email:e.email,activities:items.results.filter(a=>["Planerad","Pågående","Pausad","Pågår"].includes(String(a.status))).map(a=>({
    uid:String(a.uid),week:String(a.week),name:String(a.name),kind:String(a.kind),
    link:String(a.projectName||""),projectCode:String(a.projectCode).startsWith("INTERNAL-")?"":String(a.projectCode),
