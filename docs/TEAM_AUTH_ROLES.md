@@ -72,3 +72,15 @@ sudo python3 /opt/resursplanering-test-access/scripts/provision-account.py \
 - Varje medarbetare kan själv byta lösenord via `/account` och måste ange sitt nuvarande lösenord.
 - **Teknisk miniminivå är sex tecken**, enligt önskemål. Rekommenderad faktisk lösenordslängd är minst 12 tecken eller en lång lösenfras. Det finns tillfällig spärr mot upprepade misslyckade inloggningsförsök.
 - Administratören kan inte nollställa sitt eget aktuella konto via medarbetarlistan, utan använder `/account` för att undvika att oväntat bli utloggad mitt under en administration.
+
+## Leda projekt, uppdrag, verksamhet, övrigt och TEAM
+
+- Öppna ett **projekt** och välj **Översikt**: överst finns **Projektledare**. En administratör eller behörig gruppchef kan lägga till, **Byt** (ersätt vald person) eller **Ta bort** ledare.
+- Inne i samma projekt finns **Uppdrag**, där varje uppdrag har en egen sektion **Uppdragsledare** med motsvarande knappar. Uppdragsledarskap gäller det egna uppdraget och dess aktiviteter, inte automatiskt alla övriga uppdrag i projektet.
+- Projekten **Verksamhet** och **Övrigt** använder samma projektledarhantering som övriga projekt.
+- Öppna **TEAM → Översikt**: sektionen **TEAM-leader** låter administratör eller den gruppchef som äger TEAMET byta, lägga till eller ta bort ledare.
+- **Samtliga registrerade medarbetare** kan utses som projektledare, uppdragsledare eller TEAM-leader. En person kan ha flera samtidiga ledarroller, vara medlem i TEAM och samtidigt ha vanliga aktiviteter med beläggning.
+- Tilldelning av projekt-/uppdragsledaransvar ger projektmedlemskap, så personen kan skapa en egen aktivitet inom sin projektbehörighet. TEAM-leader är också en vanlig medarbetare som kan ha aktiviteter i de projekt hen tillhör.
+- **Ledarskapsbyte ändrar aldrig befintlig bemanning**. Den tidigare ledaren blir kvar som projekt-/TEAM-medlem tills någon separat ändrar medlemskapet. Äldre aktiviteter och beläggningsperioder behålls.
+- Ändringar görs via `POST /api/access` med `action="replaceLeader"` och `kind="project"|"workPackage"|"team"`, med `oldEmployeeId` och `newEmployeeId` (null vid tillsättning/borttagning). Operationen körs som en atomär D1-batch.
+- Uppdragsledare ligger i `work_package_leaders` och kräver migrering `0013_work_package_leaders.sql`. Backuper och sandbox-kontroller inkluderar tabellen.
