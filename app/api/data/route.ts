@@ -45,7 +45,7 @@ async function visibleSnapshot(d:D1Database,user:Identity){
   readableProjectIds:[...scope.projectIds]
  }};
 }
-export async function GET(req:Request){try{const d=db();const user=await sessionIdentity(req,d);if(!user)return unauthorized();return Response.json(await visibleSnapshot(d,user),{headers:{"cache-control":"no-store"}})}catch(e){console.error(e);return Response.json({error:"Kunde inte läsa planeringsdata."},{status:500})}}
+export async function GET(req:Request){try{const d=db();const user=await sessionIdentity(req,d);if(!user)return unauthorized();await seedIfEmpty(d);return Response.json(await visibleSnapshot(d,user),{headers:{"cache-control":"no-store"}})}catch(e){console.error(e);return Response.json({error:"Kunde inte läsa planeringsdata."},{status:500})}}
 
 
 async function importRows(d:D1Database,rows:Array<Record<string,string>>){const limited=rows.slice(0,2000);for(const r of limited){if((r.record_type||"").toLowerCase()==="person"&&r.email&&r.name)await d.prepare("INSERT INTO employees (name,email,role,manager_id,capacity_percent) VALUES (?,?,?,?,?) ON CONFLICT(email) DO UPDATE SET name=excluded.name,role=excluded.role,capacity_percent=excluded.capacity_percent").bind(r.name,r.email,r.role||"Medarbetare",null,Number(r.capacity_percent||100)).run()}for(const r of limited){if((r.record_type||"").toLowerCase()==="person"&&r.email&&r.manager_email){const m=await d.prepare("SELECT id FROM employees WHERE lower(email)=lower(?)").bind(r.manager_email).first<{id:number}>();if(m)await d.prepare("UPDATE employees SET manager_id=? WHERE lower(email)=lower(?)").bind(m.id,r.email).run()}}
