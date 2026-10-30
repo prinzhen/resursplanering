@@ -29,6 +29,13 @@
       "when": 1793171000000,
       "tag": "0003_individual_excel",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1793430000000,
+      "tag": "0004_assignment_completion",
+      "breakpoints": true
     }
   ]
 }
