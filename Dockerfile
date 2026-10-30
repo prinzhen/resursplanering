@@ -9,6 +9,7 @@ RUN pnpm install --frozen-lockfile
 
 COPY . .
 RUN pnpm build
+RUN node scripts/test-individual-integration.mjs
 
 FROM node:24-bookworm-slim AS runtime
 
