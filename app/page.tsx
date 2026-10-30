@@ -167,7 +167,15 @@ function DetailSheet({detail,data,close,setMode,onSelect,onSaveProjects,onSavePr
     <Button size="sm" variant={detail?.mode==="kanban"?"default":"ghost"} onClick={()=>setMode("kanban")}><FolderKanban/>Kanban</Button>
    </div></div></SheetHeader>
   <div className="flex-1 overflow-y-auto bg-slate-100 p-4 sm:p-6">{detail&&(
-   detail.mode==="kanban"?<KanbanBoard cards={cards} onSelect={id=>onSelect({type:"activity",id,mode:"list"})} onMove={onSaveKanban}/>:
+   detail.mode==="kanban"?<KanbanBoard cards={cards} onSelect={id=>onSelect({type:"activity",id,mode:"list"})} onMove={onSaveKanban} canMove={card=>{
+     const viewer=data.viewer;
+     if(viewer?.isAdmin)return true;
+     if(!viewer)return false;
+     const task=data.activities.find(a=>a.id===card.activityId),isLead=!!task&&viewer.projectLeadIds.includes(task.projectId);
+     if(isLead)return true;
+     if(card.employeeId!==null)return card.employeeId===viewer.employeeId||(viewer.isGroupManager&&viewer.managedEmployeeIds.includes(card.employeeId));
+     return data.assignments.filter(a=>a.activityId===card.activityId).every(a=>a.employeeId===viewer.employeeId)&&data.assignments.some(a=>a.activityId===card.activityId&&a.employeeId===viewer.employeeId);
+   }}/>:
    employee?(detail.mode==="list"?<EmployeeDetail employee={employee} data={data} onSelect={onSelect} onSaveProjects={onSaveProjects} onSaveProjectOrder={onSaveProjectOrder} onResetProjectOrder={onResetProjectOrder}/>:
     <InteractiveGantt key={`employee-${employee.id}`} kind="employee" subject={employee} data={data} items={employeeGantt(employee,data)} empty="Medarbetaren saknar planerade aktiviteter."/>):
    group?(detail.mode==="list"?<GroupOverview groupId={group.id} data={data} onSelect={onSelect}/>:
@@ -333,11 +341,11 @@ function groupWorkload(people:Employee[],data:Data,start:string,end:string){
  const capacity=people.reduce((sum,p)=>sum+p.capacityPercent,0);
  return capacity?Math.round(people.reduce((sum,p)=>sum+workload(data,p.id,start,end),0)/capacity*100):0;
 }
-function KanbanBoard({cards,onSelect,onMove}:{cards:KanbanCard[];onSelect:(activityId:number)=>void;onMove:(card:KanbanCard,status:KanbanStatus)=>Promise<boolean>}){
+function KanbanBoard({cards,onSelect,onMove,canMove=()=>true}:{cards:KanbanCard[];onSelect:(activityId:number)=>void;onMove:(card:KanbanCard,status:KanbanStatus)=>Promise<boolean>;canMove?:(card:KanbanCard)=>boolean}){
  const [moving,setMoving]=useState<string|null>(null),[hover,setHover]=useState<KanbanStatus|null>(null);
  const dragCard=useRef<string|null>(null);
  const move=async(card:KanbanCard,status:KanbanStatus)=>{
-  if(card.status===status)return;
+  if(card.status===status||!canMove(card))return;
   setMoving(card.key);try{await onMove(card,status)}finally{setMoving(null)}
  };
  const colors:Record<KanbanStatus,string>={Planerad:"border-slate-300 bg-slate-100",Pågående:"border-blue-300 bg-blue-50",Pausad:"border-amber-300 bg-amber-50",Fryst:"border-cyan-300 bg-cyan-50",Klar:"border-emerald-300 bg-emerald-50"};
@@ -349,13 +357,13 @@ function KanbanBoard({cards,onSelect,onMove}:{cards:KanbanCard[];onSelect:(activ
    onDragLeave={event=>{if(!event.currentTarget.contains(event.relatedTarget as Node))setHover(null)}}
    onDrop={event=>{event.preventDefault();const current=cards.find(c=>c.key===dragCard.current);dragCard.current=null;setHover(null);if(current)void move(current,status)}}>
    <h3 className="mb-3 flex items-center justify-between rounded-lg bg-white/75 px-3 py-2 text-sm font-bold"><span>{status}</span><Badge variant="outline">{items.length}</Badge></h3>
-   <div className="space-y-2">{items.map(card=><article draggable={moving===null} onDragStart={event=>{dragCard.current=card.key;event.dataTransfer.effectAllowed="move";event.dataTransfer.setData("text/plain",card.key)}} onDragEnd={()=>{dragCard.current=null;setHover(null)}} key={card.key} className="cursor-grab rounded-lg border border-slate-200 bg-white p-3 shadow-sm active:cursor-grabbing">
+   <div className="space-y-2">{items.map(card=><article draggable={moving===null&&canMove(card)} onDragStart={event=>{dragCard.current=card.key;event.dataTransfer.effectAllowed="move";event.dataTransfer.setData("text/plain",card.key)}} onDragEnd={()=>{dragCard.current=null;setHover(null)}} key={card.key} className="cursor-grab rounded-lg border border-slate-200 bg-white p-3 shadow-sm active:cursor-grabbing">
     <div className="mb-2 flex items-center gap-2"><span className="h-6 w-1 rounded-full" style={{background:card.projectColor}}/><span className="text-xs font-medium text-slate-600">{card.project}</span></div>
     <button type="button" className="text-left text-sm font-semibold text-blue-900 hover:underline" onClick={()=>onSelect(card.activityId)}>{card.title}</button>
     {card.description&&<p className="mt-2 line-clamp-2 text-xs text-slate-600">{card.description}</p>}
     <p className="mt-2 text-xs text-slate-500">{card.startDate} – {card.endDate}</p>
     <div className="mt-2 flex flex-wrap gap-1">{card.people.length?card.people.map((person,i)=><span className="rounded bg-slate-100 px-2 py-1 text-xs" key={i}>{person}</span>):<span className="text-xs text-slate-400">Ingen resurs</span>}</div>
-    <label className="mt-3 block text-xs font-medium text-slate-500">Ändra status<NativeSelect aria-label={`Status för ${card.title}`} className="mt-1 w-full" value={status} disabled={moving!==null} onChange={event=>void move(card,event.target.value as KanbanStatus)}>{KANBAN_COLUMNS.map(option=><NativeSelectOption key={option} value={option}>{option}</NativeSelectOption>)}</NativeSelect></label>
+    <label className="mt-3 block text-xs font-medium text-slate-500">{canMove(card)?"Ändra status":"Status (endast läsning)"}<NativeSelect aria-label={`Status för ${card.title}`} className="mt-1 w-full" value={status} disabled={moving!==null||!canMove(card)} onChange={event=>void move(card,event.target.value as KanbanStatus)}>{KANBAN_COLUMNS.map(option=><NativeSelectOption key={option} value={option}>{option}</NativeSelectOption>)}</NativeSelect></label>
    </article>)}</div>
    {!items.length&&<p className="rounded-lg border border-dashed border-slate-300 bg-white/50 p-4 text-center text-xs text-slate-500">Inga aktiviteter</p>}
   </section>;
