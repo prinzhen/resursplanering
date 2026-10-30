@@ -125,3 +125,7 @@ button{cursor:pointer}
 .gantt-bar.gantt-is-completed span,.gantt-bar.gantt-is-paused span{color:#152b4a;text-shadow:none}
 .print-gantt-bar.gantt-is-completed{outline:1px solid #64748b;color:#152b4a}
 .print-gantt-bar.gantt-is-paused{outline:2px dashed #64748b;color:#152b4a}
+
+.detail-sheet-head [data-slot="sheet-title"]{color:#fff!important}
+.detail-sheet>button[aria-label],.detail-sheet>button:has(svg.lucide-x){color:#fff;opacity:.85}
+.detail-sheet>button:has(svg.lucide-x):hover{opacity:1;background:#ffffff1c}
