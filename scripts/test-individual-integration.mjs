@@ -260,6 +260,42 @@ try{
   assert.deepEqual(snap.assignments,backedUp.assignments);
   assert.equal(snap.individualFormItems.length,backedUp.individualFormItems.length);
  });
+ // Project priority default, employee-specific order, and resetting.
+ const sorting=await import("../lib/project-sort.ts");
+ const memberIds=[...new Set(snap.projectMembers.filter(m=>m.employeeId===erik).map(m=>m.projectId))];
+ snap=await request("/api/data",{action:"setProjectMemberships",employeeId:erik,projectIds:[...new Set([...memberIds,3])]});
+ snap=await request("/api/data",{action:"updateProject",id:1,code:"P-1042",name:"Modernisering styrsystem",color:"#2563eb",description:"",status:"Aktivt",priority:2});
+ snap=await request("/api/data",{action:"updateProject",id:2,code:"P-1087",name:"Nätverkssegmentering",color:"#0f766e",description:"",status:"Aktivt",priority:1});
+ snap=await request("/api/data",{action:"updateProject",id:3,code:"P-1110",name:"Underhållsrevision",color:"#ca8a04",description:"",status:"Aktivt",priority:1});
+ const eligible=snap.projects.filter(p=>p.id<=3);
+ const ordered=()=>sorting.sortEmployeeProjects(erik,eligible,snap.assignments,snap.activities,snap.employeeProjectOrders).map(p=>p.id);
+ check("Default order: assigned projects first; then priority; unassigned projects last",()=>{
+  assert.deepEqual(ordered(),[2,1,3]);
+ });
+ snap=await request("/api/data",{action:"setEmployeeProjectOrder",employeeId:erik,projectIds:[3,1,2]});
+ check("Manual order supports inactive projects at the top",()=>{
+  assert.deepEqual(ordered(),[3,1,2]);
+  assert.equal(snap.employeeProjectOrders.filter(x=>x.employeeId===sara).length,0);
+ });
+ const dup=await fetch(base+"/api/data",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({action:"setEmployeeProjectOrder",employeeId:erik,projectIds:[1,1,2]})});
+ check("Duplicate project IDs are rejected before saving",()=>assert.equal(dup.status,400));
+ const customBackup=structuredClone(snap);
+ snap=await request("/api/data",{action:"restore",backup:{version:3,data:customBackup}});
+ check("Saved employee project ordering survives backup roundtrip",()=>{
+  assert.deepEqual(snap.employeeProjectOrders,customBackup.employeeProjectOrders);
+  assert.deepEqual(ordered(),[3,1,2]);
+  assert.equal(snap.projects.find(p=>p.id===2).priority,1);
+ });
+ snap=await request("/api/data",{action:"resetEmployeeProjectOrder",employeeId:erik});
+ check("Reset restores dynamic project priority and alphabetical default",()=>{
+  assert.equal(snap.employeeProjectOrders.filter(x=>x.employeeId===erik).length,0);
+  assert.deepEqual(ordered(),[2,1,3]);
+ });
+ // A narrow 'current weeks' window must not hide all future/historical Gantt work.
+ const ganttSource=await (await import("node:fs/promises")).readFile("app/page.tsx","utf8");
+ check("Employee Gantt chooses full planning when current four weeks contain no tasks",()=>{
+  assert.match(ganttSource,/items\.some\(i=>overlaps\(i\.start,i\.end,initialStart,periodEnd\(initialStart,"4w"\)\)\)\?"4w":"all"/);
+ });
  // Inspect the real SQLite state independently of API serialization.
  const sqliteFile=await findSqlite(join(dir,"data"));
  const sql=new DatabaseSync(sqliteFile,{readOnly:true});
