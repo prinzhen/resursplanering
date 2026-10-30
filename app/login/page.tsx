@@ -3,7 +3,7 @@ import {useState,useEffect} from "react";
 import {useRouter} from "next/navigation";
 export default function Login(){
  const router=useRouter(),[email,setEmail]=useState(""),[password,setPassword]=useState(""),[error,setError]=useState(""),[busy,setBusy]=useState(false);
- useEffect(()=>{fetch("/api/auth",{cache:"no-store"}).then(r=>r.json()).then(d=>{if(d.user)router.replace("/")}).catch(()=>{})},[router]);
+ useEffect(()=>{fetch("/api/auth",{cache:"no-store"}).then(r=>r.json()).then((d:{user?:unknown})=>{if(d.user)router.replace("/")}).catch(()=>{})},[router]);
  const submit=async(e:React.FormEvent)=>{e.preventDefault();setBusy(true);setError("");try{
   const r=await fetch("/api/auth",{method:"POST",headers:{"content-type":"application/json"},credentials:"same-origin",body:JSON.stringify({action:"login",email,password})});
   const d=await r.json() as {user?:unknown;error?:string};if(!r.ok)throw Error(d.error||"Inloggningen misslyckades");
