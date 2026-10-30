@@ -6,6 +6,7 @@ CREATE TABLE user_accounts (
  password_salt TEXT NOT NULL,
  password_hash TEXT NOT NULL,
  is_admin INTEGER NOT NULL DEFAULT 0 CHECK(is_admin IN (0,1)),
+ is_group_manager INTEGER NOT NULL DEFAULT 0 CHECK(is_group_manager IN (0,1)),
  is_disabled INTEGER NOT NULL DEFAULT 0 CHECK(is_disabled IN (0,1)),
  failed_attempts INTEGER NOT NULL DEFAULT 0,
  locked_until INTEGER,
