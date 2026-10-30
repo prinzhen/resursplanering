@@ -87,6 +87,7 @@ export async function POST(req:Request){
     const prev=await d.prepare("SELECT current_week currentWeek FROM individual_form_items WHERE item_uid=?").bind(a.uid).first<{currentWeek:string}>();
     const statements=[d.prepare("UPDATE activities SET name=?,description=?,project_id=?,start_date=?,end_date=?,estimated_hours=?,status=? WHERE id=?").bind(a.name,a.description||"Aktivitet från individuellt formulär",p.id,monday(a.week),friday(a.week),a.hours,a.status,a.activityId),d.prepare("INSERT INTO individual_form_items (item_uid,employee_id,activity_id,first_week,current_week) VALUES (?,?,?,?,?) ON CONFLICT(employee_id,activity_id) DO UPDATE SET current_week=excluded.current_week,updated_at=CURRENT_TIMESTAMP").bind(a.uid,e.id,a.activityId,a.firstWeek,a.week)];
     if(prev&&prev.currentWeek!==a.week)statements.push(d.prepare("INSERT INTO individual_week_moves(item_uid,from_week,to_week,reason) VALUES(?,?,?,?)").bind(a.uid,prev.currentWeek,a.week,a.reason||null));
+    statements.push(d.prepare("UPDATE assignments SET start_date=?,end_date=? WHERE activity_id=? AND employee_id=?").bind(monday(a.week),friday(a.week),a.activityId,e.id));
     await d.batch(statements);updated++;
    }else{
     const result=await d.prepare("INSERT INTO activities (project_id,name,description,start_date,end_date,estimated_hours,status) VALUES(?,?,?,?,?,?,?)").bind(p.id,a.name,a.description||"Aktivitet från individuellt formulär",monday(a.week),friday(a.week),a.hours,a.status).run();
