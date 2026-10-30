@@ -4,11 +4,11 @@ type Employee={id:number;name:string;email:string};
 type Project={id:number;code:string;name:string};
 type Team={id:number;name:string};
 type Access={viewer:{accountId:number;employeeId:number|null;isAdmin:boolean};directoryEmployees:{id:number;name:string}[];accounts:{id:number;email:string;employeeId:number|null;isAdmin:number;isGroupManager:number;isDisabled:number}[];projectLeaders:{projectId:number;employeeId:number}[];teamLeaders:{teamId:number;employeeId:number}[]};
-type Planning={employees:Employee[];projects:Project[];employeeGroups:Team[];viewer:{accountId:number;isAdmin:boolean;managedEmployeeIds:number[];projectLeadIds:number[]}};
+type Planning={employees:Employee[];projects:Project[];projectDirectory?:Project[];employeeGroups:Team[];viewer:{accountId:number;isAdmin:boolean;managedEmployeeIds:number[];projectLeadIds:number[]}};
 export default function AccessPage(){
  const [data,setData]=useState<Planning|null>(null),[access,setAccess]=useState<Access|null>(null),[error,setError]=useState(""),[notice,setNotice]=useState(""),[busy,setBusy]=useState(false);
  const [email,setEmail]=useState(""),[password,setPassword]=useState(""),[employeeId,setEmployeeId]=useState(""),[admin,setAdmin]=useState(false),[groupManager,setGroupManager]=useState(false);
- const [leadEmployee,setLeadEmployee]=useState(""),[leadProject,setLeadProject]=useState(""),[leadTeam,setLeadTeam]=useState("");
+ const [leadEmployee,setLeadEmployee]=useState(""),[leadProject,setLeadProject]=useState(""),[leadTeam,setLeadTeam]=useState(""),[memberEmployee,setMemberEmployee]=useState(""),[memberProject,setMemberProject]=useState("");
  const reload=async()=>{
   const [a,b]=await Promise.all([fetch("/api/data",{cache:"no-store"}),fetch("/api/access",{cache:"no-store"})]);
   if(a.status===401||b.status===401){window.location.assign("/login");return}
@@ -21,6 +21,17 @@ export default function AccessPage(){
   if(!r.ok)throw Error(j.error||"Kunde inte spara");await reload();setNotice("Behörigheten sparades.");return true;
  }catch(e){setError(e instanceof Error?e.message:String(e));return false}finally{setBusy(false)}};
  const eligible=data?.employees.filter(e=>data.viewer.isAdmin||data.viewer.managedEmployeeIds.includes(e.id))||[];
+ const membership=async(enabled:boolean)=>{
+  if(!memberEmployee||!memberProject)return;
+  setBusy(true);setError("");setNotice("");
+  try{
+   const result=await fetch("/api/data",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({action:"setSingleProjectMember",projectId:Number(memberProject),employeeId:Number(memberEmployee),enabled})});
+   const parsed=await result.json() as {error?:string};
+   if(!result.ok)throw Error(parsed.error||"Kunde inte ändra projektmedverkan");
+   await reload();setNotice(enabled?"Medarbetaren lades till i projektet.":"Projektmedverkan togs bort. Befintlig aktivitetsbemanning behålls.");
+  }catch(e){setError(e instanceof Error?e.message:String(e))}finally{setBusy(false)}
+ };
+
  return <main className="min-h-screen bg-slate-100 p-5 text-slate-900"><div className="mx-auto max-w-5xl space-y-5">
  <header className="flex flex-wrap items-center justify-between gap-3"><div><p className="text-xs font-bold uppercase tracking-wider text-blue-700">Resursplanering</p><h1 className="text-3xl font-semibold">Konton och behörigheter</h1><p className="mt-1 text-sm text-slate-600">Administratören hanterar konton. Gruppchefer kan utse projektledare och TEAM-leaders bland sina medarbetare.</p></div><a href="/" className="rounded-lg border bg-white px-4 py-2 text-sm">← Till planeringen</a></header>
  {error&&<p role="alert" className="rounded-lg border border-red-300 bg-red-50 p-3 text-red-700">{error}</p>}
@@ -34,6 +45,14 @@ export default function AccessPage(){
  <div className="sm:col-span-2"><button disabled={busy} className="rounded-lg bg-blue-700 px-4 py-2 font-semibold text-white disabled:opacity-50">Spara konto</button></div></form>
  <div className="mt-4 space-y-2"><h3 className="text-sm font-semibold">Registrerade konton</h3>{access?.accounts.map(a=><div key={a.id} className="flex flex-wrap items-center justify-between gap-3 rounded-lg border p-2 text-sm"><div><strong>{a.email}</strong><p className="text-slate-500">{a.isAdmin?"Administratör":a.isGroupManager?"Gruppchef":"Medarbetare"} · {a.isDisabled?"Inaktiverat":"Aktivt"}</p></div>{a.id!==data.viewer.accountId&&<button disabled={busy} className="rounded border px-3 py-1" onClick={()=>post({action:"setAccountDisabled",accountId:a.id,disabled:!a.isDisabled})}>{a.isDisabled?"Aktivera":"Inaktivera"}</button>}</div>)}</div>
  </section>}
+ <section className="rounded-xl border bg-white p-5"><h2 className="mb-3 text-lg font-semibold">Tilldela eller ta bort person i projekt</h2>
+ <p className="mb-3 text-sm text-slate-600">Projektledare kan hantera medverkan i sina projekt. Gruppchef kan hantera sina egna medarbetare. Befintlig bemanning behöver tas bort separat om någon inte längre ska arbeta på aktiviteten.</p>
+ <div className="flex flex-wrap items-end gap-3">
+ <label className="min-w-48 flex-1 text-sm font-medium">Projekt<select className="mt-1 w-full rounded-lg border px-3 py-2" value={memberProject} onChange={e=>setMemberProject(e.target.value)}><option value="">Välj projekt</option>{(data?.projectDirectory||data?.projects||[]).map(p=><option key={p.id} value={p.id}>{p.code} · {p.name}</option>)}</select></label>
+ <label className="min-w-48 flex-1 text-sm font-medium">Medarbetare<select className="mt-1 w-full rounded-lg border px-3 py-2" value={memberEmployee} onChange={e=>setMemberEmployee(e.target.value)}><option value="">Välj medarbetare</option>{(data?.viewer.isAdmin||!!data?.viewer.projectLeadIds.length?access?.directoryEmployees:access?.directoryEmployees.filter(e=>data?.viewer.managedEmployeeIds.includes(e.id)))?.map(e=><option key={e.id} value={e.id}>{e.name}</option>)}</select></label>
+ <button disabled={busy||!memberEmployee||!memberProject} onClick={()=>membership(true)} className="rounded-lg bg-blue-700 px-3 py-2 text-sm text-white">Lägg till</button>
+ <button disabled={busy||!memberEmployee||!memberProject} onClick={()=>membership(false)} className="rounded-lg border px-3 py-2 text-sm">Ta bort</button>
+ </div></section>
  <section className="rounded-xl border bg-white p-5"><h2 className="mb-3 text-lg font-semibold">Projektledare och TEAM-leader</h2>
  <div className="grid gap-3 sm:grid-cols-3">
  <label className="text-sm font-medium">Medarbetare<select className="mt-1 w-full rounded-lg border px-3 py-2" value={leadEmployee} onChange={e=>setLeadEmployee(e.target.value)}><option value="">Välj person</option>{eligible.map(e=><option key={e.id} value={e.id}>{e.name}</option>)}</select></label>
