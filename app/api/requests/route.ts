@@ -9,12 +9,19 @@ export async function GET(req:Request){
  const scope=await accessScope(d,user);
  const rows=await d.prepare(`SELECT r.id,r.activity_id activityId,r.requested_by requestedBy,r.recipient_id recipientId,r.effort_percent effortPercent,
   r.start_date startDate,r.end_date endDate,r.status,r.comment,r.created_at createdAt,r.decided_at decidedAt,
-  a.name activityName,p.name projectName,p.code projectCode,src.name requestedByName,dst.name recipientName
+  a.project_id projectId,a.name activityName,p.name projectName,p.code projectCode,src.name requestedByName,dst.name recipientName
  FROM assignment_requests r JOIN activities a ON a.id=r.activity_id JOIN projects p ON p.id=a.project_id
  JOIN employees src ON src.id=r.requested_by JOIN employees dst ON dst.id=r.recipient_id ORDER BY r.id DESC`).all<Record<string,unknown>>();
+ const visibleProjectIds=[...scope.projectIds];
+ const peopleInProjects=visibleProjectIds.length?await d.prepare(`SELECT DISTINCT e.id,e.name,e.email,p.id projectId
+ FROM employees e JOIN project_members m ON m.employee_id=e.id JOIN projects p ON p.id=m.project_id
+ WHERE p.id IN (${visibleProjectIds.map(()=>"?").join(",")})
+ UNION SELECT DISTINCT e.id,e.name,e.email,p.id projectId FROM employees e
+ JOIN assignments s ON s.employee_id=e.id JOIN activities a ON a.id=s.activity_id JOIN projects p ON p.id=a.project_id
+ WHERE p.id IN (${visibleProjectIds.map(()=>"?").join(",")})`).bind(...visibleProjectIds,...visibleProjectIds).all<Record<string,unknown>>():{results:[]};
  return Response.json({requests:rows.results.filter(r=>user.isAdmin||
   r.requestedBy===user.employeeId||r.recipientId===user.employeeId||
-  scope.managedIds.has(Number(r.recipientId))||scope.projectLedIds.has(Number((r as Record<string,unknown>).projectId)))} ,{headers:{"cache-control":"no-store"}});
+  scope.managedIds.has(Number(r.recipientId))||scope.projectLedIds.has(Number((r as Record<string,unknown>).projectId))),eligibleRecipients:peopleInProjects.results},{headers:{"cache-control":"no-store"}});
 }
 export async function POST(req:Request){
  try{
