@@ -34,3 +34,11 @@ export const assignments = sqliteTable("assignments", {
   completedAt: text("completed_at"), workStatus: text("work_status"),
   originalEndDate: text("original_end_date"), statusUpdatedAt: text("status_updated_at"),
 }, (table) => [uniqueIndex("idx_assignments_activity_employee").on(table.activityId, table.employeeId)]);
+
+export const assignmentPeriods = sqliteTable("assignment_periods", {
+ id: integer("id").primaryKey({autoIncrement:true}),
+ assignmentId: integer("assignment_id").notNull().references(() => assignments.id,{onDelete:"cascade"}),
+ startDate: text("start_date").notNull(),
+ endDate: text("end_date").notNull(),
+ effortPercent: integer("effort_percent").notNull(),
+});
