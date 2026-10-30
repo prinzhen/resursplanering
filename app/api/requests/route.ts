@@ -37,7 +37,7 @@ export async function POST(req:Request){
     return Response.json({error:"Ogiltig aktivitet, resurs, beläggning eller period."},{status:400});
    const projectId=await projectOfActivity(d,activityId);
    const scope=await accessScope(d,user);
-   if(!scope.projectIds.has(projectId))return forbidden();
+   if(!scope.selfProjectIds.has(projectId)&&!scope.projectLedIds.has(projectId))return forbidden();
    const target=await d.prepare("SELECT id FROM employees WHERE id=?").bind(recipientId).first();
    if(!target)return Response.json({error:"Medarbetaren saknas."},{status:404});
    // The recipient must be enrolled in the project before accepting.
