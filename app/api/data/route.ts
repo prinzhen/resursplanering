@@ -14,14 +14,15 @@ async function seedIfEmpty(d:D1Database){const c=await d.prepare("SELECT COUNT(*
   d.prepare("INSERT INTO activities (project_id,name,start_date,end_date,estimated_hours,status,code) VALUES (?,?,?,?,?,?,?)").bind(1,"Systemdesign","2026-09-01","2026-12-18",420,"Pågår","A-10"),d.prepare("INSERT INTO activities (project_id,name,start_date,end_date,estimated_hours,status,code) VALUES (?,?,?,?,?,?,?)").bind(2,"Detaljprojektering","2026-10-01","2027-01-29",360,"Planerad","A-20"),d.prepare("INSERT INTO activities (project_id,name,start_date,end_date,estimated_hours,status,code) VALUES (?,?,?,?,?,?,?)").bind(3,"Granskning och provning","2026-11-02","2027-02-26",280,"Planerad","A-30"),d.prepare("INSERT INTO activities (project_id,name,start_date,end_date,estimated_hours,status,code) VALUES (?,?,?,?,?,?,?)").bind(1,"Driftsättning","2027-01-11","2027-03-31",300,"Planerad","A-40"),
   d.prepare("INSERT INTO assignments (activity_id,employee_id,effort_percent,start_date,end_date) VALUES (?,?,?,?,?)").bind(1,2,50,"2026-09-01","2026-12-18"),d.prepare("INSERT INTO assignments (activity_id,employee_id,effort_percent,start_date,end_date) VALUES (?,?,?,?,?)").bind(1,3,40,"2026-09-01","2026-12-18"),d.prepare("INSERT INTO assignments (activity_id,employee_id,effort_percent,start_date,end_date) VALUES (?,?,?,?,?)").bind(2,2,35,"2026-10-01","2027-01-29"),d.prepare("INSERT INTO assignments (activity_id,employee_id,effort_percent,start_date,end_date) VALUES (?,?,?,?,?)").bind(2,4,60,"2026-10-01","2027-01-29"),d.prepare("INSERT INTO assignments (activity_id,employee_id,effort_percent,start_date,end_date) VALUES (?,?,?,?,?)").bind(3,3,70,"2026-11-02","2027-02-26"),d.prepare("INSERT INTO assignments (activity_id,employee_id,effort_percent,start_date,end_date) VALUES (?,?,?,?,?)").bind(4,2,40,"2027-01-11","2027-03-31"),d.prepare("INSERT INTO assignments (activity_id,employee_id,effort_percent,start_date,end_date) VALUES (?,?,?,?,?)").bind(4,4,50,"2027-01-11","2027-03-31")]);}
 
-async function snapshot(d:D1Database){const [e,p,w,a,s,m]=await Promise.all([
+async function snapshot(d:D1Database){const [e,p,w,a,s,m,periods]=await Promise.all([
  d.prepare("SELECT id,name,email,role,manager_id managerId,capacity_percent capacityPercent FROM employees ORDER BY name").all<Row>(),
  d.prepare("SELECT id,code,name,color,description,status FROM projects ORDER BY code").all<Row>(),
  d.prepare("SELECT id,project_id projectId,code,name,description FROM work_packages ORDER BY project_id,code").all<Row>(),
  d.prepare("SELECT id,project_id projectId,work_package_id workPackageId,parent_activity_id parentActivityId,code,name,description,start_date startDate,end_date endDate,estimated_hours estimatedHours,status FROM activities ORDER BY start_date,name").all<Row>(),
  d.prepare("SELECT s.id,s.activity_id activityId,s.employee_id employeeId,s.effort_percent effortPercent,s.start_date startDate,s.end_date endDate,s.completed_at completedAt,s.work_status workStatus FROM assignments s ORDER BY s.start_date,s.id").all<Row>(),
- d.prepare("SELECT project_id projectId,employee_id employeeId FROM project_members ORDER BY employee_id,project_id").all<Row>()]);
- return {employees:e.results,projects:p.results,workPackages:w.results,activities:a.results,assignments:s.results,projectMembers:m.results};}
+ d.prepare("SELECT project_id projectId,employee_id employeeId FROM project_members ORDER BY employee_id,project_id").all<Row>(),
+ d.prepare("SELECT id,assignment_id assignmentId,start_date startDate,end_date endDate,effort_percent effortPercent FROM assignment_periods ORDER BY assignment_id,start_date,id").all<Row>()]);
+ return {employees:e.results,projects:p.results,workPackages:w.results,activities:a.results,assignments:s.results,projectMembers:m.results,assignmentPeriods:periods.results};}
 
 export async function GET(){try{const d=db();await seedIfEmpty(d);return Response.json(await snapshot(d))}catch(e){console.error(e);return Response.json({error:"Kunde inte läsa planeringsdata."},{status:500})}}
 
@@ -51,6 +52,48 @@ export async function POST(request:Request){try{const d=db();const b=await reque
  else if(action==="workPackage")await d.prepare("INSERT INTO work_packages (project_id,code,name,description) VALUES (?,?,?,?)").bind(Number(b.projectId),text(b.code),text(b.name),text(b.description)||null).run();
  else if(action==="updateWorkPackage")await d.prepare("UPDATE work_packages SET project_id=?,code=?,name=?,description=? WHERE id=?").bind(Number(b.projectId),text(b.code),text(b.name),text(b.description)||null,Number(b.id)).run();
  else if(action==="activity")await d.prepare("INSERT INTO activities (project_id,work_package_id,parent_activity_id,code,name,description,start_date,end_date,estimated_hours,status) VALUES (?,?,?,?,?,?,?,?,?,?)").bind(Number(b.projectId),number(b.workPackageId),number(b.parentActivityId),text(b.code)||null,text(b.name),requiredActivityDescription(b.description),text(b.startDate),text(b.endDate),number(b.estimatedHours),text(b.status)||"Planerad").run();
+ else if(action==="setAssignmentPeriods"){
+  const activityId=Number(b.activityId),employeeId=Number(b.employeeId);
+  if(!Number.isSafeInteger(activityId)||!Number.isSafeInteger(employeeId)||activityId<=0||employeeId<=0)
+    return Response.json({error:"Ogiltigt ID."},{status:400});
+  const activity=await d.prepare("SELECT id,status FROM activities WHERE id=?").bind(activityId).first<{id:number;status:string}>();
+  const employee=await d.prepare("SELECT id FROM employees WHERE id=?").bind(employeeId).first<{id:number}>();
+  if(!activity||!employee)return Response.json({error:"Aktiviteten eller medarbetaren saknas."},{status:404});
+  const rows=b.periods;
+  if(!Array.isArray(rows)||!rows.length||rows.length>52)return Response.json({error:"Ange 1–52 perioder per resurs."},{status:400});
+  const periods=rows.map((v:unknown)=>{
+   const x=v as Record<string,unknown>;
+   return {startDate:text(x.startDate),endDate:text(x.endDate),effortPercent:Number(x.effortPercent)};
+  }).sort((a,b)=>a.startDate.localeCompare(b.startDate));
+  const date=/^\d{4}-\d{2}-\d{2}$/;
+  const validDate=(value:string)=>{
+   if(!date.test(value))return false;
+   const day=new Date(value+"T00:00:00Z");
+   return !Number.isNaN(day.getTime())&&day.toISOString().slice(0,10)===value;
+  };
+  if(periods.some(p=>!validDate(p.startDate)||!validDate(p.endDate)||p.startDate>p.endDate||
+     !Number.isInteger(p.effortPercent)||p.effortPercent<0||p.effortPercent>200))
+   return Response.json({error:"Varje period behöver giltiga datum och beläggning 0–200 %."},{status:400});
+  if(periods.some((p,i)=>i>0&&periods[i-1].endDate>=p.startDate))
+   return Response.json({error:"Perioder för samma person får inte överlappa. Dela vid behov upp dem."},{status:400});
+  let assignment=await d.prepare("SELECT id,completed_at completedAt FROM assignments WHERE activity_id=? AND employee_id=?").bind(activityId,employeeId).first<{id:number;completedAt:string|null}>();
+  const startDate=periods[0].startDate,endDate=periods.at(-1)!.endDate;
+  // Save all validated periods in a transaction. Existing completion state survives.
+  if(!assignment){
+   const created=await d.prepare("INSERT INTO assignments(activity_id,employee_id,effort_percent,start_date,end_date,original_end_date,work_status) VALUES(?,?,?,?,?,?,?)").bind(activityId,employeeId,periods[0].effortPercent,startDate,endDate,endDate,"Planerad").run();
+   assignment={id:Number(created.meta.last_row_id),completedAt:null};
+  }
+  const aid=assignment.id;
+  const q:D1PreparedStatement[]=[
+   d.prepare("DELETE FROM assignment_periods WHERE assignment_id=?").bind(aid),
+   ...periods.map(p=>d.prepare("INSERT INTO assignment_periods(assignment_id,start_date,end_date,effort_percent) VALUES(?,?,?,?)").bind(aid,p.startDate,p.endDate,p.effortPercent)),
+   d.prepare("UPDATE assignments SET start_date=?,end_date=?,original_end_date=?,effort_percent=? WHERE id=?")
+      .bind(startDate,assignment.completedAt&&assignment.completedAt>=startDate&&assignment.completedAt<endDate?assignment.completedAt:endDate,endDate,periods[0].effortPercent,aid)
+  ];
+  await d.batch(q);
+  if(activity.status==="Klar"&&!assignment.completedAt)
+   await reconcileActivityStatus(d,activityId);
+ }
  else if(action==="setActivityStatus"||action==="setAssignmentStatus"){
  const id=Number(b.activityId),raw=text(b.status),status=normalizeStatus(raw);
  if(!Number.isSafeInteger(id)||id<=0||!validStatuses.some(x=>x===status))return Response.json({error:"Ogiltig aktivitet eller status."},{status:400});
