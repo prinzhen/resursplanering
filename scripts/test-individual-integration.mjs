@@ -817,6 +817,12 @@ try{
   const t=leaderOwn.activities.find(a=>a.name==="TEAM-leader kan ha egen aktivitet");
   assert.ok(t&&assignment(leaderOwn,t.id,sara));
  });
+ await asUser("anna@example.se");
+ const groupSwapped=await setLead("team",{teamId:authTeam.id},sara,johanEmployee.id);
+ check("Owning group manager can replace a TEAM-leader with another employee",()=>{
+  assert.ok(groupSwapped.teamLeaders.some(t=>t.teamId===authTeam.id&&t.employeeId===johanEmployee.id));
+  assert.ok(!groupSwapped.teamLeaders.some(t=>t.teamId===authTeam.id&&t.employeeId===sara));
+ });
  await asUser("ci-admin@example.se",adminPassword);
  const approvedSnapshot=await request();
  check("Admin view still sees all original employees",()=>assert.equal(approvedSnapshot.employees.length>=4,true));
