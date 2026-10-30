@@ -377,6 +377,12 @@ try{
   assert.ok(snap.employees.some(e=>e.id===erik));
   assert.ok(assignment(snap,1,erik));
  });
+ // Restore the earlier individual state before the original SQLite postconditions.
+ snap=await request("/api/data",{action:"setAssignmentStatus",activityId:1,employeeId:erik,status:"Pågående"});
+ check("Post-test cleanup restores the individual to active state in the disposable database",()=>{
+  assert.equal(assignment(snap,1,erik).completedAt,null);
+  assert.equal(assignment(snap,1,erik).workStatus,"Pågående");
+ });
  // Inspect the real SQLite state independently of API serialization.
  const sqliteFile=await findSqlite(join(dir,"data"));
  const sql=new DatabaseSync(sqliteFile,{readOnly:true});
