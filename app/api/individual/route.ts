@@ -146,17 +146,51 @@ export async function POST(req:Request){
       seenActivityIds.add(a.activityId);
     }
   }
-  const memberChanges:{projectId:number;state:string}[]=[];
-  for(const m of input.members){const code=txt(m.code);if(!code)continue;const project=await d.prepare("SELECT id FROM projects WHERE code=?").bind(code).first<{id:number}>();if(!project)throw Error("Projektet "+code+" hittas inte.");if(!allowed.selfProjectIds.has(project.id)&&!allowed.projectLedIds.has(project.id))return forbidden();const state=txt(m.state)||"Aktiv";if(!["Aktiv","Vilande"].includes(state))throw Error("Ogiltigt projektmedlemskap");memberChanges.push({projectId:project.id,state})}
-  // No writes until all rows validated.
-  const queries:D1PreparedStatement[]=[];
-  for(const code of new Set(changes.map(a=>a.projectCode).filter(code=>code==="INTERNAL-VERK"||code==="INTERNAL-OVR"))){const p=await d.prepare("SELECT id FROM projects WHERE code=?").bind(code).first();if(!p)queries.push(d.prepare("INSERT INTO projects(code,name,color,status) VALUES (?,?,?,?)").bind(code,code==="INTERNAL-VERK"?"Verksamhetsarbete":"Övrigt arbete","#64748b","Aktivt"))}
-  if(queries.length)await d.batch(queries);
-  let created=0,updated=0;
+  const memberChanges:{code:string;name:string;state:string}[]=[];
+  for(const m of input.members){
+   const code=txt(m.code).toUpperCase();if(!code)continue;
+   if(!validProjectCode(code))throw Error("Ogiltig projektkod under projektmedverkan: "+code);
+   const project=await d.prepare("SELECT id FROM projects WHERE code=? COLLATE NOCASE").bind(code).first<{id:number}>();
+   if(!project&&!canCreate)throw Error("Projektet "+code+" hittas inte.");
+   if(project&&!canCreate&&!allowed.selfProjectIds.has(project.id)&&!allowed.projectLedIds.has(project.id))return forbidden();
+   const state=txt(m.state)||"Aktiv";if(!["Aktiv","Vilande"].includes(state))throw Error("Ogiltigt projektmedlemskap");
+   memberChanges.push({code,name:txt(m.name),state});
+  }
+  // All rows validated before any registration. New employee records do NOT get
+  // a password automatically; an administrator sets their credentials separately.
+  let employeesCreated=0,projectsCreated=0;
+  if(!e){
+   const result=await d.prepare("INSERT INTO employees(name,email,role,manager_id,capacity_percent) VALUES(?,?,?,?,?)")
+    .bind(txt(input.name),email,"Medarbetare",identity.isGroupManager&&!identity.isAdmin?identity.employeeId:null,100).run();
+   e=await employee(d,email);
+   if(!e||Number(result.meta.last_row_id)!==e.id)throw Error("Kunde inte registrera medarbetaren.");
+   employeesCreated=1;
+  }
+  const projectNames=new Map<string,string>();
+  for(const a of changes)if(a.kind==="Projekt")projectNames.set(a.projectCode,a.projectName||projectNames.get(a.projectCode)||a.projectCode);
+  for(const m of memberChanges)projectNames.set(m.code,m.name||projectNames.get(m.code)||m.code);
+  const uniqueCodes=new Set([...changes.map(a=>a.projectCode),...memberChanges.map(m=>m.code)]);
+  for(const code of uniqueCodes){
+   const old=await d.prepare("SELECT id FROM projects WHERE code=? COLLATE NOCASE").bind(code).first<{id:number}>();
+   if(old)continue;
+   if(!canCreate&&code!=="INTERNAL-VERK"&&code!=="INTERNAL-OVR")return forbidden();
+   const label=code==="INTERNAL-VERK"?"Verksamhetsarbete":code==="INTERNAL-OVR"?"Övrigt arbete":(projectNames.get(code)||code).slice(0,150);
+   const inserted=await d.prepare("INSERT INTO projects(code,name,color,status,priority) VALUES(?,?,?,?,?)")
+    .bind(code,label,"#64748b","Aktivt",3).run();
+   projectsCreated++;
+   if(identity.isGroupManager&&!identity.isAdmin&&identity.employeeId){
+    const id=Number(inserted.meta.last_row_id);
+    await d.batch([
+     d.prepare("INSERT OR IGNORE INTO project_leaders(project_id,employee_id) VALUES(?,?)").bind(id,identity.employeeId),
+     d.prepare("INSERT OR IGNORE INTO project_members(project_id,employee_id) VALUES(?,?)").bind(id,identity.employeeId)
+    ]);
+   }
+  }
+  let created=0,updated=0,prioritiesChanged=0;
   for(const a of changes){
    const p=await d.prepare("SELECT id FROM projects WHERE code=?").bind(a.projectCode).first<{id:number}>();if(!p)throw Error("Projektet saknas.");
    if(a.activityId){
-    const today=new Date().toISOString().slice(0,10);
+    const today=importDate;
     const person=await d.prepare("SELECT start_date startDate,end_date endDate,original_end_date originalEnd,completed_at completedAt FROM assignments WHERE activity_id=? AND employee_id=?").bind(a.activityId,e.id).first<{startDate:string;endDate:string;originalEnd:string|null;completedAt:string|null}>();
     if(!person)throw Error("Personens tilldelning saknas: "+a.name);
     const prior=await d.prepare("SELECT item_uid itemUid,current_week currentWeek FROM individual_form_items WHERE activity_id=? AND employee_id=?").bind(a.activityId,e.id).first<{itemUid:string;currentWeek:string}>();
@@ -188,6 +222,7 @@ export async function POST(req:Request){
       q.push(d.prepare("INSERT INTO individual_week_moves(item_uid,from_week,to_week,reason) VALUES(?,?,?,?)").bind(storedUid,prior.currentWeek,a.week,a.reason||null));
     }
     await d.batch(q);
+    if(a.priority!==null&&await updateActivityPriority(d,a.activityId,a.priority,importDate,identity.accountId))prioritiesChanged++;
     const all=await d.prepare("SELECT work_status workStatus,completed_at completedAt FROM assignments WHERE activity_id=?").bind(a.activityId).all<{workStatus:string|null;completedAt:string|null}>();
     const statuses=all.results.map(x=>x.workStatus||(x.completedAt?"Klar":"Planerad"));
     const commonStatus=statuses.length&&statuses.every(x=>x==="Klar")?"Klar":
@@ -204,13 +239,26 @@ export async function POST(req:Request){
     }
     updated++;
    }else{
-    const result=await d.prepare("INSERT INTO activities (project_id,name,description,start_date,end_date,estimated_hours,status,created_by) VALUES(?,?,?,?,?,?,?,?)").bind(p.id,a.name,a.description||null,monday(a.week),friday(a.week),a.hours,a.status,e.id).run();
+    const result=await d.prepare("INSERT INTO activities (project_id,name,description,start_date,end_date,estimated_hours,status,created_by,priority) VALUES(?,?,?,?,?,?,?,?,?)").bind(p.id,a.name,a.description||null,monday(a.week),friday(a.week),a.hours,a.status,e.id,a.priority??3).run();
     const activityId=Number(result.meta.last_row_id);
-    await d.batch([d.prepare("INSERT INTO assignments (activity_id,employee_id,effort_percent,start_date,end_date,completed_at,work_status,original_end_date,status_updated_at) VALUES(?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)").bind(activityId,e.id,Math.round(a.hours/40*100),monday(a.week),friday(a.week),a.status==="Klar"?new Date().toISOString().slice(0,10):null,a.status,friday(a.week)),d.prepare("INSERT INTO individual_form_items(item_uid,employee_id,activity_id,first_week,current_week) VALUES(?,?,?,?,?)").bind(a.uid,e.id,activityId,a.firstWeek,a.week),d.prepare("INSERT INTO assignment_periods(assignment_id,start_date,end_date,effort_percent) SELECT id,start_date,end_date,effort_percent FROM assignments WHERE activity_id=? AND employee_id=?").bind(activityId,e.id)]);created++;
+    await d.prepare("INSERT INTO activity_priority_history(activity_id,effective_from,priority,changed_by,source) VALUES(?,?,?,?,?)")
+      .bind(activityId,monday(a.week),a.priority??3,identity.accountId,"excel").run();
+    await d.batch([d.prepare("INSERT INTO assignments (activity_id,employee_id,effort_percent,start_date,end_date,completed_at,work_status,original_end_date,status_updated_at) VALUES(?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)").bind(activityId,e.id,Math.round(a.hours/40*100),monday(a.week),friday(a.week),a.status==="Klar"?importDate:null,a.status,friday(a.week)),d.prepare("INSERT INTO individual_form_items(item_uid,employee_id,activity_id,first_week,current_week) VALUES(?,?,?,?,?)").bind(a.uid,e.id,activityId,a.firstWeek,a.week),d.prepare("INSERT INTO assignment_periods(assignment_id,start_date,end_date,effort_percent) SELECT id,start_date,end_date,effort_percent FROM assignments WHERE activity_id=? AND employee_id=?").bind(activityId,e.id)]);created++;
    }
   }
-  for(const m of memberChanges)await d.batch([d.prepare("INSERT OR IGNORE INTO project_members(project_id,employee_id) VALUES(?,?)").bind(m.projectId,e.id),d.prepare("INSERT INTO individual_project_state(employee_id,project_id,state) VALUES(?,?,?) ON CONFLICT(employee_id,project_id) DO UPDATE SET state=excluded.state,updated_at=CURRENT_TIMESTAMP").bind(e.id,m.projectId,m.state)]);
+  for(const m of memberChanges){
+   const p=await d.prepare("SELECT id FROM projects WHERE code=? COLLATE NOCASE").bind(m.code).first<{id:number}>();
+   if(!p)throw Error("Projektet saknas vid medlemsregistrering: "+m.code);
+   await d.batch([
+    d.prepare("INSERT OR IGNORE INTO project_members(project_id,employee_id) VALUES(?,?)").bind(p.id,e.id),
+    d.prepare("INSERT INTO individual_project_state(employee_id,project_id,state) VALUES(?,?,?) ON CONFLICT(employee_id,project_id) DO UPDATE SET state=excluded.state,updated_at=CURRENT_TIMESTAMP").bind(e.id,p.id,m.state)
+   ]);
+  }
+  // An imported activity implies membership even if the membership section was empty.
+  for(const code of new Set(changes.filter(a=>a.kind==="Projekt").map(a=>a.projectCode))){
+   await d.prepare("INSERT OR IGNORE INTO project_members(project_id,employee_id) SELECT id,? FROM projects WHERE code=? COLLATE NOCASE").bind(e.id,code).run();
+  }
   await d.prepare("INSERT INTO individual_import_runs(employee_id,row_count,created_count,updated_count) VALUES(?,?,?,?)").bind(e.id,changes.length,created,updated).run();
-  return Response.json({ok:true,created,updated,members:memberChanges.length});
+  return Response.json({ok:true,created,updated,members:memberChanges.length,employeesCreated,projectsCreated,prioritiesChanged});
  }catch(e){console.error(e);return Response.json({error:e instanceof Error?e.message:"Importen misslyckades."},{status:400})}
 }
