@@ -162,6 +162,7 @@ export function createIndividualXlsx(values:FormValues){
  '<dataValidation type="list" allowBlank="1" showErrorMessage="0" sqref="A9:A68 K9:K68"><formula1>$X$2:$X$86</formula1></dataValidation>',
  '<dataValidation type="list" allowBlank="1" sqref="C9:C68"><formula1>"Projekt,Verksamhet,Övrigt"</formula1></dataValidation>',
  '<dataValidation type="list" allowBlank="1" sqref="G9:G68"><formula1>"Planerad,Pågående,Pausad,Klar,Fryst"</formula1></dataValidation>',
+ '<dataValidation type="list" allowBlank="1" sqref="H9:H68"><formula1>"1,2,3,4,5"</formula1></dataValidation>',
  '<dataValidation type="list" allowBlank="1" sqref="C77:C110"><formula1>"Aktiv,Vilande"</formula1></dataValidation>'
  ].join("");
  // Excel needs rows numerically sorted (source rows 2..86 are inserted in order below).
@@ -171,7 +172,7 @@ export function createIndividualXlsx(values:FormValues){
  +'<cols>'+[[1,28],[2,40],[3,18],[4,28],[5,19],[6,18],[7,18],[8,15],[9,18],[10,32],[11,27],[12,31],[13,19]].map(([n,w])=>'<col min="'+n+'" max="'+n+'" width="'+w+'" customWidth="1"/>').join('')+'<col min="24" max="24" hidden="1"/></cols>'
  +'<sheetData>'+rows.join("")+'</sheetData>'
  +'<mergeCells count="3"><mergeCell ref="A1:M2"/><mergeCell ref="A6:M6"/><mergeCell ref="A73:M74"/></mergeCells>'
- +'<dataValidations count="4">'+validations+'</dataValidations></worksheet>';
+ +'<dataValidations count="5">'+validations+'</dataValidations></worksheet>';
  const styles='<?xml version="1.0" encoding="UTF-8"?>'
  +'<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><fonts count="3"><font><sz val="11"/><name val="Aptos"/></font><font><b/><color rgb="FFFFFFFF"/><sz val="16"/></font><font><b/><color rgb="FFFFFFFF"/><sz val="11"/></font></fonts><fills count="5"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FF142B40"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FF1D4ED8"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFEFF6FF"/></patternFill></fill></fills><borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="6"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="0" fontId="1" fillId="2" borderId="0" xfId="0" applyFill="1" applyFont="1"/><xf numFmtId="0" fontId="2" fillId="3" borderId="0" xfId="0" applyFill="1" applyFont="1"/><xf numFmtId="0" fontId="0" fillId="4" borderId="0" xfId="0" applyFill="1"/><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="0" fontId="0" fillId="4" borderId="0" xfId="0" applyFill="1"/></cellXfs></styleSheet>';
  return zip({
