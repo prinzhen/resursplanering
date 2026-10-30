@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - feature/individual-excel-import-export
+      - feature/team-roles-approvals
   workflow_dispatch:
 
 permissions:
@@ -29,5 +30,7 @@ jobs:
         run: pnpm install --frozen-lockfile
       - name: Build web application
         run: pnpm build
+      - name: Typecheck
+        run: pnpm exec tsc --noEmit
       - name: Run isolated SQLite / API / Excel integration tests
         run: node scripts/test-individual-integration.mjs
