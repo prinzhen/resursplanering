@@ -337,9 +337,9 @@ function KanbanBoard({cards,onSelect,onMove}:{cards:KanbanCard[];onSelect:(activ
  };
  const colors:Record<KanbanStatus,string>={Planerad:"border-slate-300 bg-slate-100",Pågående:"border-blue-300 bg-blue-50",Pausad:"border-amber-300 bg-amber-50",Fryst:"border-cyan-300 bg-cyan-50",Klar:"border-emerald-300 bg-emerald-50"};
  return <div className="space-y-3"><p className="text-sm text-slate-600">Flytta ett kort till en annan statuskolumn eller välj status på kortet. En persons kort ändrar bara den personens status. Ett projektkort ändrar hela aktivitetens status.</p>
- <div className="grid gap-3 overflow-x-auto pb-3 md:grid-cols-2 2xl:grid-cols-5">{KANBAN_COLUMNS.map(status=>{
+ <div className="flex items-start gap-3 overflow-x-auto pb-3">{KANBAN_COLUMNS.map(status=>{
   const items=cards.filter(c=>c.status===status);
-  return <section className={`min-w-[200px] rounded-xl border p-2 ${colors[status]} ${hover===status?"ring-2 ring-blue-500":""}`} key={status}
+  return <section className={`min-w-[225px] flex-[1_0_225px] rounded-xl border p-2 ${colors[status]} ${hover===status?"ring-2 ring-blue-500":""}`} key={status}
    onDragOver={event=>{event.preventDefault();setHover(status)}}
    onDragLeave={event=>{if(!event.currentTarget.contains(event.relatedTarget as Node))setHover(null)}}
    onDrop={event=>{event.preventDefault();const current=cards.find(c=>c.key===dragCard.current);dragCard.current=null;setHover(null);if(current)void move(current,status)}}>
