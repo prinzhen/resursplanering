@@ -9,12 +9,18 @@ export const employees = sqliteTable("employees", {
 export const projects = sqliteTable("projects", {
   id: integer("id").primaryKey({ autoIncrement: true }), code: text("code").notNull().unique(),
   name: text("name").notNull(), color: text("color").notNull().default("#2563eb"),
+  priority: integer("priority").notNull().default(3),
   description: text("description"), status: text("status").notNull().default("Aktivt"),
 });
 export const projectMembers = sqliteTable("project_members", {
   projectId: integer("project_id").notNull().references(() => projects.id),
   employeeId: integer("employee_id").notNull().references(() => employees.id),
 }, (table) => [uniqueIndex("idx_project_members_project_employee").on(table.projectId, table.employeeId)]);
+export const employeeProjectOrders = sqliteTable("employee_project_orders", {
+ employeeId:integer("employee_id").notNull().references(()=>employees.id,{onDelete:"cascade"}),
+ projectId:integer("project_id").notNull().references(()=>projects.id,{onDelete:"cascade"}),
+ sortOrder:integer("sort_order").notNull(),
+},table=>[uniqueIndex("idx_employee_project_orders_employee_project").on(table.employeeId,table.projectId)]);
 export const workPackages = sqliteTable("work_packages", {
   id: integer("id").primaryKey({ autoIncrement: true }),
   projectId: integer("project_id").notNull().references(() => projects.id),
@@ -31,4 +37,25 @@ export const assignments = sqliteTable("assignments", {
   id: integer("id").primaryKey({ autoIncrement: true }), activityId: integer("activity_id").notNull().references(() => activities.id),
   employeeId: integer("employee_id").notNull().references(() => employees.id), effortPercent: integer("effort_percent").notNull(),
   startDate: text("start_date").notNull(), endDate: text("end_date").notNull(),
+  completedAt: text("completed_at"), workStatus: text("work_status"),
+  originalEndDate: text("original_end_date"), statusUpdatedAt: text("status_updated_at"),
 }, (table) => [uniqueIndex("idx_assignments_activity_employee").on(table.activityId, table.employeeId)]);
+
+export const assignmentPeriods = sqliteTable("assignment_periods", {
+ id: integer("id").primaryKey({autoIncrement:true}),
+ assignmentId: integer("assignment_id").notNull().references(() => assignments.id,{onDelete:"cascade"}),
+ startDate: text("start_date").notNull(),
+ endDate: text("end_date").notNull(),
+ effortPercent: integer("effort_percent").notNull(),
+});
+
+export const employeeGroups = sqliteTable("employee_groups", {
+ id:integer("id").primaryKey({autoIncrement:true}),
+ name:text("name").notNull().unique(),
+ description:text("description"),
+ createdAt:text("created_at").notNull().default("CURRENT_TIMESTAMP"),
+});
+export const employeeGroupMembers = sqliteTable("employee_group_members",{
+ groupId:integer("group_id").notNull().references(()=>employeeGroups.id,{onDelete:"cascade"}),
+ employeeId:integer("employee_id").notNull().references(()=>employees.id,{onDelete:"cascade"}),
+},t=>[uniqueIndex("idx_employee_group_members_group_employee").on(t.groupId,t.employeeId)]);
