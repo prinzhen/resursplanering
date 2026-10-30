@@ -296,6 +296,27 @@ try{
  check("Employee Gantt chooses full planning when current four weeks contain no tasks",()=>{
   assert.match(ganttSource,/items\.some\(i=>overlaps\(i\.start,i\.end,initialStart,periodEnd\(initialStart,"4w"\)\)\)\?"4w":"all"/);
  });
+ const {ganttState,ganttColor}=await import("../lib/gantt-status.ts");
+ check("Gantt status and color helpers work for both screen and print",()=>{
+  const active={status:"Pågår",color:"#2563eb"};
+  const frozen={status:"Fryst",color:"#2563eb"};
+  const paused={status:"Pausad",color:"#2563eb"};
+  const completed={status:"Pågående",completedAt:"2026-10-30",color:"#2563eb"};
+  assert.equal(ganttState(active),"Pågående");
+  assert.equal(ganttColor(active),active.color);
+  assert.equal(ganttState(frozen),"Fryst");
+  assert.match(ganttColor(frozen),/color-mix/);
+  assert.equal(ganttState(paused),"Pausad");
+  assert.equal(ganttState(completed),"Klar");
+  assert.match(ganttColor(completed),/color-mix/);
+ });
+ const source=await (await import("node:fs/promises")).readFile("app/page.tsx","utf8");
+ check("Both Gantt views import status helpers, preventing browser ReferenceError",()=>{
+  assert.match(source,/import\s*\{\s*ganttState\s*,\s*ganttColor\s*\}\s*from\s*["']@\/lib\/gantt-status["']/);
+  assert.match(source,/function PrintGantt\(/);
+  assert.match(source,/function GanttView\(/);
+  assert.equal((source.match(/ganttState\(/g)||[]).length>=3,true);
+ });
  // Inspect the real SQLite state independently of API serialization.
  const sqliteFile=await findSqlite(join(dir,"data"));
  const sql=new DatabaseSync(sqliteFile,{readOnly:true});
