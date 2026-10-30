@@ -27,21 +27,25 @@ export async function GET(req:Request){
   const d=db(),u=new URL(req.url),email=txt(u.searchParams.get("email"));
   if(!email)return Response.json({error:"Välj en medarbetare."},{status:400});
   const e=await employee(d,email);if(!e)return Response.json({error:"Medarbetaren saknas."},{status:404});
-  const items=await d.prepare(`SELECT i.item_uid uid,i.current_week week,i.first_week firstWeek,
- a.name,a.description comment,a.status,a.estimated_hours hours,a.code,
+  // Include existing project assignments as well as earlier spreadsheet items.
+  const items=await d.prepare(`SELECT a.id activityId, COALESCE(i.item_uid,'activity-'||a.id) uid,
+ COALESCE(i.current_week,'') savedWeek, COALESCE(i.first_week,'') firstWeek,
+ a.name,a.description comment,a.status,a.estimated_hours hours,a.start_date startDate,
  p.code projectCode,p.name projectName,p.id projectId,
  CASE WHEN p.code='INTERNAL-VERK' THEN 'Verksamhet' WHEN p.code='INTERNAL-OVR' THEN 'Övrigt' ELSE 'Projekt' END kind
- FROM individual_form_items i JOIN activities a ON a.id=i.activity_id JOIN projects p ON p.id=a.project_id
- WHERE i.employee_id=? ORDER BY i.current_week,a.name`).bind(e.id).all<Record<string,unknown>>();
+ FROM assignments s JOIN activities a ON a.id=s.activity_id JOIN projects p ON p.id=a.project_id
+ LEFT JOIN individual_form_items i ON i.activity_id=a.id AND i.employee_id=s.employee_id
+ WHERE s.employee_id=? ORDER BY a.start_date,a.name`).bind(e.id).all<Record<string,unknown>>();
+  const iso=(raw:string)=>{const d=new Date(raw+'T00:00:00Z');if(Number.isNaN(d.getTime()))return '';d.setUTCDate(d.getUTCDate()+4-(d.getUTCDay()||7));const year=d.getUTCFullYear();const start=new Date(Date.UTC(year,0,1));return year+'-W'+String(Math.ceil(((d.getTime()-start.getTime())/86400000+1)/7)).padStart(2,'0')};
   const memberships=await d.prepare(`SELECT p.code,p.name,COALESCE(s.state,'Aktiv') state
  FROM project_members m JOIN projects p ON p.id=m.project_id
  LEFT JOIN individual_project_state s ON s.employee_id=m.employee_id AND s.project_id=p.id
  WHERE m.employee_id=? AND p.code NOT LIKE 'INTERNAL-%' ORDER BY p.code`).bind(e.id).all<{code:string;name:string;state:string}>();
   const result:FormValues={name:e.name,email:e.email,activities:items.results.filter(a=>["Planerad","Pågående","Pausad","Pågår"].includes(String(a.status))).map(a=>({
-   uid:String(a.uid),week:String(a.week),name:String(a.name),kind:String(a.kind),
+   uid:String(a.uid),week:String(a.savedWeek||iso(String(a.startDate))),name:String(a.name),kind:String(a.kind),
    link:String(a.projectName||""),projectCode:String(a.projectCode).startsWith("INTERNAL-")?"":String(a.projectCode),
    hours:Number(a.hours||0),status:cleanStatus(String(a.status)),priority:"",dueDate:"",
-   comment:String(a.comment||""),firstWeek:String(a.firstWeek),reason:""
+   comment:String(a.comment||""),firstWeek:String(a.firstWeek||iso(String(a.startDate))),reason:""
   })),members:memberships.results};
   return Response.json(result);
  }catch(e){console.error(e);return Response.json({error:"Kunde inte läsa veckoplaneringen. Kontrollera att migrationen är körd."},{status:500})}
@@ -63,7 +67,9 @@ export async function POST(req:Request){
    if(!code)throw Error("Projektkod saknas på rad "+(i+9));
    const uid=txt(a.uid)||crypto.randomUUID();
    if(!safeUID(uid))throw Error("Ogiltigt aktivitets-ID på rad "+(i+9));
-   const existing=await d.prepare("SELECT i.activity_id activityId FROM individual_form_items i WHERE i.item_uid=? AND i.employee_id=?").bind(uid,e.id).first<{activityId:number}>();
+   const idMatch=/^activity-(\d+)$/.exec(uid);
+      const assigned=idMatch?await d.prepare("SELECT activity_id activityId FROM assignments WHERE activity_id=? AND employee_id=?").bind(Number(idMatch[1]),e.id).first<{activityId:number}>():null;
+      const existing=assigned||await d.prepare("SELECT i.activity_id activityId FROM individual_form_items i WHERE i.item_uid=? AND i.employee_id=?").bind(uid,e.id).first<{activityId:number}>();
    if(a.uid&&!existing)throw Error("Aktivitets-ID "+uid+" tillhör inte denna medarbetare eller finns inte. Avbryter för att undvika dubbletter.");
    if(kind==="Projekt"){const p=await d.prepare("SELECT id FROM projects WHERE code=?").bind(code).first();if(!p)throw Error("Projektkoden "+code+" finns inte. Lägg upp projektet först.")}
    changes.push({uid,week:current,firstWeek:first,name:txt(a.name),kind,projectCode:code,hours:hrs,status,description:txt(a.comment).slice(0,500),reason:txt(a.reason).slice(0,500),activityId:existing?.activityId??null});
@@ -79,7 +85,7 @@ export async function POST(req:Request){
    const p=await d.prepare("SELECT id FROM projects WHERE code=?").bind(a.projectCode).first<{id:number}>();if(!p)throw Error("Projektet saknas.");
    if(a.activityId){
     const prev=await d.prepare("SELECT current_week currentWeek FROM individual_form_items WHERE item_uid=?").bind(a.uid).first<{currentWeek:string}>();
-    const statements=[d.prepare("UPDATE activities SET name=?,description=?,project_id=?,start_date=?,end_date=?,estimated_hours=?,status=? WHERE id=?").bind(a.name,a.description||"Aktivitet från individuellt formulär",p.id,monday(a.week),friday(a.week),a.hours,a.status,a.activityId),d.prepare("UPDATE individual_form_items SET current_week=?,updated_at=CURRENT_TIMESTAMP WHERE item_uid=?").bind(a.week,a.uid)];
+    const statements=[d.prepare("UPDATE activities SET name=?,description=?,project_id=?,start_date=?,end_date=?,estimated_hours=?,status=? WHERE id=?").bind(a.name,a.description||"Aktivitet från individuellt formulär",p.id,monday(a.week),friday(a.week),a.hours,a.status,a.activityId),d.prepare("INSERT INTO individual_form_items (item_uid,employee_id,activity_id,first_week,current_week) VALUES (?,?,?,?,?) ON CONFLICT(employee_id,activity_id) DO UPDATE SET current_week=excluded.current_week,updated_at=CURRENT_TIMESTAMP").bind(a.uid,e.id,a.activityId,a.firstWeek,a.week)];
     if(prev&&prev.currentWeek!==a.week)statements.push(d.prepare("INSERT INTO individual_week_moves(item_uid,from_week,to_week,reason) VALUES(?,?,?,?)").bind(a.uid,prev.currentWeek,a.week,a.reason||null));
     await d.batch(statements);updated++;
    }else{
