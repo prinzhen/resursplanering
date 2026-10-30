@@ -55,6 +55,12 @@ export async function accessScope(d:D1Database,user:Identity):Promise<AccessScop
  // Read-only work packages are available wherever the enclosing project is visible.
  const allWorkPackages=await d.prepare("SELECT id,project_id projectId FROM work_packages").all<{id:number;projectId:number}>();
  for(const w of allWorkPackages.results)if(result.projectIds.has(w.projectId))result.workPackageIds.add(w.id);
+  // Work-package leaders may inspect all assigned resources within their specific uppdrag.
+ if(result.workPackageLedIds.size){
+  const ids=[...result.workPackageLedIds],inSql=ids.map(()=>"?").join(",");
+  const rows=await d.prepare(`SELECT DISTINCT s.employee_id id FROM assignments s JOIN activities a ON a.id=s.activity_id WHERE a.work_package_id IN (${inSql})`).bind(...ids).all<{id:number}>();
+  for(const row of rows.results)result.employeeIds.add(row.id);
+ }
   // Project leads need to see every resource on their projects.
  if(result.projectLedIds.size){
   const ids=[...result.projectLedIds],inSql=ids.map(()=>"?").join(",");
@@ -144,7 +150,7 @@ export function filteredSnapshot<T extends Record<string,any>>(data:T,user:Ident
  const activities=(data.activities||[]).filter((a:{projectId:number})=>scope.projectIds.has(a.projectId));
  const allowedActivities=new Set(activities.map((a:{id:number})=>a.id));
  const allowedEmployees=new Set(scope.employeeIds);
- const assignments=(data.assignments||[]).filter((a:{activityId:number;employeeId:number})=>allowedActivities.has(a.activityId)&&(allowedEmployees.has(a.employeeId)||scope.projectLedIds.has(activities.find((x:{id:number})=>x.id===a.activityId)?.projectId)));
+ const assignments=(data.assignments||[]).filter((a:{activityId:number;employeeId:number})=>allowedActivities.has(a.activityId)&&(allowedEmployees.has(a.employeeId)||scope.projectLedIds.has(activities.find((x:{id:number})=>x.id===a.activityId)?.projectId)||scope.workPackageLedIds.has(activities.find((x:{id:number;workPackageId:number|null})=>x.id===a.activityId)?.workPackageId||0)));
  const visibleAssignmentIds=new Set(assignments.map((a:{id:number})=>a.id));
  const visibleTeams=new Set(scope.teamIds);
  return {...data,
