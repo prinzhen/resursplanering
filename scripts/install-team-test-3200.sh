@@ -100,12 +100,20 @@ WantedBy=multi-user.target
 EOF
 systemctl daemon-reload
 systemctl enable --now "${SERVICE}"
-sleep 2
-systemctl is-active --quiet "${SERVICE}" || {
- journalctl -u "${SERVICE}" -n 70 --no-pager; exit 1;
-}
-curl -fsS http://127.0.0.1:3200/api/auth >/dev/null
-code="$(curl -sS -o /dev/null -w '%{http_code}' http://127.0.0.1:3200/api/data)"
+ready=false
+for attempt in {1..45}; do
+ if curl --connect-timeout 1 --max-time 2 -fsS http://127.0.0.1:3200/api/auth >/dev/null 2>&1; then
+  ready=true
+  break
+ fi
+ sleep 1
+done
+if [[ "${ready}" != true ]]; then
+ echo "Testservern svarade inte på port 3200." >&2
+ journalctl -u "${SERVICE}" -n 70 --no-pager
+ exit 1
+fi
+code="$(curl --connect-timeout 2 --max-time 5 -sS -o /dev/null -w '%{http_code}' http://127.0.0.1:3200/api/data)"
 [[ "${code}" == 401 ]] || { echo "Säkerhetskontroll misslyckades: anonymt API gav HTTP ${code} (väntat 401)." >&2; exit 1; }
 echo "KLART. 3200 använder separat kod och konsistent databaskopia. 3100 har inte stoppats."
 echo "På din dator: ssh -L 3200:127.0.0.1:3200 ${RUN_USER}@PLANERING-IP"
