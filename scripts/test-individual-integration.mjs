@@ -63,6 +63,12 @@ try{
   assert.ok(assignment(snap,1,erik).completedAt);
   assert.ok(assignment(snap,1,sara).completedAt);
  });
+ const firstCompletion=assignment(snap,1,erik).completedAt,firstCloseEnd=assignment(snap,1,erik).endDate;
+ snap=await request("/api/data",{action:"setActivityStatus",activityId:1,status:"Klar"});
+ check("Repeating full completion is idempotent",()=>{
+  assert.equal(assignment(snap,1,erik).completedAt,firstCompletion);
+  assert.equal(assignment(snap,1,erik).endDate,firstCloseEnd);
+ });
  snap=await request("/api/data",{action:"setActivityStatus",activityId:1,status:"Pågående"});
  check("Reopening global task restores each employee's planning period",()=>{
   assert.equal(activity(snap,1).status,"Pågår");
