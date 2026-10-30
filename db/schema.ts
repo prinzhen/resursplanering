@@ -31,4 +31,6 @@ export const assignments = sqliteTable("assignments", {
   id: integer("id").primaryKey({ autoIncrement: true }), activityId: integer("activity_id").notNull().references(() => activities.id),
   employeeId: integer("employee_id").notNull().references(() => employees.id), effortPercent: integer("effort_percent").notNull(),
   startDate: text("start_date").notNull(), endDate: text("end_date").notNull(),
+  completedAt: text("completed_at"), workStatus: text("work_status"),
+  originalEndDate: text("original_end_date"), statusUpdatedAt: text("status_updated_at"),
 }, (table) => [uniqueIndex("idx_assignments_activity_employee").on(table.activityId, table.employeeId)]);
