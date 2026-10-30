@@ -16,7 +16,7 @@ export async function GET(req:Request){
  return Response.json({directoryEmployees:directory.results,accounts:accounts.results,
   projectLeaders:projects.results.filter(p=>user.isAdmin||scope.projectIds.has(p.projectId)),
   teamLeaders:teams.results.filter(t=>user.isAdmin||scope.teamIds.has(t.teamId)),
-  viewer:{employeeId:user.employeeId,isAdmin:user.isAdmin}},{headers:{"cache-control":"no-store"}});
+  viewer:{accountId:user.accountId,employeeId:user.employeeId,isAdmin:user.isAdmin}},{headers:{"cache-control":"no-store"}});
 }
 export async function POST(req:Request){
  try{
