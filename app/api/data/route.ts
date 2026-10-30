@@ -32,9 +32,9 @@ async function snapshot(d:D1Database){const [e,p,w,a,s,m,periods,formItems,weekM
  d.prepare("SELECT employee_id employeeId,project_id projectId,sort_order sortOrder FROM employee_project_orders ORDER BY employee_id,sort_order").all<Row>(),
  d.prepare("SELECT id,name,description,owner_id ownerId,created_at createdAt FROM employee_groups ORDER BY name,id").all<Row>(),
  d.prepare("SELECT group_id groupId,employee_id employeeId FROM employee_group_members ORDER BY group_id,employee_id").all<Row>(),
- d.prepare("SELECT project_id projectId,employee_id employeeId FROM project_leaders ORDER BY project_id,employee_id").all<Row>(),
- d.prepare("SELECT team_id teamId,employee_id employeeId FROM team_leaders ORDER BY team_id,employee_id").all<Row>(),
- d.prepare("SELECT work_package_id workPackageId,employee_id employeeId FROM work_package_leaders ORDER BY work_package_id,employee_id").all<Row>(),
+ d.prepare("SELECT l.project_id projectId,l.employee_id employeeId,e.name employeeName FROM project_leaders l JOIN employees e ON e.id=l.employee_id ORDER BY l.project_id,l.employee_id").all<Row>(),
+ d.prepare("SELECT l.team_id teamId,l.employee_id employeeId,e.name employeeName FROM team_leaders l JOIN employees e ON e.id=l.employee_id ORDER BY l.team_id,l.employee_id").all<Row>(),
+ d.prepare("SELECT l.work_package_id workPackageId,l.employee_id employeeId,e.name employeeName FROM work_package_leaders l JOIN employees e ON e.id=l.employee_id ORDER BY l.work_package_id,l.employee_id").all<Row>(),
  d.prepare("SELECT id,activity_id activityId,requested_by requestedBy,recipient_id recipientId,effort_percent effortPercent,start_date startDate,end_date endDate,status,comment,decided_at decidedAt,created_at createdAt FROM assignment_requests ORDER BY id").all<Row>(),
  d.prepare("SELECT id,submitted_by submittedBy,code,name,description,color,priority,status,reviewed_by reviewedBy,reviewed_at reviewedAt,created_project_id createdProjectId,comment,created_at createdAt FROM project_proposals ORDER BY id").all<Row>(),
  d.prepare("SELECT id,activity_id activityId,effective_from effectiveFrom,priority,changed_by changedBy,source,created_at createdAt FROM activity_priority_history ORDER BY activity_id,effective_from,id").all<Row>()]);
