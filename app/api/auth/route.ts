@@ -18,7 +18,7 @@ export async function POST(req:Request){
    const user=await sessionIdentity(req,d());
    if(!user)return Response.json({error:"Du måste logga in"},{status:401});
    const previous=String(input.currentPassword||""),next=String(input.newPassword||"");
-   if(next.length<12||next.length>256)return Response.json({error:"Lösenordet måste vara minst 12 tecken."},{status:400});
+   if(next.length<6||next.length>256)return Response.json({error:"Lösenordet måste vara minst 6 tecken."},{status:400});
    if(!await verifyPassword(d(),user.email,previous))return Response.json({error:"Nuvarande lösenord är fel."},{status:403});
    const salt=randomHex(16),hash=await passwordHash(next,salt);
    await d().batch([
