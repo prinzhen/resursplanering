@@ -30,13 +30,13 @@ export async function GET(req:Request){
   // Include existing project assignments as well as earlier spreadsheet items.
   const items=await d.prepare(`SELECT a.id activityId, COALESCE(i.item_uid,'activity-'||a.id) uid,
  COALESCE(i.current_week,'') savedWeek, COALESCE(i.first_week,'') firstWeek,
- a.name,a.description comment,a.status,a.estimated_hours hours,a.start_date startDate,s.completed_at completedAt,
+ a.name,a.description comment,a.status,a.estimated_hours hours,a.start_date startDate,s.completed_at completedAt,s.work_status workStatus,
  p.code projectCode,p.name projectName,p.id projectId,
  CASE WHEN p.code='INTERNAL-VERK' THEN 'Verksamhet' WHEN p.code='INTERNAL-OVR' THEN 'Övrigt' ELSE 'Projekt' END kind
  FROM assignments s JOIN activities a ON a.id=s.activity_id JOIN projects p ON p.id=a.project_id
  LEFT JOIN individual_form_items i ON i.activity_id=a.id AND i.employee_id=s.employee_id
  WHERE s.employee_id=? ORDER BY a.start_date,a.name`).bind(e.id).all<Record<string,unknown>>();
-  const tracked=await d.prepare(`SELECT i.item_uid uid,i.current_week savedWeek,i.first_week firstWeek,a.id activityId,a.name,a.description comment,a.status,a.estimated_hours hours,a.start_date startDate,NULL completedAt,p.code projectCode,p.name projectName,p.id projectId,CASE WHEN p.code='INTERNAL-VERK' THEN 'Verksamhet' WHEN p.code='INTERNAL-OVR' THEN 'Övrigt' ELSE 'Projekt' END kind FROM individual_form_items i JOIN activities a ON a.id=i.activity_id JOIN projects p ON p.id=a.project_id LEFT JOIN assignments s ON s.activity_id=i.activity_id AND s.employee_id=i.employee_id WHERE i.employee_id=? AND s.id IS NULL ORDER BY a.start_date,a.name`).bind(e.id).all<Record<string,unknown>>();
+  const tracked=await d.prepare(`SELECT i.item_uid uid,i.current_week savedWeek,i.first_week firstWeek,a.id activityId,a.name,a.description comment,a.status,a.estimated_hours hours,a.start_date startDate,NULL completedAt,NULL workStatus,p.code projectCode,p.name projectName,p.id projectId,CASE WHEN p.code='INTERNAL-VERK' THEN 'Verksamhet' WHEN p.code='INTERNAL-OVR' THEN 'Övrigt' ELSE 'Projekt' END kind FROM individual_form_items i JOIN activities a ON a.id=i.activity_id JOIN projects p ON p.id=a.project_id LEFT JOIN assignments s ON s.activity_id=i.activity_id AND s.employee_id=i.employee_id WHERE i.employee_id=? AND s.id IS NULL ORDER BY a.start_date,a.name`).bind(e.id).all<Record<string,unknown>>();
   // A previously imported row must not disappear because its allocation link is missing.
   const sourceRows=[...items.results,...tracked.results];
   const iso=(raw:string)=>{const d=new Date(raw+'T00:00:00Z');if(Number.isNaN(d.getTime()))return '';d.setUTCDate(d.getUTCDate()+4-(d.getUTCDay()||7));const year=d.getUTCFullYear();const start=new Date(Date.UTC(year,0,1));return year+'-W'+String(Math.ceil(((d.getTime()-start.getTime())/86400000+1)/7)).padStart(2,'0')};
@@ -44,10 +44,10 @@ export async function GET(req:Request){
  FROM project_members m JOIN projects p ON p.id=m.project_id
  LEFT JOIN individual_project_state s ON s.employee_id=m.employee_id AND s.project_id=p.id
  WHERE m.employee_id=? AND p.code NOT LIKE 'INTERNAL-%' ORDER BY p.code`).bind(e.id).all<{code:string;name:string;state:string}>();
-  const result:FormValues={name:e.name,email:e.email,activities:sourceRows.filter(a=>!a.completedAt&&["Planerad","Pågående","Pausad","Pågår"].includes(String(a.status))).map(a=>({
+  const result:FormValues={name:e.name,email:e.email,activities:sourceRows.filter(a=>!a.completedAt&&["Planerad","Pågående","Pausad","Pågår"].includes(String(a.workStatus||a.status))).map(a=>({
    uid:String(a.uid),week:String(a.savedWeek||iso(String(a.startDate))),name:String(a.name),kind:String(a.kind),
    link:String(a.projectName||""),projectCode:String(a.projectCode).startsWith("INTERNAL-")?"":String(a.projectCode),
-   hours:Number(a.hours||0),status:cleanStatus(String(a.status)),priority:"",dueDate:"",
+   hours:Number(a.hours||0),status:cleanStatus(String(a.workStatus||a.status)),priority:"",dueDate:"",
    comment:String(a.comment||""),firstWeek:String(a.firstWeek||iso(String(a.startDate))),reason:""
   })),members:memberships.results};
   return Response.json(result);
@@ -87,39 +87,36 @@ export async function POST(req:Request){
   for(const a of changes){
    const p=await d.prepare("SELECT id FROM projects WHERE code=?").bind(a.projectCode).first<{id:number}>();if(!p)throw Error("Projektet saknas.");
    if(a.activityId){
-    const prev=await d.prepare("SELECT current_week currentWeek FROM individual_form_items WHERE item_uid=? AND employee_id=?").bind(a.uid,e.id).first<{currentWeek:string}>();
     const today=new Date().toISOString().slice(0,10);
-    const completed=a.status==="Klar";
-    const currentAssignment=await d.prepare("SELECT start_date startDate,end_date endDate,completed_at completedAt FROM assignments WHERE activity_id=? AND employee_id=?").bind(a.activityId,e.id).first<{startDate:string;endDate:string;completedAt:string|null}>();
-    if(!currentAssignment)throw Error("Aktiviteten saknar bemanning för personen.");
-    const statements:D1PreparedStatement[]=[
-      d.prepare("UPDATE individual_form_items SET current_week=?,updated_at=CURRENT_TIMESTAMP WHERE employee_id=? AND activity_id=?").bind(a.week,e.id,a.activityId),
-      d.prepare("INSERT OR IGNORE INTO individual_form_items(item_uid,employee_id,activity_id,first_week,current_week) VALUES(?,?,?,?,?)").bind(a.uid,e.id,a.activityId,a.firstWeek,a.week)
+    const person=await d.prepare("SELECT start_date startDate,end_date endDate,original_end_date originalEnd FROM assignments WHERE activity_id=? AND employee_id=?").bind(a.activityId,e.id).first<{startDate:string;endDate:string;originalEnd:string|null}>();
+    if(!person)throw Error("Personens tilldelning saknas: "+a.name);
+    const prior=await d.prepare("SELECT current_week currentWeek FROM individual_form_items WHERE activity_id=? AND employee_id=?").bind(a.activityId,e.id).first<{currentWeek:string}>();
+    const done=a.status==="Klar",frozen=a.status==="Fryst";
+    const originalEnd=person.originalEnd||person.endDate;
+    const from=monday(a.week),until=friday(a.week);
+    // The latest accepted import sets this person's status, including reopening a finished task.
+    const q:D1PreparedStatement[]=[
+     d.prepare("INSERT INTO individual_form_items(item_uid,employee_id,activity_id,first_week,current_week) VALUES(?,?,?,?,?) ON CONFLICT(employee_id,activity_id) DO UPDATE SET current_week=excluded.current_week,updated_at=CURRENT_TIMESTAMP").bind(a.uid,e.id,a.activityId,a.firstWeek,a.week),
+     d.prepare("UPDATE assignments SET work_status=?,status_updated_at=CURRENT_TIMESTAMP,completed_at=?,original_end_date=COALESCE(original_end_date,?),start_date=?,end_date=? WHERE activity_id=? AND employee_id=?").bind(a.status,done?today:null,originalEnd,done?person.startDate:from,done?(today<person.startDate?person.startDate:today):until,a.activityId,e.id)
     ];
-    if(prev&&prev.currentWeek!==a.week)statements.push(d.prepare("INSERT INTO individual_week_moves(item_uid,from_week,to_week,reason) VALUES(?,?,?,?)").bind(a.uid,prev.currentWeek,a.week,a.reason||null));
-    // Keep historical allocation and completion date, but stop counting finished work.
-    if(completed){
-      statements.push(d.prepare("UPDATE assignments SET completed_at=COALESCE(completed_at,?),end_date=CASE WHEN end_date>? AND start_date<=? THEN ? ELSE end_date END WHERE employee_id=? AND activity_id=?").bind(today,today,today,today,e.id,a.activityId));
+    if(prior&&prior.currentWeek!==a.week)q.push(d.prepare("INSERT INTO individual_week_moves(item_uid,from_week,to_week,reason) VALUES(?,?,?,?)").bind(a.uid,prior.currentWeek,a.week,a.reason||null));
+    await d.batch(q);
+    const counts=await d.prepare("SELECT COUNT(*) total,SUM(CASE WHEN work_status='Klar' OR (work_status IS NULL AND completed_at IS NOT NULL) THEN 1 ELSE 0 END) finished FROM assignments WHERE activity_id=?").bind(a.activityId).first<{total:number;finished:number}>();
+    if(counts&&counts.total>0&&counts.finished===counts.total){
+     await d.prepare("UPDATE activities SET status='Klar',end_date=MIN(end_date,?) WHERE id=?").bind(today,a.activityId).run();
     }else{
-      statements.push(d.prepare("UPDATE assignments SET completed_at=NULL,start_date=?,end_date=? WHERE employee_id=? AND activity_id=?").bind(monday(a.week),friday(a.week),e.id,a.activityId));
+     const live=await d.prepare("SELECT COUNT(*) active FROM assignments WHERE activity_id=? AND COALESCE(work_status,CASE WHEN completed_at IS NOT NULL THEN 'Klar' ELSE 'Pågår' END) IN ('Planerad','Pågående','Pågår','Pausad')").bind(a.activityId).first<{active:number}>();
+     if((live?.active||0)>0)await d.prepare("UPDATE activities SET status='Pågår',end_date=MAX(end_date,?) WHERE id=?").bind(done?originalEnd:until,a.activityId).run();
     }
-    await d.batch(statements);
-    const counts=await d.prepare("SELECT COUNT(*) total,SUM(CASE WHEN completed_at IS NOT NULL THEN 1 ELSE 0 END) completed FROM assignments WHERE activity_id=?").bind(a.activityId).first<{total:number;completed:number}>();
-    if(counts && counts.total>0 && counts.completed===counts.total){
-      // Activity is globally finished only after every assigned employee finishes.
-      const original=await d.prepare("SELECT start_date startDate,end_date endDate FROM activities WHERE id=?").bind(a.activityId).first<{startDate:string;endDate:string}>();
-      const end=original&&today<original.endDate&&today>=original.startDate?today:original?.endDate;
-      await d.prepare("UPDATE activities SET status=?,end_date=? WHERE id=?").bind("Klar",end??today,a.activityId).run();
-    }else{
-      await d.prepare("UPDATE activities SET status=CASE WHEN status=? THEN ? ELSE status END WHERE id=?").bind("Klar","Pågår",a.activityId).run();
-    }
-    updated++;   }else{
+    updated++;
+   }else{
     const result=await d.prepare("INSERT INTO activities (project_id,name,description,start_date,end_date,estimated_hours,status) VALUES(?,?,?,?,?,?,?)").bind(p.id,a.name,a.description||"Aktivitet från individuellt formulär",monday(a.week),friday(a.week),a.hours,a.status).run();
     const activityId=Number(result.meta.last_row_id);
-    await d.batch([d.prepare("INSERT INTO assignments (activity_id,employee_id,effort_percent,start_date,end_date,completed_at) VALUES(?,?,?,?,?,?)").bind(activityId,e.id,0,monday(a.week),friday(a.week),a.status==="Klar"?new Date().toISOString().slice(0,10):null),d.prepare("INSERT INTO individual_form_items(item_uid,employee_id,activity_id,first_week,current_week) VALUES(?,?,?,?,?)").bind(a.uid,e.id,activityId,a.firstWeek,a.week)]);created++;
+    await d.batch([d.prepare("INSERT INTO assignments (activity_id,employee_id,effort_percent,start_date,end_date,completed_at,work_status,original_end_date,status_updated_at) VALUES(?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)").bind(activityId,e.id,0,monday(a.week),friday(a.week),a.status==="Klar"?new Date().toISOString().slice(0,10):null,a.status,friday(a.week)),d.prepare("INSERT INTO individual_form_items(item_uid,employee_id,activity_id,first_week,current_week) VALUES(?,?,?,?,?)").bind(a.uid,e.id,activityId,a.firstWeek,a.week)]);created++;
    }
   }
   for(const m of memberChanges)await d.batch([d.prepare("INSERT OR IGNORE INTO project_members(project_id,employee_id) VALUES(?,?)").bind(m.projectId,e.id),d.prepare("INSERT INTO individual_project_state(employee_id,project_id,state) VALUES(?,?,?) ON CONFLICT(employee_id,project_id) DO UPDATE SET state=excluded.state,updated_at=CURRENT_TIMESTAMP").bind(e.id,m.projectId,m.state)]);
+  await d.prepare("INSERT INTO individual_import_runs(employee_id,row_count,created_count,updated_count) VALUES(?,?,?,?)").bind(e.id,changes.length,created,updated).run();
   return Response.json({ok:true,created,updated,members:memberChanges.length});
  }catch(e){console.error(e);return Response.json({error:e instanceof Error?e.message:"Importen misslyckades."},{status:400})}
 }
