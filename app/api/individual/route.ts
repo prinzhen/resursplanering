@@ -103,7 +103,7 @@ export async function POST(req:Request){
   for(const m of input.members){const code=txt(m.code);if(!code)continue;const project=await d.prepare("SELECT id FROM projects WHERE code=?").bind(code).first<{id:number}>();if(!project)throw Error("Projektet "+code+" hittas inte.");const state=txt(m.state)||"Aktiv";if(!["Aktiv","Vilande"].includes(state))throw Error("Ogiltigt projektmedlemskap");memberChanges.push({projectId:project.id,state})}
   // No writes until all rows validated.
   const queries:D1PreparedStatement[]=[];
-  for(const code of ["INTERNAL-VERK","INTERNAL-OVR"]){const p=await d.prepare("SELECT id FROM projects WHERE code=?").bind(code).first();if(!p)queries.push(d.prepare("INSERT INTO projects(code,name,color,status) VALUES (?,?,?,?)").bind(code,code==="INTERNAL-VERK"?"Verksamhetsarbete":"Övrigt arbete","#64748b","Aktivt"))}
+  for(const code of new Set(changes.map(a=>a.projectCode).filter(code=>code==="INTERNAL-VERK"||code==="INTERNAL-OVR"))){const p=await d.prepare("SELECT id FROM projects WHERE code=?").bind(code).first();if(!p)queries.push(d.prepare("INSERT INTO projects(code,name,color,status) VALUES (?,?,?,?)").bind(code,code==="INTERNAL-VERK"?"Verksamhetsarbete":"Övrigt arbete","#64748b","Aktivt"))}
   if(queries.length)await d.batch(queries);
   let created=0,updated=0;
   for(const a of changes){
