@@ -7,7 +7,7 @@ p.add_argument("--email",default="")
 args=p.parse_args()
 root=pathlib.Path(args.data_dir).resolve()
 dbs=list(root.glob("v3/d1/**/*.sqlite")) + list(root.glob("v3/d1/**/*.db"))
-dbs=list(dict.fromkeys(dbs))
+dbs=[p for p in dict.fromkeys(dbs) if p.name != "metadata.sqlite"]
 if len(dbs)!=1:
  print("Hittade",len(dbs),"databaser:",*[str(x) for x in dbs],sep="\n")
  sys.exit(2)
