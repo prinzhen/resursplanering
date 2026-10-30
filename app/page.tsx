@@ -187,7 +187,7 @@ function DetailSheet({detail,data,close,setMode,onSelect,onSaveProjects,onSavePr
      const viewer=data.viewer;
      if(viewer?.isAdmin)return true;
      if(!viewer)return false;
-     const task=data.activities.find(a=>a.id===card.activityId),isLead=!!task&&viewer.projectLeadIds.includes(task.projectId);
+     const task=data.activities.find(a=>a.id===card.activityId),isLead=!!task&&(viewer.projectLeadIds.includes(task.projectId)||(task.workPackageId!==null&&(viewer.workPackageLeadIds||[]).includes(task.workPackageId)));
      if(isLead)return true;
      if(card.employeeId!==null)return card.employeeId===viewer.employeeId||(viewer.isGroupManager&&viewer.managedEmployeeIds.includes(card.employeeId));
      return data.assignments.filter(a=>a.activityId===card.activityId).every(a=>a.employeeId===viewer.employeeId)&&data.assignments.some(a=>a.activityId===card.activityId&&a.employeeId===viewer.employeeId);
