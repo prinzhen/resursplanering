@@ -147,5 +147,6 @@ export function filteredSnapshot<T extends Record<string,any>>(data:T,user:Ident
   individualImportRuns:[],
   projectLeaders:(data.projectLeaders||[]).filter((x:{projectId:number})=>scope.projectIds.has(x.projectId)),
   teamLeaders:(data.teamLeaders||[]).filter((x:{teamId:number})=>visibleTeams.has(x.teamId)),
+  assignmentRequests:(data.assignmentRequests||[]).filter((r:{requestedBy:number;recipientId:number;activityId:number})=>r.requestedBy===user.employeeId||r.recipientId===user.employeeId||scope.managedIds.has(r.recipientId)||scope.projectLedIds.has(activities.find((a:{id:number})=>a.id===r.activityId)?.projectId)),
  };
 }
