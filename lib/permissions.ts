@@ -74,6 +74,7 @@ export async function authorizePlanningAction(d:D1Database,user:Identity,action:
  const isProjectLead=scope.projectLedIds.has(context);
  const managerOf=(id:number)=>scope.managedIds.has(id);
  switch(action){
+ case "project": return user.isGroupManager;
  case "activity":
    // Any project participant can create an activity (automatically assigned to self).
    return scope.selfProjectIds.has(project)||scope.projectLedIds.has(project);
