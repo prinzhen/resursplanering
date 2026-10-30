@@ -55,7 +55,13 @@ export async function POST(req:Request){
        FROM project_proposals WHERE id=? AND status='pending'`).bind(id),
      d.prepare(`UPDATE project_proposals SET status='approved',reviewed_by=?,comment=?,reviewed_at=CURRENT_TIMESTAMP,
        created_project_id=(SELECT id FROM projects WHERE code=project_proposals.code COLLATE NOCASE)
-       WHERE id=? AND status='pending'`).bind(user.accountId,comment||null,id)
+       WHERE id=? AND status='pending'`).bind(user.accountId,comment||null,id),
+     ...(user.isGroupManager&&user.employeeId?[
+       d.prepare(`INSERT OR IGNORE INTO project_leaders(project_id,employee_id)
+         SELECT created_project_id,? FROM project_proposals WHERE id=? AND status='approved'`).bind(user.employeeId,id),
+       d.prepare(`INSERT OR IGNORE INTO project_members(project_id,employee_id)
+         SELECT created_project_id,? FROM project_proposals WHERE id=? AND status='approved'`).bind(user.employeeId,id)
+     ]:[])
     ]);
    }else{
     const result=await d.prepare("UPDATE project_proposals SET status='rejected',reviewed_by=?,comment=?,reviewed_at=CURRENT_TIMESTAMP WHERE id=? AND status='pending'").bind(user.accountId,comment||null,id).run();
