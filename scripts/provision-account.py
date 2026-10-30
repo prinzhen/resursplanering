@@ -17,8 +17,8 @@ if len(dbs)!=1:
  sys.exit(f"Expected one D1 database, found {len(dbs)} in {args.data_dir}")
 if not args.admin and not args.employee_email:
  sys.exit("Non-admin account needs --employee-email")
-password=sys.stdin.readline().rstrip("\n") if args.password_stdin else getpass.getpass("New password (12+ chars): ")
-if len(password)<12 or len(password)>256:sys.exit("Password must be 12–256 characters")
+password=sys.stdin.readline().rstrip("\n") if args.password_stdin else getpass.getpass("New password (6+ chars): ")
+if len(password)<6 or len(password)>256:sys.exit("Password must be 6–256 characters")
 email=args.email.lower().strip()
 db=sqlite3.connect(dbs[0],timeout=10)
 db.execute("PRAGMA foreign_keys=ON")
