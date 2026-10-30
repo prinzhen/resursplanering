@@ -1,5 +1,5 @@
 import {env} from "cloudflare:workers";
-import {sessionIdentity,unauthorized,forbidden,sameOrigin} from "@/lib/auth";
+import {sessionIdentity,unauthorized,forbidden,sameOrigin,passwordHash,randomHex} from "@/lib/auth";
 import {accessScope} from "@/lib/permissions";
 import type {FormValues} from "@/lib/individual-xlsx";
 import {importDateSweden,parseExcelPriority,splitAtPriorityChange,type Period} from "@/lib/individual-priority";
@@ -164,6 +164,16 @@ export async function POST(req:Request){
     .bind(txt(input.name),email,"Medarbetare",identity.isGroupManager&&!identity.isAdmin?identity.employeeId:null,100).run();
    e=await employee(d,email);
    if(!e||Number(result.meta.last_row_id)!==e.id)throw Error("Kunde inte registrera medarbetaren.");
+   // Create a disabled personal login with an unrecoverable random secret.
+   // Admin activates it by setting the person's password under Behörigheter.
+   const account=await d.prepare("SELECT id,employee_id employeeId FROM user_accounts WHERE lower(email)=lower(?)").bind(email).first<{id:number;employeeId:number|null}>();
+   if(account&&account.employeeId!==null&&account.employeeId!==e.id)throw Error("E-postadressen används av ett annat konto.");
+   if(account){
+    await d.prepare("UPDATE user_accounts SET employee_id=? WHERE id=?").bind(e.id,account.id).run();
+   }else{
+    const salt=randomHex(16),secret=randomHex(48),hash=await passwordHash(secret,salt);
+    await d.prepare("INSERT INTO user_accounts(employee_id,email,password_salt,password_hash,is_disabled) VALUES(?,?,?,?,1)").bind(e.id,email,salt,hash).run();
+   }
    employeesCreated=1;
   }
   const projectNames=new Map<string,string>();
@@ -243,7 +253,7 @@ export async function POST(req:Request){
     const activityId=Number(result.meta.last_row_id);
     await d.prepare("INSERT INTO activity_priority_history(activity_id,effective_from,priority,changed_by,source) VALUES(?,?,?,?,?)")
       .bind(activityId,monday(a.week),a.priority??3,identity.accountId,"excel").run();
-    await d.batch([d.prepare("INSERT INTO assignments (activity_id,employee_id,effort_percent,start_date,end_date,completed_at,work_status,original_end_date,status_updated_at) VALUES(?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)").bind(activityId,e.id,Math.round(a.hours/40*100),monday(a.week),friday(a.week),a.status==="Klar"?importDate:null,a.status,friday(a.week)),d.prepare("INSERT INTO individual_form_items(item_uid,employee_id,activity_id,first_week,current_week) VALUES(?,?,?,?,?)").bind(a.uid,e.id,activityId,a.firstWeek,a.week),d.prepare("INSERT INTO assignment_periods(assignment_id,start_date,end_date,effort_percent) SELECT id,start_date,end_date,effort_percent FROM assignments WHERE activity_id=? AND employee_id=?").bind(activityId,e.id)]);created++;
+    await d.batch([d.prepare("INSERT INTO assignments (activity_id,employee_id,effort_percent,start_date,end_date,completed_at,work_status,original_end_date,status_updated_at) VALUES(?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)").bind(activityId,e.id,Math.min(200,Math.round(a.hours/40*100)),monday(a.week),friday(a.week),a.status==="Klar"?importDate:null,a.status,friday(a.week)),d.prepare("INSERT INTO individual_form_items(item_uid,employee_id,activity_id,first_week,current_week) VALUES(?,?,?,?,?)").bind(a.uid,e.id,activityId,a.firstWeek,a.week),d.prepare("INSERT INTO assignment_periods(assignment_id,start_date,end_date,effort_percent) SELECT id,start_date,end_date,effort_percent FROM assignments WHERE activity_id=? AND employee_id=?").bind(activityId,e.id)]);created++;
    }
   }
   for(const m of memberChanges){
