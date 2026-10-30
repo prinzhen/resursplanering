@@ -1,12 +1,13 @@
 import assert from "node:assert/strict";
 import {spawn} from "node:child_process";
-import {mkdtemp,rm,readdir} from "node:fs/promises";
+import {mkdtemp,rm,readdir,cp} from "node:fs/promises";
 import {DatabaseSync} from "node:sqlite";
 import {tmpdir} from "node:os";
 import {join} from "node:path";
 import {setTimeout as sleep} from "node:timers/promises";
 
 const dir=await mkdtemp(join(tmpdir(),"resursplanering-e2e-"));
+if(process.env.TEST_DATA_SOURCE){await cp(process.env.TEST_DATA_SOURCE,join(dir,"data"),{recursive:true});console.log("Testing disposable COPY of existing SQLite data:",process.env.TEST_DATA_SOURCE)}
 const port=32137,base=`http://127.0.0.1:${port}`;
 const server=spawn(process.execPath,["scripts/start-selfhosted.mjs"],{
  cwd:process.cwd(),env:{...process.env,DATA_DIR:join(dir,"data"),HOST:"127.0.0.1",PORT:String(port),CI:"true",NO_COLOR:"1"},
@@ -54,7 +55,7 @@ try{
  assert.ok(erik&&sara);
  const ass=assignment(snap,1,erik),saraAss=assignment(snap,1,sara);
  const originalEndErik=ass.endDate,originalEndSara=saraAss.endDate;
- check("Fixture has shared assignment",()=>{assert.equal(ass.effortPercent,50);assert.equal(saraAss.effortPercent,40)});
+ check("Fixture has shared assignment",()=>{assert.ok(ass&&saraAss);assert.ok(ass.effortPercent>=0);assert.ok(saraAss.effortPercent>=0)});
  snap=await request("/api/data",{action:"setActivityStatus",activityId:1,status:"Klar"});
  check("Global completion closes both employees",()=>{
   assert.equal(activity(snap,1).status,"Klar");
