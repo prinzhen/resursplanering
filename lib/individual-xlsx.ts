@@ -108,6 +108,7 @@ export async function readIndividualXlsx(file:File):Promise<FormValues>{
   const dueDate=d&&/^\d{5}(\.\d+)?$/.test(d)?new Date(Date.UTC(1899,11,30)+Number(d)*86400000).toISOString().slice(0,10):d;
   activities.push({uid:cell("M"+r),week:cell("A"+r),name,kind:cell("C"+r)||"Övrigt",link:cell("D"+r),projectCode:cell("E"+r),hours,status:cell("G"+r)||"Planerad",priority:cell("H"+r),dueDate,comment:cell("J"+r),firstWeek:cell("K"+r),reason:cell("L"+r)});
  }
+ if(header===8){for(let r=69;r<=72;r++){if(cell("B"+r)||cell("A"+r))throw Error("Aktivitet utanför formulärets 60 rader (rad "+r+"). Placera aktiviteter på raderna 9–68.");}}
  const members:FormMember[]=[];
  // Keep membership as a separate section on the SAME worksheet.
  for(let r=77;r<=110;r++){const code=cell("A"+r),name=cell("B"+r);if(!code&&!name)continue;members.push({code,name,state:cell("C"+r)||"Aktiv"})}
