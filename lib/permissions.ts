@@ -92,9 +92,9 @@ export async function authorizePlanningAction(d:D1Database,user:Identity,action:
    return origin?.employeeId===self&&nextProject===existingProject&&(teammates?.count??0)===0;
  }
  case "setAssignmentStatus":
-   return employee===self||managerOf(employee)||isProjectLead;
+   return employee===self||(user.isGroupManager&&managerOf(employee))||isProjectLead;
  case "setAssignmentPeriods":
-   if(employee!==self)return managerOf(employee)||isProjectLead;
+   if(employee!==self)return (user.isGroupManager&&managerOf(employee))||isProjectLead;
    return scope.projectIds.has(context);
  case "setActivityStatus":
    if(isProjectLead)return true;
@@ -103,14 +103,15 @@ export async function authorizePlanningAction(d:D1Database,user:Identity,action:
  case "setActivityAssignments":
    return isProjectLead;
  case "setProjectMemberships":
-   return managerOf(employee);
+   return user.isGroupManager&&managerOf(employee);
  case "setSingleProjectMember":
-   return managerOf(employee)||scope.projectLedIds.has(project);
+   return (user.isGroupManager&&managerOf(employee))||scope.projectLedIds.has(project);
  case "setEmployeeProjectOrder":
  case "resetEmployeeProjectOrder":
-   return employee===self||managerOf(employee);
+   return employee===self||(user.isGroupManager&&managerOf(employee));
  case "saveEmployeeGroup":{
    // Group managers can create/update teams with only their own direct reports.
+   if(!user.isGroupManager)return false;
    const members=Array.isArray(body.employeeIds)?body.employeeIds.map(Number):[];
    if(!members.every(id=>id===self||managerOf(id)))return false;
    if(body.id!==undefined&&body.id!==null){
