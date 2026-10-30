@@ -475,6 +475,35 @@ try{
  const duplicateApproval=await fetch(base+"/api/requests",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({action:"answer",id:pending.id,approve:true})});
  check("Repeat approval rejected",()=>assert.equal(duplicateApproval.status,409));
  await asUser("ci-admin@example.se",adminPassword);
+ // Explicit group managers can create TEAMs and designate leaders.
+ await request("/api/access",{action:"saveAccount",email:"anna@example.se",employeeId:1,password:userPassword,isAdmin:false,isGroupManager:true});
+ await asUser("anna@example.se");
+ let annaData=await request();
+ check("Group manager sees assigned reporting group",()=>{
+  assert.equal(annaData.viewer.isGroupManager,true);
+  assert.ok(annaData.employees.some(e=>e.id===erik));
+  assert.ok(annaData.employees.some(e=>e.id===sara));
+ });
+ annaData=await request("/api/data",{action:"saveEmployeeGroup",name:"Safety TEAM regression",description:"Role permissions",employeeIds:[sara]});
+ const authTeam=annaData.employeeGroups.find(t=>t.name==="Safety TEAM regression");
+ check("Group manager may create own TEAM",()=>assert.ok(authTeam));
+ await asUser("ci-admin@example.se",adminPassword);
+ await request("/api/access",{action:"setTeamLeader",teamId:authTeam.id,employeeId:erik,enabled:true});
+ await request("/api/access",{action:"setProjectLeader",projectId:1,employeeId:erik,enabled:true});
+ await asUser("erik@example.se");
+ const erikLed=await request();
+ check("TEAM leader sees TEAM membership and project leader role",()=>{
+  assert.ok(erikLed.employeeGroups.some(t=>t.id===authTeam.id));
+  assert.ok(erikLed.viewer.teamLeadIds.includes(authTeam.id));
+  assert.ok(erikLed.viewer.projectLeadIds.includes(1));
+ });
+ const changed=await request("/api/data",{action:"setAssignmentStatus",activityId:1,employeeId:sara,status:"Pågående"});
+ check("Project leader may change resource status within their own project",()=>{
+  assert.ok(changed.assignments.some(a=>a.activityId===1&&a.employeeId===sara&&a.workStatus==="Pågående"));
+ });
+ const wrongProject=await fetch(base+"/api/data",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({action:"updateProject",id:3,code:"P-1110",name:"Denied update",description:"",color:"#ca8a04",priority:3})});
+ check("Project leader cannot alter unrelated project",()=>assert.equal(wrongProject.status,403));
+ await asUser("ci-admin@example.se",adminPassword);
  const approvedSnapshot=await request();
  check("Admin view still sees all original employees",()=>assert.equal(approvedSnapshot.employees.length>=4,true));
  console.log("\nSUCCESS: integration tests passed; only isolated temp database was modified.");
