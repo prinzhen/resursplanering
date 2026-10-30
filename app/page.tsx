@@ -265,6 +265,43 @@ function activityGantt(a:WorkActivity,d:Data):GanttItem[]{
   return ganttPeriodRows(s,d,{id:String(s.id),group:(a.code?a.code+" · ":"")+a.name,label:person?.name||"Resurs",sub:person?.role||"Medarbetare",start:s.startDate,end:s.endDate,color:p?.color||"#2563eb",status:a.status});
  }).sort((x,y)=>x.label.localeCompare(y.label,"sv")||x.start.localeCompare(y.start));
 }
+function groupGantt(people:Employee[],data:Data):GanttItem[]{
+ return [...people].sort((a,b)=>a.name.localeCompare(b.name,"sv")).flatMap(p=>
+  employeeGantt(p,data).map(item=>({...item,group:p.name+" · "+item.group}))
+ );
+}
+function groupWorkload(people:Employee[],data:Data,start:string,end:string){
+ const capacity=people.reduce((sum,p)=>sum+p.capacityPercent,0);
+ return capacity?Math.round(people.reduce((sum,p)=>sum+workload(data,p.id,start,end),0)/capacity*100):0;
+}
+function KanbanBoard({cards,onSelect,onMove}:{cards:KanbanCard[];onSelect:(activityId:number)=>void;onMove:(card:KanbanCard,status:KanbanStatus)=>Promise<boolean>}){
+ const [moving,setMoving]=useState<string|null>(null),[hover,setHover]=useState<KanbanStatus|null>(null);
+ const dragCard=useRef<string|null>(null);
+ const move=async(card:KanbanCard,status:KanbanStatus)=>{
+  if(card.status===status)return;
+  setMoving(card.key);try{await onMove(card,status)}finally{setMoving(null)}
+ };
+ const colors:Record<KanbanStatus,string>={Planerad:"border-slate-300 bg-slate-100",Pågående:"border-blue-300 bg-blue-50",Pausad:"border-amber-300 bg-amber-50",Fryst:"border-cyan-300 bg-cyan-50",Klar:"border-emerald-300 bg-emerald-50"};
+ return <div className="space-y-3"><p className="text-sm text-slate-600">Flytta ett kort till en annan statuskolumn eller välj status på kortet. En persons kort ändrar bara den personens status. Ett projektkort ändrar hela aktivitetens status.</p>
+ <div className="grid gap-3 overflow-x-auto pb-3 md:grid-cols-2 2xl:grid-cols-5">{KANBAN_COLUMNS.map(status=>{
+  const items=cards.filter(c=>c.status===status);
+  return <section className={`min-w-[200px] rounded-xl border p-2 ${colors[status]} ${hover===status?"ring-2 ring-blue-500":""}`} key={status}
+   onDragOver={event=>{event.preventDefault();setHover(status)}}
+   onDragLeave={event=>{if(!event.currentTarget.contains(event.relatedTarget as Node))setHover(null)}}
+   onDrop={event=>{event.preventDefault();const current=cards.find(c=>c.key===dragCard.current);dragCard.current=null;setHover(null);if(current)void move(current,status)}}>
+   <h3 className="mb-3 flex items-center justify-between rounded-lg bg-white/75 px-3 py-2 text-sm font-bold"><span>{status}</span><Badge variant="outline">{items.length}</Badge></h3>
+   <div className="space-y-2">{items.map(card=><article draggable={moving===null} onDragStart={event=>{dragCard.current=card.key;event.dataTransfer.effectAllowed="move";event.dataTransfer.setData("text/plain",card.key)}} onDragEnd={()=>{dragCard.current=null;setHover(null)}} key={card.key} className="cursor-grab rounded-lg border border-slate-200 bg-white p-3 shadow-sm active:cursor-grabbing">
+    <div className="mb-2 flex items-center gap-2"><span className="h-6 w-1 rounded-full" style={{background:card.projectColor}}/><span className="text-xs font-medium text-slate-600">{card.project}</span></div>
+    <button type="button" className="text-left text-sm font-semibold text-blue-900 hover:underline" onClick={()=>onSelect(card.activityId)}>{card.title}</button>
+    {card.description&&<p className="mt-2 line-clamp-2 text-xs text-slate-600">{card.description}</p>}
+    <p className="mt-2 text-xs text-slate-500">{card.startDate} – {card.endDate}</p>
+    <div className="mt-2 flex flex-wrap gap-1">{card.people.length?card.people.map((person,i)=><span className="rounded bg-slate-100 px-2 py-1 text-xs" key={i}>{person}</span>):<span className="text-xs text-slate-400">Ingen resurs</span>}</div>
+    <label className="mt-3 block text-xs font-medium text-slate-500">Ändra status<NativeSelect aria-label={`Status för ${card.title}`} className="mt-1 w-full" value={status} disabled={moving!==null} onChange={event=>void move(card,event.target.value as KanbanStatus)}>{KANBAN_COLUMNS.map(option=><NativeSelectOption key={option} value={option}>{option}</NativeSelectOption>)}</NativeSelect></label>
+   </article>)}</div>
+   {!items.length&&<p className="rounded-lg border border-dashed border-slate-300 bg-white/50 p-4 text-center text-xs text-slate-500">Inga aktiviteter</p>}
+  </section>;
+ })}</div>{!cards.length&&<p className="rounded-xl border border-dashed p-6 text-center text-sm text-slate-500">Inga tilldelade aktiviteter för det här urvalet.</p>}</div>;
+}
 function GanttView({items,empty,load,segments:givenSegments,rangeStart:requestedStart,rangeEnd:requestedEnd}:{items:GanttItem[];empty:string;load?:LoadPoint[];segments?:TimelineSegment[];rangeStart?:string;rangeEnd?:string}){const allDates=items.flatMap(i=>[i.start,i.end]).sort(),rangeStart=requestedStart||allDates[0]||new Date().toISOString().slice(0,10),rangeEnd=requestedEnd||allDates.at(-1)||rangeStart;const start=new Date(`${rangeStart}T00:00:00Z`),endExclusive=new Date(`${rangeEnd}T00:00:00Z`).getTime()+86400000,span=Math.max(86400000,endExclusive-start.getTime()),segments=givenSegments||timelineSegments(rangeStart,rangeEnd),daily=segments.every(segment=>segment.start===segment.end),posStart=(date:string)=>Math.max(0,Math.min(100,(new Date(`${date}T00:00:00Z`).getTime()-start.getTime())/span*100)),posEnd=(date:string)=>Math.max(0,Math.min(100,(new Date(`${date}T00:00:00Z`).getTime()+86400000-start.getTime())/span*100)),groups=[...new Set(items.map(i=>i.group))],columns=timelineColumns(segments);return <section className="gantt-card">{load&&<div className="gantt-load"><div className="gantt-load-label"><strong>Beläggning</strong><span>Grön &lt;85% · Gul 85–100% · Röd &gt;100%</span></div><div className={`gantt-load-scale${daily?" is-daily":""}`} style={{gridTemplateColumns:columns}}>{load.map(point=><div key={point.key} title={`${point.label}: ${point.value}% beläggning`} className={point.value>100?"load-red":point.value>=85?"load-yellow":"load-green"}><strong>{point.value}%</strong><span>{point.label}</span></div>)}</div></div>}<div className={`gantt-head${daily?" is-daily":""}`}><div>Aktivitet / resurs</div><TimelineScale segments={segments} className="gantt-head-scale"/></div>{groups.map(group=><div key={group}><div className="gantt-group"><FolderKanban/><span>{group}</span><Badge variant="secondary">{items.filter(i=>i.group===group).length} rader</Badge></div>{items.filter(i=>i.group===group).map(i=>{const left=posStart(i.start),right=posEnd(i.end),width=Math.max(1.5,right-left),continuesLeft=i.start<rangeStart,continuesRight=i.end>rangeEnd;return <div className="gantt-row" key={i.id}><div className="gantt-label"><strong>{i.label}{ganttState(i)==="Klar"?" ✓ Klar":ganttState(i)==="Fryst"?" ⏸ Fryst":ganttState(i)==="Pausad"?" ⏸ Pausad":""}</strong><span>{i.sub.replace(" insats"," planerad")} · {ganttState(i)}{i.completedAt?" · avslutad "+i.completedAt:""}</span></div><div className="gantt-track"><div className="gantt-grid" style={{gridTemplateColumns:columns}}>{segments.map(segment=><i key={segment.key}/>)}</div><div className={`gantt-bar${ganttState(i)==="Klar"?" gantt-is-completed":ganttState(i)==="Fryst"||ganttState(i)==="Pausad"?" gantt-is-paused":""}${continuesLeft?" continues-left":""}${continuesRight?" continues-right":""}`} title={`${i.label} · ${i.sub} · status ${ganttState(i)}: ${i.start} – ${i.end}${i.completedAt?" · färdig "+i.completedAt:""}${continuesLeft||continuesRight?" · fortsätter utanför visningsperioden":""}`} style={{left:`${left}%`,width:`${width}%`,background:ganttColor(i)}}><span>{continuesLeft&&"‹ "}{i.effort?`${i.effort}%`:""}{continuesRight&&" ›"}</span></div></div></div>})}</div>)}{!items.length&&<div className="p-10 text-center text-sm text-slate-400">{empty}</div>}</section>}
 
 const statuses=["Planerad","Pågår","Klar","Pausad","Fryst"];
