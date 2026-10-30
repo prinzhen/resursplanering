@@ -12,12 +12,12 @@ export default function AccessPage(){
  const reload=async()=>{
   const [a,b]=await Promise.all([fetch("/api/data",{cache:"no-store"}),fetch("/api/access",{cache:"no-store"})]);
   if(a.status===401||b.status===401){window.location.assign("/login");return}
-  const ap=await a.json(),ac=await b.json();if(!a.ok||!b.ok)throw Error(ap.error||ac.error||"Åtkomstfel");
+  const ap=await a.json() as Planning&{error?:string},ac=await b.json() as Access&{error?:string};if(!a.ok||!b.ok)throw Error(ap.error||ac.error||"Åtkomstfel");
   setData(ap);setAccess(ac);
  };
  useEffect(()=>{reload().catch(e=>setError(String(e)))},[]);
  const post=async(payload:Record<string,unknown>)=>{setBusy(true);setError("");setNotice("");try{
-  const r=await fetch("/api/access",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(payload)}),j=await r.json();
+  const r=await fetch("/api/access",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(payload)}),j=await r.json() as {error?:string};
   if(!r.ok)throw Error(j.error||"Kunde inte spara");await reload();setNotice("Behörigheten sparades.");return true;
  }catch(e){setError(e instanceof Error?e.message:String(e));return false}finally{setBusy(false)}};
  const eligible=data?.employees.filter(e=>data.viewer.isAdmin||data.viewer.managedEmployeeIds.includes(e.id))||[];
