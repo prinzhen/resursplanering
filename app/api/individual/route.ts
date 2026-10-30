@@ -100,11 +100,12 @@ export async function POST(req:Request){
    const p=await d.prepare("SELECT id FROM projects WHERE code=?").bind(a.projectCode).first<{id:number}>();if(!p)throw Error("Projektet saknas.");
    if(a.activityId){
     const today=new Date().toISOString().slice(0,10);
-    const person=await d.prepare("SELECT start_date startDate,end_date endDate,original_end_date originalEnd FROM assignments WHERE activity_id=? AND employee_id=?").bind(a.activityId,e.id).first<{startDate:string;endDate:string;originalEnd:string|null}>();
+    const person=await d.prepare("SELECT start_date startDate,end_date endDate,original_end_date originalEnd,completed_at completedAt FROM assignments WHERE activity_id=? AND employee_id=?").bind(a.activityId,e.id).first<{startDate:string;endDate:string;originalEnd:string|null;completedAt:string|null}>();
     if(!person)throw Error("Personens tilldelning saknas: "+a.name);
     const prior=await d.prepare("SELECT item_uid itemUid,current_week currentWeek FROM individual_form_items WHERE activity_id=? AND employee_id=?").bind(a.activityId,e.id).first<{itemUid:string;currentWeek:string}>();
     const storedUid=prior?.itemUid||(a.uid.startsWith("activity-")?`employee-${e.id}-activity-${a.activityId}`:a.uid);
     const done=a.status==="Klar";
+    const finishDate=done?(person.completedAt||today):null;
     const plannedEnd=person.originalEnd||person.endDate;
     let startDate=person.startDate,plannedEndDate=plannedEnd;
     if(prior&&prior.currentWeek!==a.week){
@@ -115,12 +116,12 @@ export async function POST(req:Request){
       startDate=add(startDate);
       plannedEndDate=add(plannedEndDate);
     }
-    const endDate=done&&today>=startDate&&today<plannedEndDate?today:plannedEndDate;
+    const endDate=done&&finishDate&&finishDate>=startDate&&finishDate<plannedEndDate?finishDate:plannedEndDate;
     // Existing schedule stays unchanged on a status-only import. Reopening a
     // completed assignment restores its previous planned end date.
     const q:D1PreparedStatement[]=[
       d.prepare("INSERT INTO individual_form_items(item_uid,employee_id,activity_id,first_week,current_week) VALUES(?,?,?,?,?) ON CONFLICT(employee_id,activity_id) DO UPDATE SET current_week=excluded.current_week,updated_at=CURRENT_TIMESTAMP").bind(storedUid,e.id,a.activityId,a.firstWeek,a.week),
-      d.prepare("UPDATE assignments SET work_status=?,status_updated_at=CURRENT_TIMESTAMP,completed_at=?,original_end_date=?,start_date=?,end_date=? WHERE activity_id=? AND employee_id=?").bind(a.status,done?today:null,plannedEndDate,startDate,endDate,a.activityId,e.id)
+      d.prepare("UPDATE assignments SET work_status=?,status_updated_at=CURRENT_TIMESTAMP,completed_at=?,original_end_date=?,start_date=?,end_date=? WHERE activity_id=? AND employee_id=?").bind(a.status,finishDate,plannedEndDate,startDate,endDate,a.activityId,e.id)
     ];
     if(prior&&prior.currentWeek!==a.week)q.push(d.prepare("INSERT INTO individual_week_moves(item_uid,from_week,to_week,reason) VALUES(?,?,?,?)").bind(storedUid,prior.currentWeek,a.week,a.reason||null));
     await d.batch(q);
