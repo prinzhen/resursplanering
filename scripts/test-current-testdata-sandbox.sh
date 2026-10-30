@@ -24,7 +24,7 @@ import glob, hashlib, json, sqlite3, sys
 files=[p for p in glob.glob(sys.argv[1]+"/v3/d1/**/*.sqlite",recursive=True) if not p.endswith("metadata.sqlite")]
 if len(files)!=1:raise SystemExit("Hittade inte exakt en testdatabas.")
 db=sqlite3.connect("file:"+files[0]+"?mode=ro",uri=True)
-tables=["employees","projects","work_packages","activities","assignments","assignment_periods","project_members","individual_form_items","individual_week_moves","individual_project_state","individual_import_runs"]
+tables=["employees","projects","work_packages","activities","assignments","assignment_periods","project_members","employee_project_orders","individual_form_items","individual_week_moves","individual_project_state","individual_import_runs"]
 h=hashlib.sha256()
 for name in tables:
  try:
