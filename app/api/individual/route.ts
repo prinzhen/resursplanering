@@ -115,12 +115,19 @@ export async function POST(req:Request){
     ];
     if(prior&&prior.currentWeek!==a.week)q.push(d.prepare("INSERT INTO individual_week_moves(item_uid,from_week,to_week,reason) VALUES(?,?,?,?)").bind(storedUid,prior.currentWeek,a.week,a.reason||null));
     await d.batch(q);
-    const counts=await d.prepare("SELECT COUNT(*) total,SUM(CASE WHEN work_status='Klar' OR (work_status IS NULL AND completed_at IS NOT NULL) THEN 1 ELSE 0 END) finished FROM assignments WHERE activity_id=?").bind(a.activityId).first<{total:number;finished:number}>();
-    if(counts&&counts.total>0&&counts.finished===counts.total){
-     await d.prepare("UPDATE activities SET status='Klar',end_date=CASE WHEN ?>=start_date THEN MIN(end_date,?) ELSE end_date END WHERE id=?").bind(today,today,a.activityId).run();
+    const all=await d.prepare("SELECT work_status workStatus,completed_at completedAt FROM assignments WHERE activity_id=?").bind(a.activityId).all<{workStatus:string|null;completedAt:string|null}>();
+    const statuses=all.results.map(x=>x.workStatus||(x.completedAt?"Klar":"Planerad"));
+    const commonStatus=statuses.length&&statuses.every(x=>x==="Klar")?"Klar":
+      statuses.some(x=>x==="Pågående"||x==="Pågår")?"Pågår":
+      statuses.some(x=>x==="Planerad")?"Planerad":
+      statuses.some(x=>x==="Pausad")?"Pausad":
+      statuses.some(x=>x==="Fryst")?"Fryst":"Planerad";
+    if(commonStatus==="Klar"){
+     await d.prepare("UPDATE activities SET status=?,end_date=CASE WHEN ?>=start_date THEN MIN(end_date,?) ELSE end_date END WHERE id=?").bind(commonStatus,today,today,a.activityId).run();
     }else{
-     const live=await d.prepare("SELECT COUNT(*) active FROM assignments WHERE activity_id=? AND COALESCE(work_status,CASE WHEN completed_at IS NOT NULL THEN 'Klar' ELSE 'Pågår' END) IN ('Planerad','Pågående','Pågår','Pausad')").bind(a.activityId).first<{active:number}>();
-     if((live?.active||0)>0)await d.prepare("UPDATE activities SET status='Pågår',end_date=MAX(end_date,?) WHERE id=?").bind(plannedEndDate,a.activityId).run();
+     // Keep the project active while other employees still have outstanding work.
+     const planned=await d.prepare("SELECT MAX(COALESCE(original_end_date,end_date)) endDate FROM assignments WHERE activity_id=?").bind(a.activityId).first<{endDate:string|null}>();
+     await d.prepare("UPDATE activities SET status=?,end_date=MAX(end_date,?) WHERE id=?").bind(commonStatus,planned?.endDate||plannedEndDate,a.activityId).run();
     }
     updated++;
    }else{
