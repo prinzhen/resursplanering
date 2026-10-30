@@ -95,8 +95,13 @@ export async function readIndividualXlsx(file:File):Promise<FormValues>{
  // Support current approved layout (header row 8), and the prior slim layout (row 7).
  const header=cell("A8").toLowerCase().includes("vecka")?8:cell("A7").toLowerCase().includes("vecka")?7:0;
  if(!header)throw Error("Det här är inte det individuella planeringsformuläret.");
- for(let r=header+1;r<=header+100;r++){
-  const name=cell("B"+r);if(!name)continue;
+ // Only the activity table may be imported. Project membership starts at row 73.
+ // The earlier compact form used heading row 7 and ended at row 70.
+ const lastActivityRow=header===8?68:70;
+ for(let r=header+1;r<=lastActivityRow;r++){
+  const name=cell("B"+r),week=cell("A"+r);
+  if(/^(projektkod|projektmedverkan)/i.test(week)||/^(projektnamn|vad ska jag göra\?)/i.test(name))break;
+  if(!name)continue;
   const rawHours=cell("F"+r).replace(",",".");const hours=rawHours?Number(rawHours):0;
   if(!Number.isFinite(hours))throw Error("Ogiltigt antal timmar på rad "+r);
   const d=cell("I"+r);
@@ -115,6 +120,22 @@ function weekLabel(y:number,w:number,base:{year:number;week:number}){
  const suffix=diff===-1?" (föregående vecka)":diff===0?" (aktuell vecka)":diff===1?" (kommande vecka)":"";
  return(y===base.year?"":y+" ")+"v."+String(w).padStart(2,"0")+suffix;
 }
+// Display-friendly labels in Excel and the import preview. The API keeps ISO keys.
+export function displayWeek(value:string,base=currentISOWeek(new Date())):string{
+ const raw=String(value??'').trim();if(!raw)return '';
+ const clean=raw.replace(/\s*\([^)]*\)\s*$/,'').trim();
+ const compact=/^(\d{4})-W(\d{1,2})$/i.exec(clean);
+ const dated=/^(\d{4})\s+(?:v\.?\s*)?(\d{1,2})$/i.exec(clean);
+ const short=/^(?:v\.?\s*)?(\d{1,2})$/i.exec(clean);
+ const year=compact?Number(compact[1]):dated?Number(dated[1]):base.year;
+ const week=compact?Number(compact[2]):dated?Number(dated[2]):short?Number(short[1]):NaN;
+ if(!Number.isInteger(week)||week<1||week>53||year<1900||year>2100)return raw;
+ const monday=new Date(Date.UTC(year,0,4));
+ monday.setUTCDate(monday.getUTCDate()-(monday.getUTCDay()+6)%7+(week-1)*7);
+ const last=new Date(monday);last.setUTCDate(last.getUTCDate()+3);
+ if(last.getUTCFullYear()!==year)return raw;
+ return weekLabel(year,week,base);
+}
 function row(n:number,cells:Record<number,string|number|null>,style=0){let out="";for(const [c,v] of Object.entries(cells)){if(v===null||v===undefined||v==="")continue;const ref=col(Number(c))+n;out+=typeof v==="number"?'<c r="'+ref+'" s="'+style+'"><v>'+v+'</v></c>':'<c r="'+ref+'" s="'+style+'" t="inlineStr"><is><t xml:space="preserve">'+xml(v)+'</t></is></c>'}return '<row r="'+n+'">'+out+'</row>'}
 export function createIndividualXlsx(values:FormValues){
  const base=currentISOWeek(new Date()),rows:string[]=[];
@@ -122,7 +143,7 @@ export function createIndividualXlsx(values:FormValues){
  rows.push(row(4,{1:"NAMN",2:values.name,5:"E-POST",6:values.email,10:"UPPDATERAD",11:new Date().toISOString().slice(0,10)},2));
  rows.push(row(6,{1:"Välj vecka i listan eller skriv fritt, exempelvis 44, v44 eller 2017 8."},3));
  rows.push(row(8,{1:"Vecka",2:"Vad ska jag göra?",3:"Typ av arbete",4:"Projekt / verksamhet",5:"Projektkod",6:"Planerade timmar",7:"Status",8:"Prioritet",9:"Klart senast",10:"Kommentar / behov",11:"Först planerad",12:"Orsak om flyttad",13:"Aktivitets-ID"},2));
- for(let i=0;i<60;i++){const a=values.activities[i];rows.push(row(i+9,a?{1:a.week,2:a.name,3:a.kind,4:a.link,5:a.projectCode,6:a.hours,7:a.status,8:a.priority,9:a.dueDate,10:a.comment,11:a.firstWeek,12:a.reason,13:a.uid}:{},i%2?4:5))}
+ for(let i=0;i<60;i++){const a=values.activities[i];rows.push(row(i+9,a?{1:displayWeek(a.week,base),2:a.name,3:a.kind,4:a.link,5:a.projectCode,6:a.hours,7:a.status,8:a.priority,9:a.dueDate,10:a.comment,11:displayWeek(a.firstWeek,base),12:a.reason,13:a.uid}:{},i%2?4:5))}
  rows.push(row(73,{1:"PROJEKTMEDVERKAN – även utan aktiviteter"},1));
  rows.push(row(76,{1:"Projektkod",2:"Projektnamn",3:"Medverkan"},2));
  for(let i=0;i<34;i++){const m=values.members[i];rows.push(row(i+77,m?{1:m.code,2:m.name,3:m.state}:{},i%2?4:5))}
