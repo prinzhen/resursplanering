@@ -734,6 +734,79 @@ try{
   assert.deepEqual(restoredPriorities.activityPriorityHistory,backupPriorities.activityPriorityHistory);
   assert.equal(activity(restoredPriorities,prioId).priority,2);
  });
+
+ // Leadership can be managed in-context without changing activity assignments.
+ const currentLeaderState=await request();
+ const internalProject=async(code,name)=>{
+  const all=await request();const exists=all.projects.find(p=>p.code===code);
+  if(exists)return exists;
+  const created=await request("/api/data",{action:"project",code,name,description:"Intern verksamhet",color:"#526a86",priority:3});
+  return created.projects.find(p=>p.code===code);
+ };
+ const verksProject=await internalProject("INTERNAL-VERK","Verksamhet");
+ const ovrProject=await internalProject("INTERNAL-OVR","Övrigt");
+ const setLead=(kind,ids,oldEmployeeId,newEmployeeId)=>request("/api/access",{action:"replaceLeader",kind,...ids,oldEmployeeId,newEmployeeId});
+ await setLead("project",{projectId:verksProject.id},null,erik);
+ await setLead("project",{projectId:ovrProject.id},null,sara);
+ const internalLeads=await request("/api/access");
+ check("All users can be chosen as leaders on Verksamhet or Övrigt",()=>{
+  assert.ok(internalLeads.projectLeaders.some(x=>x.projectId===verksProject.id&&x.employeeId===erik));
+  assert.ok(internalLeads.projectLeaders.some(x=>x.projectId===ovrProject.id&&x.employeeId===sara));
+ });
+ await asUser("erik@example.se");
+ const leadTask=await request("/api/data",{action:"activity",projectId:verksProject.id,name:"Project leader can do ordinary work",description:"Project lead may also be resource",startDate:"2026-11-04",endDate:"2026-11-12",estimatedHours:16,status:"Planerad"});
+ const assignedActivity=leadTask.activities.find(x=>x.name==="Project leader can do ordinary work");
+ check("Project leader can have own assigned activities",()=>assert.ok(assignedActivity&&assignment(leadTask,assignedActivity.id,erik)));
+ await asUser("ci-admin@example.se",adminPassword);
+ await setLead("project",{projectId:verksProject.id},erik,sara);
+ const replacedProject=await request("/api/access");
+ const afterReplace=await request();
+ check("Project leader can be replaced while the previous leader's work remains assigned",()=>{
+  assert.ok(replacedProject.projectLeaders.some(x=>x.projectId===verksProject.id&&x.employeeId===sara));
+  assert.equal(replacedProject.projectLeaders.some(x=>x.projectId===verksProject.id&&x.employeeId===erik),false);
+  assert.ok(assignment(afterReplace,assignedActivity.id,erik));
+ });
+ await setLead("project",{projectId:ovrProject.id},sara,null);
+ check("Project leader can be removed without deleting project",()=>{
+  assert.ok((afterReplace.projects||[]).some(p=>p.id===ovrProject.id));
+ });
+ const wProject=await request("/api/data",{action:"project",code:"P-LEAD-WORK",name:"Projekt med uppdragsledare",description:"Separata roller",color:"#2468ab",priority:3});
+ const wProjId=wProject.projects.find(p=>p.code==="P-LEAD-WORK").id;
+ const wData=await request("/api/data",{action:"workPackage",projectId:wProjId,code:"UPP-1",name:"Separat uppdrag",description:"Egen ledare"});
+ const wId=wData.workPackages.find(w=>w.projectId===wProjId&&w.code==="UPP-1").id;
+ await setLead("workPackage",{workPackageId:wId},null,sara);
+ const assignedW=await request("/api/access");
+ check("Work package receives independent leader and auto-membership",()=>assert.ok(assignedW.workPackageLeaders.some(w=>w.workPackageId===wId&&w.employeeId===sara)));
+ await asUser("sara@example.se");
+ const createdWork=await request("/api/data",{action:"activity",projectId:wProjId,workPackageId:wId,name:"Uppdragsledare arbetar själv",description:"Bemanningsbar uppdragsledare",startDate:"2026-11-01",endDate:"2026-11-30",estimatedHours:32,status:"Planerad"});
+ const wActivity=createdWork.activities.find(a=>a.name==="Uppdragsledare arbetar själv");
+ check("Work package leader may create and be allocated to own activity",()=>assert.ok(wActivity&&assignment(createdWork,wActivity.id,sara)));
+ const forbiddenLead=await fetch(base+"/api/access",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({action:"replaceLeader",kind:"workPackage",workPackageId:wId,oldEmployeeId:sara,newEmployeeId:erik})});
+ check("Ordinary work-package leader cannot grant leadership rights",()=>assert.equal(forbiddenLead.status,403));
+ await asUser("ci-admin@example.se",adminPassword);
+ await setLead("workPackage",{workPackageId:wId},sara,erik);
+ const afterWorkReplace=await request();
+ check("Work-package leadership change retains predecessor's own assignment",()=>{
+  assert.ok(afterWorkReplace.workPackageLeaders.some(x=>x.workPackageId===wId&&x.employeeId===erik));
+  assert.ok(assignment(afterWorkReplace,wActivity.id,sara));
+ });
+ const beforeTeamReplace=await request();
+ const countSara=beforeTeamReplace.assignments.filter(a=>a.employeeId===sara).length;
+ await setLead("team",{teamId:authTeam.id},erik,sara);
+ const afterTeamReplace=await request();
+ check("TEAM leader can be changed without changing members or activity workload",()=>{
+  assert.ok(afterTeamReplace.teamLeaders.some(t=>t.teamId===authTeam.id&&t.employeeId===sara));
+  assert.equal(afterTeamReplace.teamLeaders.some(t=>t.teamId===authTeam.id&&t.employeeId===erik),false);
+  assert.equal(afterTeamReplace.assignments.filter(a=>a.employeeId===sara).length,countSara);
+  assert.ok(afterTeamReplace.employeeGroupMembers.some(m=>m.groupId===authTeam.id&&m.employeeId===sara));
+ });
+ await asUser("sara@example.se");
+ const leaderOwn=await request("/api/data",{action:"activity",projectId:1,name:"TEAM-leader kan ha egen aktivitet",description:"TEAM-leader är också vanlig resurs",startDate:"2026-11-04",endDate:"2026-11-12",estimatedHours:8,status:"Planerad"});
+ check("TEAM leader may still have their own activities",()=>{
+  const t=leaderOwn.activities.find(a=>a.name==="TEAM-leader kan ha egen aktivitet");
+  assert.ok(t&&assignment(leaderOwn,t.id,sara));
+ });
+ await asUser("ci-admin@example.se",adminPassword);
  const approvedSnapshot=await request();
  check("Admin view still sees all original employees",()=>assert.equal(approvedSnapshot.employees.length>=4,true));
  console.log("\nSUCCESS: integration tests passed; only isolated temp database was modified.");
