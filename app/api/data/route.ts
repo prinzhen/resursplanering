@@ -40,7 +40,7 @@ async function snapshot(d:D1Database){const [e,p,w,a,s,m,periods,formItems,weekM
 async function visibleSnapshot(d:D1Database,user:Identity){
  const scope=await accessScope(d,user);
  const data=await snapshot(d);
- return {...filteredSnapshot(data,user,scope),viewer:{
+ return {...filteredSnapshot(data,user,scope),projectDirectory:(user.isAdmin||user.isGroupManager)?data.projects.map(p=>({id:p.id,code:p.code,name:p.name,color:p.color,priority:p.priority})):data.projects.filter(p=>scope.projectIds.has(p.id)),viewer:{
   accountId:user.accountId,email:user.email,employeeId:user.employeeId,isAdmin:user.isAdmin,isGroupManager:user.isGroupManager,
   managedEmployeeIds:[...scope.managedIds],projectLeadIds:[...scope.projectLedIds],teamLeadIds:[...scope.teamLedIds],
   readableProjectIds:[...scope.projectIds]
