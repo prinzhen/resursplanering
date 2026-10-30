@@ -48,3 +48,14 @@ export const assignmentPeriods = sqliteTable("assignment_periods", {
  endDate: text("end_date").notNull(),
  effortPercent: integer("effort_percent").notNull(),
 });
+
+export const employeeGroups = sqliteTable("employee_groups", {
+ id:integer("id").primaryKey({autoIncrement:true}),
+ name:text("name").notNull().unique(),
+ description:text("description"),
+ createdAt:text("created_at").notNull().default("CURRENT_TIMESTAMP"),
+});
+export const employeeGroupMembers = sqliteTable("employee_group_members",{
+ groupId:integer("group_id").notNull().references(()=>employeeGroups.id,{onDelete:"cascade"}),
+ employeeId:integer("employee_id").notNull().references(()=>employees.id,{onDelete:"cascade"}),
+},t=>[uniqueIndex("idx_employee_group_members_group_employee").on(t.groupId,t.employeeId)]);
