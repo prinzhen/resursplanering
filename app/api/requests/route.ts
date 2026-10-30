@@ -2,7 +2,7 @@ import {env} from "cloudflare:workers";
 import {sessionIdentity,unauthorized,forbidden,sameOrigin} from "@/lib/auth";
 import {accessScope,projectOfActivity} from "@/lib/permissions";
 export const dynamic="force-dynamic";
-const db=()=>env.DB;
+const db=()=>{if(!env.DB)throw Error("Databasen saknas");return env.DB};
 type RequestRow={id:number;activityId:number;requestedBy:number;recipientId:number;effortPercent:number;startDate:string;endDate:string;status:string;comment:string|null;projectId:number};
 export async function GET(req:Request){
  const d=db(),user=await sessionIdentity(req,d);if(!user)return unauthorized();
