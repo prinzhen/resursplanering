@@ -71,6 +71,7 @@ export async function POST(request:Request){try{const d=db();const b=await reque
   for(const x of prev.results)if(!keep.has(x.employeeId)){
    q.push(d.prepare("DELETE FROM assignments WHERE activity_id=? AND employee_id=?").bind(activityId,x.employeeId));
    // Remove the obsolete spreadsheet identity for this particular assignment.
+   q.push(d.prepare("DELETE FROM individual_week_moves WHERE item_uid IN (SELECT item_uid FROM individual_form_items WHERE activity_id=? AND employee_id=?)").bind(activityId,x.employeeId));
    q.push(d.prepare("DELETE FROM individual_form_items WHERE activity_id=? AND employee_id=?").bind(activityId,x.employeeId));
   }
   for(const x of resources)q.push(d.prepare("INSERT INTO assignments(activity_id,employee_id,effort_percent,start_date,end_date,completed_at) VALUES(?,?,?,?,?,NULL) ON CONFLICT(activity_id,employee_id) DO UPDATE SET effort_percent=excluded.effort_percent").bind(activityId,x.employeeId,x.effortPercent,activity.startDate,activity.endDate));
