@@ -1,11 +1,11 @@
 import type {Identity} from "./auth";
 export type AccessScope={
  employeeIds:Set<number>;projectIds:Set<number>;selfProjectIds:Set<number>;projectLedIds:Set<number>;workPackageIds:Set<number>;workPackageLedIds:Set<number>;
- managedIds:Set<number>;teamLedIds:Set<number>;teamIds:Set<number>;
+ managedIds:Set<number>;teamLedIds:Set<number>;teamIds:Set<number>;workPackageOnlyEmployeeIds:Set<number>;
 };
 const safe=(v:unknown)=>Number.isSafeInteger(Number(v))&&Number(v)>0?Number(v):0;
 export async function accessScope(d:D1Database,user:Identity):Promise<AccessScope>{
- const result:AccessScope={employeeIds:new Set(),projectIds:new Set(),selfProjectIds:new Set(),projectLedIds:new Set(),workPackageIds:new Set(),workPackageLedIds:new Set(),managedIds:new Set(),teamLedIds:new Set(),teamIds:new Set()};
+ const result:AccessScope={employeeIds:new Set(),projectIds:new Set(),selfProjectIds:new Set(),projectLedIds:new Set(),workPackageIds:new Set(),workPackageLedIds:new Set(),managedIds:new Set(),teamLedIds:new Set(),teamIds:new Set(),workPackageOnlyEmployeeIds:new Set()};
  if(user.isAdmin){
   const [employees,projects,teams,workPackages]=await Promise.all([
    d.prepare("SELECT id FROM employees").all<{id:number}>(),
@@ -59,7 +59,10 @@ export async function accessScope(d:D1Database,user:Identity):Promise<AccessScop
  if(result.workPackageLedIds.size){
   const ids=[...result.workPackageLedIds],inSql=ids.map(()=>"?").join(",");
   const rows=await d.prepare(`SELECT DISTINCT s.employee_id id FROM assignments s JOIN activities a ON a.id=s.activity_id WHERE a.work_package_id IN (${inSql})`).bind(...ids).all<{id:number}>();
-  for(const row of rows.results)result.employeeIds.add(row.id);
+  for(const row of rows.results){
+   if(!result.employeeIds.has(row.id))result.workPackageOnlyEmployeeIds.add(row.id);
+   result.employeeIds.add(row.id);
+  }
  }
   // Project leads need to see every resource on their projects.
  if(result.projectLedIds.size){
@@ -150,7 +153,13 @@ export function filteredSnapshot<T extends Record<string,any>>(data:T,user:Ident
  const activities=(data.activities||[]).filter((a:{projectId:number})=>scope.projectIds.has(a.projectId));
  const allowedActivities=new Set(activities.map((a:{id:number})=>a.id));
  const allowedEmployees=new Set(scope.employeeIds);
- const assignments=(data.assignments||[]).filter((a:{activityId:number;employeeId:number})=>allowedActivities.has(a.activityId)&&(allowedEmployees.has(a.employeeId)||scope.projectLedIds.has(activities.find((x:{id:number})=>x.id===a.activityId)?.projectId)||scope.workPackageLedIds.has(activities.find((x:{id:number;workPackageId:number|null})=>x.id===a.activityId)?.workPackageId||0)));
+ const assignments=(data.assignments||[]).filter((a:{activityId:number;employeeId:number})=>{
+  if(!allowedActivities.has(a.activityId))return false;
+  const task=activities.find((x:{id:number})=>x.id===a.activityId) as {projectId:number;workPackageId:number|null}|undefined;
+  const projectLead=!!task&&scope.projectLedIds.has(task.projectId);
+  const workLead=!!task?.workPackageId&&scope.workPackageLedIds.has(task.workPackageId);
+  return projectLead||workLead||(allowedEmployees.has(a.employeeId)&&!scope.workPackageOnlyEmployeeIds.has(a.employeeId));
+ });
  const visibleAssignmentIds=new Set(assignments.map((a:{id:number})=>a.id));
  const visibleTeams=new Set(scope.teamIds);
  return {...data,
