@@ -90,8 +90,10 @@ export async function authorizePlanningAction(d:D1Database,user:Identity,action:
    return origin?.employeeId===self&&nextProject===existingProject&&(teammates?.count??0)===0;
  }
  case "setAssignmentStatus":
- case "setAssignmentPeriods":
    return employee===self||managerOf(employee)||isProjectLead;
+ case "setAssignmentPeriods":
+   if(employee!==self)return managerOf(employee)||isProjectLead;
+   return scope.projectIds.has(context);
  case "setActivityStatus":
    if(isProjectLead)return true;
    const c=await d.prepare("SELECT COUNT(*) n FROM assignments WHERE activity_id=? AND employee_id<>?").bind(activity,self).first<{n:number}>();
@@ -115,10 +117,10 @@ export async function authorizePlanningAction(d:D1Database,user:Identity,action:
     const rows=await d.prepare("SELECT employee_id id FROM employee_group_members WHERE group_id=?").bind(safe(body.id)).all<{id:number}>();
     return rows.results.every(r=>r.id===self||managerOf(r.id));
    }
-   return scope.managedIds.size>0;
+   return user.isGroupManager;
  }
  case "employee":
-   return scope.managedIds.size>0;
+   return user.isGroupManager;
  default:return false;
  }
 }
