@@ -6,16 +6,18 @@ const db=()=>{if(!env.DB)throw Error("Databasen saknas");return env.DB};
 export async function GET(req:Request){
  const user=await sessionIdentity(req,db());if(!user)return unauthorized();
  const scope=await accessScope(db(),user);
- const [accounts,projects,teams]=await Promise.all([
+ const [accounts,projects,teams,workPackages]=await Promise.all([
  user.isAdmin?db().prepare("SELECT id,email,employee_id employeeId,is_admin isAdmin,is_group_manager isGroupManager,is_disabled isDisabled,created_at createdAt FROM user_accounts ORDER BY email").all():Promise.resolve({results:[]}),
  db().prepare("SELECT project_id projectId,employee_id employeeId FROM project_leaders ORDER BY project_id").all<{projectId:number;employeeId:number}>(),
  db().prepare("SELECT team_id teamId,employee_id employeeId FROM team_leaders ORDER BY team_id").all<{teamId:number;employeeId:number}>(),
+ db().prepare("SELECT work_package_id workPackageId,employee_id employeeId FROM work_package_leaders ORDER BY work_package_id").all<{workPackageId:number;employeeId:number}>(),
  ]);
  const directory=(user.isAdmin||scope.projectLedIds.size>0||user.isGroupManager)?
    await db().prepare("SELECT id,name FROM employees ORDER BY name").all<{id:number;name:string}>():{results:[]};
  return Response.json({directoryEmployees:directory.results,accounts:accounts.results,
   projectLeaders:projects.results.filter(p=>user.isAdmin||scope.projectIds.has(p.projectId)),
   teamLeaders:teams.results.filter(t=>user.isAdmin||scope.teamIds.has(t.teamId)),
+  workPackageLeaders:workPackages.results.filter(w=>user.isAdmin||scope.workPackageLedIds.has(w.workPackageId)||scope.workPackageIds.has(w.workPackageId)),
   viewer:{accountId:user.accountId,employeeId:user.employeeId,isAdmin:user.isAdmin}},{headers:{"cache-control":"no-store"}});
 }
 export async function POST(req:Request){
@@ -74,6 +76,47 @@ export async function POST(req:Request){
    if(target===user.accountId)return Response.json({error:"Du kan inte inaktivera ditt eget administratörskonto."},{status:400});
    await d.prepare("UPDATE user_accounts SET is_disabled=? WHERE id=?").bind(Number(Boolean(b.disabled)),target).run();
    await d.prepare("DELETE FROM user_sessions WHERE user_id=?").bind(target).run();
+  }else if(action==="replaceLeader"||action==="setWorkPackageLeader"){
+   const kind=action==="setWorkPackageLeader"?"workPackage":String(b.kind||"");
+   if(!["project","team","workPackage"].includes(kind))return Response.json({error:"Ogiltig ledartyp."},{status:400});
+   const target=kind==="project"?projectId:kind==="team"?teamId:Number(b.workPackageId);
+   if(!Number.isSafeInteger(target)||target<=0)return Response.json({error:"Välj ett projekt, uppdrag eller TEAM."},{status:400});
+   const oldId=action==="setWorkPackageLeader"?null:(b.oldEmployeeId===null||b.oldEmployeeId===undefined?null:Number(b.oldEmployeeId));
+   const newId=action==="setWorkPackageLeader"?(Boolean(b.enabled)?employeeId:null):(b.newEmployeeId===null||b.newEmployeeId===undefined?null:Number(b.newEmployeeId));
+   const deleteOnly=action==="setWorkPackageLeader"&&!Boolean(b.enabled);
+   if(newId===null&&oldId===null&&!deleteOnly)return Response.json({error:"Välj en person att tillsätta eller ersätta."},{status:400});
+   if([oldId,newId].some(x=>x!==null&&(!Number.isSafeInteger(x)||x<=0)))return Response.json({error:"Ogiltigt medarbetar-ID."},{status:400});
+   const toCheck=action==="setWorkPackageLeader"?employeeId:newId;
+   if(toCheck!==null&&!await d.prepare("SELECT id FROM employees WHERE id=?").bind(toCheck).first())
+    return Response.json({error:"Medarbetaren saknas."},{status:404});
+   const targetInfo=kind==="team"?
+     await d.prepare("SELECT id,owner_id ownerId FROM employee_groups WHERE id=?").bind(target).first<{id:number;ownerId:number|null}>():
+     kind==="workPackage"?
+     await d.prepare("SELECT id,project_id projectId FROM work_packages WHERE id=?").bind(target).first<{id:number;projectId:number}>():
+     await d.prepare("SELECT id FROM projects WHERE id=?").bind(target).first<{id:number}>();
+   if(!targetInfo)return Response.json({error:"Projektet, uppdraget eller TEAMET saknas."},{status:404});
+   const allowed=user.isAdmin||(user.isGroupManager&&(kind==="team"?
+       (targetInfo as {ownerId:number|null}).ownerId===user.employeeId:
+       scope.projectIds.has(kind==="project"?target:(targetInfo as {projectId:number}).projectId)));
+   if(!allowed)return forbidden();
+   const table=kind==="team"?"team_leaders":kind==="workPackage"?"work_package_leaders":"project_leaders";
+   const col=kind==="team"?"team_id":kind==="workPackage"?"work_package_id":"project_id";
+   const deletes:number[]=[];
+   if(action==="setWorkPackageLeader"&&deleteOnly)deletes.push(employeeId);
+   else if(oldId!==null)deletes.push(oldId);
+   for(const old of deletes){
+    if(!await d.prepare(`SELECT 1 FROM ${table} WHERE ${col}=? AND employee_id=?`).bind(target,old).first())
+     return Response.json({error:"Den gamla ledaren finns inte längre på uppdraget."},{status:409});
+   }
+   const q:D1PreparedStatement[]=[];
+   for(const old of deletes)q.push(d.prepare(`DELETE FROM ${table} WHERE ${col}=? AND employee_id=?`).bind(target,old));
+   if(newId!==null){
+    if(kind==="team")q.push(d.prepare("INSERT OR IGNORE INTO employee_group_members(group_id,employee_id) VALUES(?,?)").bind(target,newId));
+    if(kind==="project")q.push(d.prepare("INSERT OR IGNORE INTO project_members(project_id,employee_id) VALUES(?,?)").bind(target,newId));
+    if(kind==="workPackage")q.push(d.prepare("INSERT OR IGNORE INTO project_members(project_id,employee_id) VALUES(?,?)").bind((targetInfo as {projectId:number}).projectId,newId));
+    q.push(d.prepare(`INSERT OR IGNORE INTO ${table}(${col},employee_id) VALUES(?,?)`).bind(target,newId));
+   }
+   if(q.length)await d.batch(q);
   }else if(action==="setTeamOwner"){
    if(!user.isAdmin)return forbidden();
    const teamId=Number(b.teamId);
@@ -84,13 +127,13 @@ export async function POST(req:Request){
  }else if(action==="setProjectLeader"||action==="setTeamLeader"){
    if(!Number.isSafeInteger(employeeId)||employeeId<=0||!await d.prepare("SELECT id FROM employees WHERE id=?").bind(employeeId).first())
     return Response.json({error:"Välj en befintlig medarbetare."},{status:400});
-   if(!user.isAdmin&&(!user.isGroupManager||!scope.managedIds.has(employeeId)))return forbidden();
+   if(!user.isAdmin&&!user.isGroupManager)return forbidden();
    const enabled=Boolean(b.enabled);
    if(action==="setProjectLeader"){
     if(!Number.isSafeInteger(projectId)||projectId<=0||!await d.prepare("SELECT id FROM projects WHERE id=?").bind(projectId).first())
      return Response.json({error:"Projektet saknas."},{status:400});
     if(!user.isAdmin&&!scope.projectIds.has(projectId))return forbidden();
-    if(enabled)await d.prepare("INSERT OR IGNORE INTO project_leaders(project_id,employee_id) VALUES(?,?)").bind(projectId,employeeId).run();
+    if(enabled)await d.batch([d.prepare("INSERT OR IGNORE INTO project_members(project_id,employee_id) VALUES(?,?)").bind(projectId,employeeId),d.prepare("INSERT OR IGNORE INTO project_leaders(project_id,employee_id) VALUES(?,?)").bind(projectId,employeeId)]);
     else await d.prepare("DELETE FROM project_leaders WHERE project_id=? AND employee_id=?").bind(projectId,employeeId).run();
    }else{
     const team=await d.prepare("SELECT id,owner_id ownerId FROM employee_groups WHERE id=?").bind(teamId).first<{id:number;ownerId:number|null}>();
