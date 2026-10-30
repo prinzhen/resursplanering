@@ -30,6 +30,7 @@ export const activities = sqliteTable("activities", {
   id: integer("id").primaryKey({ autoIncrement: true }), projectId: integer("project_id").notNull().references(() => projects.id),
   name: text("name").notNull(), startDate: text("start_date").notNull(), endDate: text("end_date").notNull(),
   estimatedHours: integer("estimated_hours"), status: text("status").notNull().default("Planerad"),
+  priority:integer("priority").notNull().default(3),
   code: text("code"), workPackageId: integer("work_package_id").references(() => workPackages.id),
   parentActivityId: integer("parent_activity_id"), description: text("description"),createdBy:integer("created_by").references(()=>employees.id,{onDelete:"set null"}),
 });
@@ -109,3 +110,13 @@ export const projectProposals=sqliteTable("project_proposals",{
  comment:text("comment"),
  createdAt:text("created_at").notNull()
 });
+
+export const activityPriorityHistory = sqliteTable("activity_priority_history", {
+ id:integer("id").primaryKey({autoIncrement:true}),
+ activityId:integer("activity_id").notNull().references(()=>activities.id,{onDelete:"cascade"}),
+ effectiveFrom:text("effective_from").notNull(),
+ priority:integer("priority").notNull(),
+ changedBy:integer("changed_by").references(()=>userAccounts.id,{onDelete:"set null"}),
+ source:text("source").notNull().default("excel"),
+ createdAt:text("created_at").notNull()
+},t=>[uniqueIndex("idx_activity_priority_history_activity_date").on(t.activityId,t.effectiveFrom)]);
