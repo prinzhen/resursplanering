@@ -91,7 +91,7 @@ export async function POST(req:Request){
     const person=await d.prepare("SELECT start_date startDate,end_date endDate,original_end_date originalEnd FROM assignments WHERE activity_id=? AND employee_id=?").bind(a.activityId,e.id).first<{startDate:string;endDate:string;originalEnd:string|null}>();
     if(!person)throw Error("Personens tilldelning saknas: "+a.name);
     const prior=await d.prepare("SELECT current_week currentWeek FROM individual_form_items WHERE activity_id=? AND employee_id=?").bind(a.activityId,e.id).first<{currentWeek:string}>();
-    const done=a.status==="Klar",frozen=a.status==="Fryst";
+    const done=a.status==="Klar";
     const originalEnd=person.originalEnd||person.endDate;
     const from=monday(a.week),until=friday(a.week);
     // The latest accepted import sets this person's status, including reopening a finished task.
@@ -112,7 +112,7 @@ export async function POST(req:Request){
    }else{
     const result=await d.prepare("INSERT INTO activities (project_id,name,description,start_date,end_date,estimated_hours,status) VALUES(?,?,?,?,?,?,?)").bind(p.id,a.name,a.description||"Aktivitet från individuellt formulär",monday(a.week),friday(a.week),a.hours,a.status).run();
     const activityId=Number(result.meta.last_row_id);
-    await d.batch([d.prepare("INSERT INTO assignments (activity_id,employee_id,effort_percent,start_date,end_date,completed_at,work_status,original_end_date,status_updated_at) VALUES(?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)").bind(activityId,e.id,0,monday(a.week),friday(a.week),a.status==="Klar"?new Date().toISOString().slice(0,10):null,a.status,friday(a.week)),d.prepare("INSERT INTO individual_form_items(item_uid,employee_id,activity_id,first_week,current_week) VALUES(?,?,?,?,?)").bind(a.uid,e.id,activityId,a.firstWeek,a.week)]);created++;
+    await d.batch([d.prepare("INSERT INTO assignments (activity_id,employee_id,effort_percent,start_date,end_date,completed_at,work_status,original_end_date,status_updated_at) VALUES(?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)").bind(activityId,e.id,Math.round(a.hours/40*100),monday(a.week),friday(a.week),a.status==="Klar"?new Date().toISOString().slice(0,10):null,a.status,friday(a.week)),d.prepare("INSERT INTO individual_form_items(item_uid,employee_id,activity_id,first_week,current_week) VALUES(?,?,?,?,?)").bind(a.uid,e.id,activityId,a.firstWeek,a.week)]);created++;
    }
   }
   for(const m of memberChanges)await d.batch([d.prepare("INSERT OR IGNORE INTO project_members(project_id,employee_id) VALUES(?,?)").bind(m.projectId,e.id),d.prepare("INSERT INTO individual_project_state(employee_id,project_id,state) VALUES(?,?,?) ON CONFLICT(employee_id,project_id) DO UPDATE SET state=excluded.state,updated_at=CURRENT_TIMESTAMP").bind(e.id,m.projectId,m.state)]);
