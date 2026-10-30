@@ -21,7 +21,7 @@ for tool in git node pnpm python3 systemctl ss; do command -v "${tool}" >/dev/nu
 if ss -lntH '( sport = :3200 )' | grep -q .; then echo "Port 3200 används redan." >&2; exit 1; fi
 if [[ ! -t 0 ]]; then echo "Kör från en interaktiv terminal så ett administratörslösenord kan anges säkert." >&2; exit 1; fi
 read -r -p "E-postadress för testadministratör: " ADMIN_EMAIL
-[[ "${ADMIN_EMAIL}" =~ ^[^[:space:]@]+@[^[:space:]@]+\\.[^[:space:]@]+$ ]] || {
+[[ "${ADMIN_EMAIL}" =~ ^[^[:space:]@]+@[^[:space:]@]+[.][^[:space:]@]+$ ]] || {
  echo "Ogiltig e-postadress." >&2; exit 1;
 }
 echo "[1/6] Hämtar separat kodgren."
