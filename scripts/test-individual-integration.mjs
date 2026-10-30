@@ -158,6 +158,31 @@ try{
   assert.ok(assignment(snap,1,erik));
   assert.equal(assignment(snap,1,erik).effortPercent,50);
  });
+ snap=await request("/api/data",{action:"setAssignmentStatus",activityId:1,employeeId:erik,status:"Pausad"});
+ check("Individual Pausad status is preserved for only that resource",()=>{
+  assert.equal(assignment(snap,1,erik).workStatus,"Pausad");
+  assert.notEqual(assignment(snap,1,sara).workStatus,"Pausad");
+  assert.equal(assignment(snap,1,erik).completedAt,null);
+ });
+ snap=await request("/api/data",{action:"setAssignmentStatus",activityId:1,employeeId:erik,status:"Pågående"});
+ check("Resuming individual paused work restores active status",()=>{
+  assert.equal(assignment(snap,1,erik).workStatus,"Pågående");
+  assert.equal(assignment(snap,1,erik).completedAt,null);
+ });
+ const initialFuture=assignment(snap,4,erik),endFuture=initialFuture.endDate;
+ snap=await request("/api/data",{action:"setAssignmentStatus",activityId:4,employeeId:erik,status:"Klar"});
+ check("Completing future assignment does not corrupt its date interval",()=>{
+  const updated=assignment(snap,4,erik);
+  assert.ok(updated.completedAt);
+  assert.ok(updated.endDate>=updated.startDate);
+  assert.equal(assignment(snap,4,4).completedAt,null);
+ });
+ snap=await request("/api/data",{action:"setAssignmentStatus",activityId:4,employeeId:erik,status:"Planerad"});
+ check("Reopening future work restores its original end date",()=>{
+  const updated=assignment(snap,4,erik);
+  assert.equal(updated.completedAt,null);
+  assert.equal(updated.endDate,endFuture);
+ });
  // Inspect the real SQLite state independently of API serialization.
  const sqliteFile=await findSqlite(join(dir,"data"));
  const sql=new DatabaseSync(sqliteFile,{readOnly:true});
