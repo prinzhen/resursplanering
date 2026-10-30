@@ -36,12 +36,15 @@ export async function GET(req:Request){
  FROM assignments s JOIN activities a ON a.id=s.activity_id JOIN projects p ON p.id=a.project_id
  LEFT JOIN individual_form_items i ON i.activity_id=a.id AND i.employee_id=s.employee_id
  WHERE s.employee_id=? ORDER BY a.start_date,a.name`).bind(e.id).all<Record<string,unknown>>();
+  const tracked=await d.prepare(`SELECT i.item_uid uid,i.current_week savedWeek,i.first_week firstWeek,a.id activityId,a.name,a.description comment,a.status,a.estimated_hours hours,a.start_date startDate,NULL completedAt,p.code projectCode,p.name projectName,p.id projectId,CASE WHEN p.code='INTERNAL-VERK' THEN 'Verksamhet' WHEN p.code='INTERNAL-OVR' THEN 'Övrigt' ELSE 'Projekt' END kind FROM individual_form_items i JOIN activities a ON a.id=i.activity_id JOIN projects p ON p.id=a.project_id LEFT JOIN assignments s ON s.activity_id=i.activity_id AND s.employee_id=i.employee_id WHERE i.employee_id=? AND s.id IS NULL ORDER BY a.start_date,a.name`).bind(e.id).all<Record<string,unknown>>();
+  // A previously imported row must not disappear because its allocation link is missing.
+  const sourceRows=[...items.results,...tracked.results];
   const iso=(raw:string)=>{const d=new Date(raw+'T00:00:00Z');if(Number.isNaN(d.getTime()))return '';d.setUTCDate(d.getUTCDate()+4-(d.getUTCDay()||7));const year=d.getUTCFullYear();const start=new Date(Date.UTC(year,0,1));return year+'-W'+String(Math.ceil(((d.getTime()-start.getTime())/86400000+1)/7)).padStart(2,'0')};
   const memberships=await d.prepare(`SELECT p.code,p.name,COALESCE(s.state,'Aktiv') state
  FROM project_members m JOIN projects p ON p.id=m.project_id
  LEFT JOIN individual_project_state s ON s.employee_id=m.employee_id AND s.project_id=p.id
  WHERE m.employee_id=? AND p.code NOT LIKE 'INTERNAL-%' ORDER BY p.code`).bind(e.id).all<{code:string;name:string;state:string}>();
-  const result:FormValues={name:e.name,email:e.email,activities:items.results.filter(a=>!a.completedAt&&["Planerad","Pågående","Pausad","Pågår"].includes(String(a.status))).map(a=>({
+  const result:FormValues={name:e.name,email:e.email,activities:sourceRows.filter(a=>!a.completedAt&&["Planerad","Pågående","Pausad","Pågår"].includes(String(a.status))).map(a=>({
    uid:String(a.uid),week:String(a.savedWeek||iso(String(a.startDate))),name:String(a.name),kind:String(a.kind),
    link:String(a.projectName||""),projectCode:String(a.projectCode).startsWith("INTERNAL-")?"":String(a.projectCode),
    hours:Number(a.hours||0),status:cleanStatus(String(a.status)),priority:"",dueDate:"",
