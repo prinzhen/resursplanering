@@ -96,7 +96,7 @@ export async function POST(req:Request){
     if(prev&&prev.currentWeek!==a.week)statements.push(d.prepare("INSERT INTO individual_week_moves(item_uid,from_week,to_week,reason) VALUES(?,?,?,?)").bind(a.uid,prev.currentWeek,a.week,a.reason||null));
     // Keep historical allocation and completion date, but stop counting finished work.
     if(completed){
-      statements.push(d.prepare("UPDATE assignments SET completed_at=COALESCE(completed_at,?) WHERE employee_id=? AND activity_id=?").bind(today,e.id,a.activityId));
+      statements.push(d.prepare("UPDATE assignments SET completed_at=COALESCE(completed_at,?),end_date=CASE WHEN end_date>? AND start_date<=? THEN ? ELSE end_date END WHERE employee_id=? AND activity_id=?").bind(today,today,today,today,e.id,a.activityId));
     }else{
       statements.push(d.prepare("UPDATE assignments SET completed_at=NULL,start_date=?,end_date=? WHERE employee_id=? AND activity_id=?").bind(monday(a.week),friday(a.week),e.id,a.activityId));
     }
