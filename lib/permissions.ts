@@ -19,16 +19,18 @@ export async function accessScope(d:D1Database,user:Identity):Promise<AccessScop
  const self=user.employeeId;
  if(self===null)return result;
  result.employeeIds.add(self);
- const [managed,ledProjects,ledTeams,memberTeams]=await Promise.all([
+ const [managed,ledProjects,ledTeams,memberTeams,ownedTeams]=await Promise.all([
   d.prepare("SELECT id FROM employees WHERE manager_id=?").bind(self).all<{id:number}>(),
   d.prepare("SELECT project_id id FROM project_leaders WHERE employee_id=?").bind(self).all<{id:number}>(),
   d.prepare("SELECT team_id id FROM team_leaders WHERE employee_id=?").bind(self).all<{id:number}>(),
-  d.prepare("SELECT group_id id FROM employee_group_members WHERE employee_id=?").bind(self).all<{id:number}>()
+  d.prepare("SELECT group_id id FROM employee_group_members WHERE employee_id=?").bind(self).all<{id:number}>(),
+  d.prepare("SELECT id FROM employee_groups WHERE owner_id=?").bind(self).all<{id:number}>()
  ]);
  for(const x of managed.results){result.managedIds.add(x.id);result.employeeIds.add(x.id)}
  for(const x of ledProjects.results){result.projectLedIds.add(x.id);result.projectIds.add(x.id)}
  for(const x of ledTeams.results){result.teamLedIds.add(x.id);result.teamIds.add(x.id)}
  for(const x of memberTeams.results)result.teamIds.add(x.id);
+ for(const x of ownedTeams.results)result.teamIds.add(x.id);
  if(result.teamLedIds.size){
   const m=await d.prepare("SELECT group_id teamId,employee_id employeeId FROM employee_group_members").all<{teamId:number;employeeId:number}>();
   for(const x of m.results)if(result.teamLedIds.has(x.teamId))result.employeeIds.add(x.employeeId);
