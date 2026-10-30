@@ -31,8 +31,8 @@ export async function POST(req:Request){
    if(!user.isAdmin)return forbidden();
    const email=String(b.email||"").toLowerCase().trim();
    const password=String(b.password||"");
-   if(!email.includes("@")||email.length>254||password.length<12||password.length>256)
-    return Response.json({error:"E-post och lösenord (minst 12 tecken) krävs."},{status:400});
+   if(!email.includes("@")||email.length>254||password.length<6||password.length>256)
+    return Response.json({error:"E-post och lösenord (minst 6 tecken) krävs."},{status:400});
    const person=b.employeeId===null||b.employeeId===undefined||b.employeeId===""?null:employeeId;
    if(person!==null&&!await d.prepare("SELECT id FROM employees WHERE id=?").bind(person).first())
     return Response.json({error:"Medarbetaren saknas."},{status:400});
@@ -44,7 +44,30 @@ export async function POST(req:Request){
    }else{
     await d.prepare("INSERT INTO user_accounts(employee_id,email,password_salt,password_hash,is_admin,is_group_manager) VALUES(?,?,?,?,?,?)").bind(person,email,salt,hash,isAdmin,groupManager).run();
    }
-  }else if(action==="setAccountDisabled"){
+  }else if(action==="setEmployeePassword"){
+   if(!user.isAdmin)return forbidden();
+   const employeeId=Number(b.employeeId),password=String(b.password||"");
+   if(!Number.isSafeInteger(employeeId)||employeeId<=0||password.length<6||password.length>256)
+    return Response.json({error:"Välj medarbetare och ange ett lösenord med minst 6 tecken."},{status:400});
+   const person=await d.prepare("SELECT id,email FROM employees WHERE id=?").bind(employeeId).first<{id:number;email:string|null}>();
+   if(!person||!person.email||!person.email.includes("@"))
+    return Response.json({error:"Medarbetaren måste ha en giltig e-postadress."},{status:400});
+   const email=person.email.toLowerCase().trim();
+   const byEmployee=await d.prepare("SELECT id FROM user_accounts WHERE employee_id=?").bind(employeeId).first<{id:number}>();
+   const byEmail=await d.prepare("SELECT id,employee_id employeeId FROM user_accounts WHERE lower(email)=lower(?)").bind(email).first<{id:number;employeeId:number|null}>();
+   if(byEmail&&byEmail.employeeId!==null&&byEmail.employeeId!==employeeId)
+    return Response.json({error:"E-postadressen används av en annan användare."},{status:409});
+   if(byEmployee&&byEmail&&byEmployee.id!==byEmail.id)
+    return Response.json({error:"Medarbetarens konto och e-postadress pekar på olika konton."},{status:409});
+   const salt=randomHex(16),hash=await passwordHash(password,salt);
+   const existing=byEmployee||byEmail;
+   if(existing){
+    await d.batch([
+     d.prepare("UPDATE user_accounts SET email=?,employee_id=?,password_salt=?,password_hash=?,is_disabled=0,failed_attempts=0,locked_until=NULL WHERE id=?").bind(email,employeeId,salt,hash,existing.id),
+     d.prepare("DELETE FROM user_sessions WHERE user_id=?").bind(existing.id)
+    ]);
+   }else await d.prepare("INSERT INTO user_accounts(employee_id,email,password_salt,password_hash) VALUES(?,?,?,?)").bind(employeeId,email,salt,hash).run();
+    }else if(action==="setAccountDisabled"){
    if(!user.isAdmin)return forbidden();
    const target=Number(b.accountId);
    if(target===user.accountId)return Response.json({error:"Du kan inte inaktivera ditt eget administratörskonto."},{status:400});
