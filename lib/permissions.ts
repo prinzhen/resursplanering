@@ -100,6 +100,8 @@ export async function authorizePlanningAction(d:D1Database,user:Identity,action:
    return isProjectLead;
  case "setProjectMemberships":
    return managerOf(employee);
+ case "setSingleProjectMember":
+   return managerOf(employee)||scope.projectLedIds.has(project);
  case "setEmployeeProjectOrder":
  case "resetEmployeeProjectOrder":
    return employee===self||managerOf(employee);
