@@ -439,11 +439,16 @@ try{
  };
  await asUser("erik@example.se");
  let userData=await request();
- check("Employee sees project 1 and project 2 where assigned, not unrelated project 3",()=>{
-  assert.ok(userData.projects.some(p=>p.id===1));
-  assert.ok(userData.projects.some(p=>p.id===2));
-  assert.equal(userData.projects.some(p=>p.id===3),false);
+ check("Employee sees only projects they participate in, including manually joined projects",()=>{
+  const entitled=new Set(snap.projectMembers.filter(x=>x.employeeId===erik).map(x=>x.projectId));
+  for(const a of snap.assignments.filter(x=>x.employeeId===erik)){
+   const task=snap.activities.find(x=>x.id===a.activityId);
+   if(task)entitled.add(task.projectId);
+  }
+  assert.ok(entitled.has(1)&&entitled.has(2));
+  assert.deepEqual(new Set(userData.projects.map(p=>p.id)),entitled);
   assert.ok(userData.activities.some(a=>a.id===1));
+  assert.ok(snap.projects.some(p=>!entitled.has(p.id)),"Fixture needs at least one out-of-scope project");
  });
  const denied=await fetch(base+"/api/data",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({action:"setAssignmentStatus",activityId:1,employeeId:sara,status:"Klar"})});
  check("Ordinary employee cannot change colleague assignment",()=>assert.equal(denied.status,403));
