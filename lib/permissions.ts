@@ -75,10 +75,14 @@ export async function authorizePlanningAction(d:D1Database,user:Identity,action:
  case "activity":
    // Any project participant can create an activity (automatically assigned to self).
    return scope.projectIds.has(project);
- case "updateActivity":
-   if(isProjectLead)return true;
+ case "updateActivity":{
+   const existingProject=await projectOfActivity(d,activity);
+   const nextProject=safe(body.projectId);
+   if(scope.projectLedIds.has(existingProject)&&scope.projectLedIds.has(nextProject))return true;
    const origin=await d.prepare("SELECT created_by employeeId FROM activities WHERE id=?").bind(activity).first<{employeeId:number|null}>();
-   return origin?.employeeId===self;
+   const teammates=await d.prepare("SELECT COUNT(*) count FROM assignments WHERE activity_id=? AND employee_id<>?").bind(activity,self).first<{count:number}>();
+   return origin?.employeeId===self&&nextProject===existingProject&&(teammates?.count??0)===0;
+ }
  case "setAssignmentStatus":
  case "setAssignmentPeriods":
    return employee===self||managerOf(employee)||isProjectLead;
@@ -98,6 +102,8 @@ export async function authorizePlanningAction(d:D1Database,user:Identity,action:
    const members=Array.isArray(body.employeeIds)?body.employeeIds.map(Number):[];
    if(!members.every(id=>id===self||managerOf(id)))return false;
    if(body.id!==undefined&&body.id!==null){
+    const team=await d.prepare("SELECT owner_id ownerId FROM employee_groups WHERE id=?").bind(safe(body.id)).first<{ownerId:number|null}>();
+    if(!team||team.ownerId!==self)return false;
     const rows=await d.prepare("SELECT employee_id id FROM employee_group_members WHERE group_id=?").bind(safe(body.id)).all<{id:number}>();
     return rows.results.every(r=>r.id===self||managerOf(r.id));
    }
