@@ -1,4 +1,4 @@
-import {setAssignmentStatus,reconcileActivityStatus,normalizeStatus,validStatuses} from "@/lib/assignment-status";
+import {setAssignmentStatus,setWholeActivityStatus,reconcileActivityStatus,normalizeStatus,validStatuses} from "@/lib/assignment-status";
 import { env } from "cloudflare:workers";
 export const dynamic="force-dynamic";
 type Row=Record<string,unknown>;
@@ -62,7 +62,7 @@ export async function POST(request:Request){try{const d=db();const b=await reque
   await reconcileActivityStatus(d,id);
  }else{
   const resources=await d.prepare("SELECT employee_id employeeId FROM assignments WHERE activity_id=?").bind(id).all<{employeeId:number}>();
-  for(const resource of resources.results)await setAssignmentStatus(d,id,resource.employeeId,status);
+  if(resources.results.length)await setWholeActivityStatus(d,id,status);
   if(resources.results.length)await reconcileActivityStatus(d,id);
   else await d.prepare("UPDATE activities SET status=? WHERE id=?").bind(status==="Pågående"?"Pågår":status,id).run();
  }
