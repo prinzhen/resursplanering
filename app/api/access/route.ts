@@ -61,6 +61,7 @@ export async function POST(req:Request){
     return Response.json({error:"Medarbetarens konto och e-postadress pekar på olika konton."},{status:409});
    const salt=randomHex(16),hash=await passwordHash(password,salt);
    const existing=byEmployee||byEmail;
+   if(existing?.id===user.accountId)return Response.json({error:"Byt ditt eget lösenord under Mitt konto."},{status:400});
    if(existing){
     await d.batch([
      d.prepare("UPDATE user_accounts SET email=?,employee_id=?,password_salt=?,password_hash=?,is_disabled=0,failed_attempts=0,locked_until=NULL WHERE id=?").bind(email,employeeId,salt,hash,existing.id),
