@@ -5,6 +5,14 @@ type Project={id:number;code:string;name:string};
 type Team={id:number;name:string};
 type Access={viewer:{accountId:number;employeeId:number|null;isAdmin:boolean};directoryEmployees:{id:number;name:string}[];accounts:{id:number;email:string;employeeId:number|null;isAdmin:number;isGroupManager:number;isDisabled:number}[];projectLeaders:{projectId:number;employeeId:number}[];teamLeaders:{teamId:number;employeeId:number}[]};
 type Planning={employees:Employee[];projects:Project[];projectDirectory?:Project[];employeeGroups:Team[];viewer:{accountId:number;isAdmin:boolean;managedEmployeeIds:number[];projectLeadIds:number[]}};
+function EmployeeCredentialRow({person,account,onSetPassword,busy}:{person:Employee;account?:Access["accounts"][number];onSetPassword:(employeeId:number,password:string)=>Promise<boolean>;busy:boolean}){
+ const [password,setPassword]=useState(""),[show,setShow]=useState(false);
+ return <div className="grid gap-2 rounded-lg border bg-white p-3 sm:grid-cols-[minmax(0,1fr)_minmax(180px,240px)_auto] sm:items-center">
+  <div className="min-w-0"><div className="font-semibold text-slate-900">{person.name}</div><div className="truncate text-xs text-slate-500">{person.email}</div><span className={`text-xs ${account?"text-emerald-700":"text-amber-700"}`}>{account?"Konto finns · lösenord kan återställas":"Inget konto · skapa med lösenord"}</span></div>
+  <div className="flex items-center gap-2"><input aria-label={`Nytt lösenord för ${person.name}`} type={show?"text":"password"} value={password} minLength={6} maxLength={256} autoComplete="new-password" placeholder="Nytt lösenord (minst 6)" onChange={e=>setPassword(e.target.value)} className="min-w-0 w-full rounded-md border px-3 py-2 text-sm"/><button type="button" className="shrink-0 text-xs text-blue-700" onClick={()=>setShow(v=>!v)}>{show?"Dölj":"Visa"}</button></div>
+  <button type="button" disabled={busy||password.length<6} className="rounded-lg bg-blue-700 px-3 py-2 text-sm font-semibold text-white disabled:opacity-50" onClick={async()=>{if(await onSetPassword(person.id,password))setPassword("")}}>{account?"Byt lösenord":"Skapa konto"}</button>
+ </div>;
+}
 export default function AccessPage(){
  const [data,setData]=useState<Planning|null>(null),[access,setAccess]=useState<Access|null>(null),[error,setError]=useState(""),[notice,setNotice]=useState(""),[busy,setBusy]=useState(false);
  const [email,setEmail]=useState(""),[password,setPassword]=useState(""),[employeeId,setEmployeeId]=useState(""),[admin,setAdmin]=useState(false),[groupManager,setGroupManager]=useState(false);
@@ -43,6 +51,10 @@ export default function AccessPage(){
  <label className="text-sm font-medium">Kopplad medarbetare<select value={employeeId} onChange={e=>setEmployeeId(e.target.value)} className="mt-1 w-full rounded-lg border px-3 py-2"><option value="">Ingen (endast administratör)</option>{data.employees.map(p=><option key={p.id} value={p.id}>{p.name} · {p.email}</option>)}</select></label>
  <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={groupManager} onChange={e=>setGroupManager(e.target.checked)}/>Gruppchef – hantera egna medarbetare och TEAM</label><label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={admin} onChange={e=>setAdmin(e.target.checked)}/>Administratör – full behörighet</label>
  <div className="sm:col-span-2"><button disabled={busy} className="rounded-lg bg-blue-700 px-4 py-2 font-semibold text-white disabled:opacity-50">Spara konto</button></div></form>
+ <div className="mt-6 border-t pt-5"><h3 className="mb-2 text-lg font-semibold">Lösenord för samtliga medarbetare</h3>
+ <p className="mb-3 text-sm text-slate-600">Här kan du skapa ett konto för varje medarbetare eller ändra lösenordet på ett befintligt konto. Konto och medarbetare kopplas ihop automatiskt via e-postadressen. Roller ändras inte när du byter lösenord. Tidigare inloggningar avslutas.</p>
+ <div className="max-h-[55vh] space-y-2 overflow-y-auto">{data.employees.map(person=><EmployeeCredentialRow key={person.id} person={person} account={access?.accounts.find(a=>a.employeeId===person.id)} busy={busy} onSetPassword={async(id,password)=>post({action:"setEmployeePassword",employeeId:id,password})}/>)}</div>
+ </div>
  <div className="mt-4 space-y-2"><h3 className="text-sm font-semibold">Registrerade konton</h3>{access?.accounts.map(a=><div key={a.id} className="flex flex-wrap items-center justify-between gap-3 rounded-lg border p-2 text-sm"><div><strong>{a.email}</strong><p className="text-slate-500">{a.isAdmin?"Administratör":a.isGroupManager?"Gruppchef":"Medarbetare"} · {a.isDisabled?"Inaktiverat":"Aktivt"}</p></div>{a.id!==data.viewer.accountId&&<button disabled={busy} className="rounded border px-3 py-1" onClick={()=>post({action:"setAccountDisabled",accountId:a.id,disabled:!a.isDisabled})}>{a.isDisabled?"Aktivera":"Inaktivera"}</button>}</div>)}</div>
  </section>}
  <section className="rounded-xl border bg-white p-5"><h2 className="mb-3 text-lg font-semibold">Tilldela eller ta bort person i projekt</h2>
