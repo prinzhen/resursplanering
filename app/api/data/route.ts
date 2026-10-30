@@ -4,7 +4,7 @@ import {sessionIdentity,unauthorized,forbidden,sameOrigin,type Identity} from "@
 import {accessScope,authorizePlanningAction,filteredSnapshot,projectOfActivity} from "@/lib/permissions";
 export const dynamic="force-dynamic";
 type Row=Record<string,unknown>;
-type Backup={version:number;data:{employees:Row[];projects:Row[];workPackages:Row[];activities:Row[];assignments:Row[];projectMembers?:Row[];assignmentPeriods?:Row[];individualFormItems?:Row[];individualWeekMoves?:Row[];individualProjectStates?:Row[];individualImportRuns?:Row[];employeeProjectOrders?:Row[];employeeGroups?:Row[];employeeGroupMembers?:Row[];projectLeaders?:Row[];teamLeaders?:Row[];assignmentRequests?:Row[];projectProposals?:Row[];activityPriorityHistory?:Row[]}};
+type Backup={version:number;data:{employees:Row[];projects:Row[];workPackages:Row[];activities:Row[];assignments:Row[];projectMembers?:Row[];assignmentPeriods?:Row[];individualFormItems?:Row[];individualWeekMoves?:Row[];individualProjectStates?:Row[];individualImportRuns?:Row[];employeeProjectOrders?:Row[];employeeGroups?:Row[];employeeGroupMembers?:Row[];projectLeaders?:Row[];teamLeaders?:Row[];workPackageLeaders?:Row[];assignmentRequests?:Row[];projectProposals?:Row[];activityPriorityHistory?:Row[]}};
 const db=()=>{if(!env.DB)throw new Error("Databasen är inte tillgänglig");return env.DB};
 const text=(v:unknown)=>String(v??"").trim();
 const number=(v:unknown)=>v===""||v==null?null:Number(v);
@@ -17,7 +17,7 @@ async function seedIfEmpty(d:D1Database){const c=await d.prepare("SELECT COUNT(*
   d.prepare("INSERT INTO activities (project_id,name,start_date,end_date,estimated_hours,status,code) VALUES (?,?,?,?,?,?,?)").bind(1,"Systemdesign","2026-09-01","2026-12-18",420,"Pågår","A-10"),d.prepare("INSERT INTO activities (project_id,name,start_date,end_date,estimated_hours,status,code) VALUES (?,?,?,?,?,?,?)").bind(2,"Detaljprojektering","2026-10-01","2027-01-29",360,"Planerad","A-20"),d.prepare("INSERT INTO activities (project_id,name,start_date,end_date,estimated_hours,status,code) VALUES (?,?,?,?,?,?,?)").bind(3,"Granskning och provning","2026-11-02","2027-02-26",280,"Planerad","A-30"),d.prepare("INSERT INTO activities (project_id,name,start_date,end_date,estimated_hours,status,code) VALUES (?,?,?,?,?,?,?)").bind(1,"Driftsättning","2027-01-11","2027-03-31",300,"Planerad","A-40"),
   d.prepare("INSERT INTO assignments (activity_id,employee_id,effort_percent,start_date,end_date) VALUES (?,?,?,?,?)").bind(1,2,50,"2026-09-01","2026-12-18"),d.prepare("INSERT INTO assignments (activity_id,employee_id,effort_percent,start_date,end_date) VALUES (?,?,?,?,?)").bind(1,3,40,"2026-09-01","2026-12-18"),d.prepare("INSERT INTO assignments (activity_id,employee_id,effort_percent,start_date,end_date) VALUES (?,?,?,?,?)").bind(2,2,35,"2026-10-01","2027-01-29"),d.prepare("INSERT INTO assignments (activity_id,employee_id,effort_percent,start_date,end_date) VALUES (?,?,?,?,?)").bind(2,4,60,"2026-10-01","2027-01-29"),d.prepare("INSERT INTO assignments (activity_id,employee_id,effort_percent,start_date,end_date) VALUES (?,?,?,?,?)").bind(3,3,70,"2026-11-02","2027-02-26"),d.prepare("INSERT INTO assignments (activity_id,employee_id,effort_percent,start_date,end_date) VALUES (?,?,?,?,?)").bind(4,2,40,"2027-01-11","2027-03-31"),d.prepare("INSERT INTO assignments (activity_id,employee_id,effort_percent,start_date,end_date) VALUES (?,?,?,?,?)").bind(4,4,50,"2027-01-11","2027-03-31")]);}
 
-async function snapshot(d:D1Database){const [e,p,w,a,s,m,periods,formItems,weekMoves,projectStates,importRuns,orders,groups,groupMembers,projectLeaders,teamLeaders,assignmentRequests,projectProposals,activityPriorityHistory]=await Promise.all([
+async function snapshot(d:D1Database){const [e,p,w,a,s,m,periods,formItems,weekMoves,projectStates,importRuns,orders,groups,groupMembers,projectLeaders,teamLeaders,workPackageLeaders,assignmentRequests,projectProposals,activityPriorityHistory]=await Promise.all([
  d.prepare("SELECT id,name,email,role,manager_id managerId,capacity_percent capacityPercent FROM employees ORDER BY name").all<Row>(),
  d.prepare("SELECT id,code,name,color,description,status,priority FROM projects ORDER BY code").all<Row>(),
  d.prepare("SELECT id,project_id projectId,code,name,description FROM work_packages ORDER BY project_id,code").all<Row>(),
@@ -34,17 +34,20 @@ async function snapshot(d:D1Database){const [e,p,w,a,s,m,periods,formItems,weekM
  d.prepare("SELECT group_id groupId,employee_id employeeId FROM employee_group_members ORDER BY group_id,employee_id").all<Row>(),
  d.prepare("SELECT project_id projectId,employee_id employeeId FROM project_leaders ORDER BY project_id,employee_id").all<Row>(),
  d.prepare("SELECT team_id teamId,employee_id employeeId FROM team_leaders ORDER BY team_id,employee_id").all<Row>(),
+ d.prepare("SELECT work_package_id workPackageId,employee_id employeeId FROM work_package_leaders ORDER BY work_package_id,employee_id").all<Row>(),
  d.prepare("SELECT id,activity_id activityId,requested_by requestedBy,recipient_id recipientId,effort_percent effortPercent,start_date startDate,end_date endDate,status,comment,decided_at decidedAt,created_at createdAt FROM assignment_requests ORDER BY id").all<Row>(),
  d.prepare("SELECT id,submitted_by submittedBy,code,name,description,color,priority,status,reviewed_by reviewedBy,reviewed_at reviewedAt,created_project_id createdProjectId,comment,created_at createdAt FROM project_proposals ORDER BY id").all<Row>(),
  d.prepare("SELECT id,activity_id activityId,effective_from effectiveFrom,priority,changed_by changedBy,source,created_at createdAt FROM activity_priority_history ORDER BY activity_id,effective_from,id").all<Row>()]);
- return {employees:e.results,projects:p.results,workPackages:w.results,activities:a.results,assignments:s.results,projectMembers:m.results,assignmentPeriods:periods.results,individualFormItems:formItems.results,individualWeekMoves:weekMoves.results,individualProjectStates:projectStates.results,individualImportRuns:importRuns.results,employeeProjectOrders:orders.results,employeeGroups:groups.results,employeeGroupMembers:groupMembers.results,projectLeaders:projectLeaders.results,teamLeaders:teamLeaders.results,assignmentRequests:assignmentRequests.results,projectProposals:projectProposals.results,activityPriorityHistory:activityPriorityHistory.results};}
+ return {employees:e.results,projects:p.results,workPackages:w.results,activities:a.results,assignments:s.results,projectMembers:m.results,assignmentPeriods:periods.results,individualFormItems:formItems.results,individualWeekMoves:weekMoves.results,individualProjectStates:projectStates.results,individualImportRuns:importRuns.results,employeeProjectOrders:orders.results,employeeGroups:groups.results,employeeGroupMembers:groupMembers.results,projectLeaders:projectLeaders.results,teamLeaders:teamLeaders.results,workPackageLeaders:workPackageLeaders.results,assignmentRequests:assignmentRequests.results,projectProposals:projectProposals.results,activityPriorityHistory:activityPriorityHistory.results};}
 
 async function visibleSnapshot(d:D1Database,user:Identity){
  const scope=await accessScope(d,user);
  const data=await snapshot(d);
- return {...filteredSnapshot(data,user,scope),projectDirectory:(user.isAdmin||user.isGroupManager)?data.projects.map(p=>({id:p.id,code:p.code,name:p.name,color:p.color,priority:p.priority})):data.projects.filter(p=>scope.projectIds.has(Number(p.id))),viewer:{
+ return {...filteredSnapshot(data,user,scope),
+  employeeDirectory:(user.isAdmin||user.isGroupManager)?data.employees.map(e=>({id:e.id,name:e.name})):[],
+  projectDirectory:(user.isAdmin||user.isGroupManager)?data.projects.map(p=>({id:p.id,code:p.code,name:p.name,color:p.color,priority:p.priority})):data.projects.filter(p=>scope.projectIds.has(Number(p.id))),viewer:{
   accountId:user.accountId,email:user.email,employeeId:user.employeeId,isAdmin:user.isAdmin,isGroupManager:user.isGroupManager,
-  managedEmployeeIds:[...scope.managedIds],projectLeadIds:[...scope.projectLedIds],teamLeadIds:[...scope.teamLedIds],
+  managedEmployeeIds:[...scope.managedIds],projectLeadIds:[...scope.projectLedIds],workPackageLeadIds:[...scope.workPackageLedIds],teamLeadIds:[...scope.teamLedIds],
   readableProjectIds:[...scope.projectIds]
  }};
 }
@@ -67,7 +70,7 @@ async function restore(d:D1Database,b:Backup){
  const accountLinks=await d.prepare("SELECT u.id,u.employee_id employeeId,e.email employeeEmail FROM user_accounts u JOIN employees e ON e.id=u.employee_id").all<{id:number;employeeId:number;employeeEmail:string}>();
  const q:D1PreparedStatement[]=[
   d.prepare("DELETE FROM individual_week_moves"),d.prepare("DELETE FROM individual_form_items"),
-  d.prepare("DELETE FROM individual_project_state"),d.prepare("DELETE FROM individual_import_runs"),d.prepare("DELETE FROM project_proposals"),d.prepare("DELETE FROM activity_priority_history"),d.prepare("DELETE FROM assignment_requests"),d.prepare("DELETE FROM team_leaders"),d.prepare("DELETE FROM project_leaders"),d.prepare("DELETE FROM employee_group_members"),d.prepare("DELETE FROM employee_groups"),d.prepare("DELETE FROM assignment_periods"),
+  d.prepare("DELETE FROM individual_project_state"),d.prepare("DELETE FROM individual_import_runs"),d.prepare("DELETE FROM project_proposals"),d.prepare("DELETE FROM activity_priority_history"),d.prepare("DELETE FROM assignment_requests"),d.prepare("DELETE FROM work_package_leaders"),d.prepare("DELETE FROM team_leaders"),d.prepare("DELETE FROM project_leaders"),d.prepare("DELETE FROM employee_group_members"),d.prepare("DELETE FROM employee_groups"),d.prepare("DELETE FROM assignment_periods"),
   d.prepare("DELETE FROM project_members"),d.prepare("DELETE FROM employee_project_orders"),d.prepare("DELETE FROM assignments"),
   d.prepare("DELETE FROM activities"),d.prepare("DELETE FROM work_packages"),
   d.prepare("DELETE FROM projects"),d.prepare("DELETE FROM employees")
@@ -94,6 +97,7 @@ async function restore(d:D1Database,b:Backup){
   for(const x of b.data.employeeGroupMembers||[])q.push(d.prepare("INSERT INTO employee_group_members(group_id,employee_id) VALUES(?,?)").bind(x.groupId,x.employeeId));
   for(const x of b.data.projectLeaders||[])q.push(d.prepare("INSERT INTO project_leaders(project_id,employee_id) VALUES(?,?)").bind(x.projectId,x.employeeId));
   for(const x of b.data.teamLeaders||[])q.push(d.prepare("INSERT INTO team_leaders(team_id,employee_id) VALUES(?,?)").bind(x.teamId,x.employeeId));
+  for(const x of b.data.workPackageLeaders||[])q.push(d.prepare("INSERT INTO work_package_leaders(work_package_id,employee_id) VALUES(?,?)").bind(x.workPackageId,x.employeeId));
   for(const x of b.data.assignmentRequests||[])q.push(d.prepare("INSERT INTO assignment_requests(id,activity_id,requested_by,recipient_id,effort_percent,start_date,end_date,status,comment,decided_at,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)").bind(x.id,x.activityId,x.requestedBy,x.recipientId,x.effortPercent,x.startDate,x.endDate,x.status,x.comment??null,x.decidedAt??null,x.createdAt??new Date().toISOString()));
   for(const x of b.data.projectProposals||[])q.push(d.prepare("INSERT INTO project_proposals(id,submitted_by,code,name,description,color,priority,status,reviewed_by,reviewed_at,created_project_id,comment,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)").bind(x.id,x.submittedBy,x.code,x.name,x.description??"",x.color??"#2563eb",x.priority??3,x.status,x.reviewedBy??null,x.reviewedAt??null,x.createdProjectId??null,x.comment??null,x.createdAt??new Date().toISOString()));
  }
