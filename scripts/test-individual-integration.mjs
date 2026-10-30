@@ -190,6 +190,53 @@ try{
   assert.equal(updated.completedAt,null);
   assert.equal(updated.endDate,endFuture);
  });
+ // Independently editable percentages and dates for each individual period.
+ const originalProject=activity(snap,1),originalSara=assignment(snap,1,sara);
+ const custom=[
+  {startDate:"2026-09-01",endDate:"2026-09-30",effortPercent:25},
+  {startDate:"2026-10-01",endDate:"2026-10-31",effortPercent:50},
+  {startDate:"2026-11-01",endDate:"2026-12-18",effortPercent:75}
+ ];
+ snap=await request("/api/data",{action:"setAssignmentPeriods",activityId:1,employeeId:erik,periods:custom});
+ const erikId=assignment(snap,1,erik).id;
+ check("Three dated percentage periods persist independently",()=>{
+  const p=snap.assignmentPeriods.filter(x=>x.assignmentId===erikId);
+  assert.equal(p.length,3);
+  assert.deepEqual(p.map(x=>x.effortPercent),[25,50,75]);
+  assert.equal(activity(snap,1).startDate,originalProject.startDate);
+  assert.equal(activity(snap,1).endDate,originalProject.endDate);
+  assert.equal(assignment(snap,1,sara).startDate,originalSara.startDate);
+ });
+ const modified=custom.map((x,i)=>i===0?{...x,effortPercent:40}:x);
+ snap=await request("/api/data",{action:"setAssignmentPeriods",activityId:1,employeeId:erik,periods:modified});
+ check("Historical period percentage is editable without modifying future",()=>{
+  const p=snap.assignmentPeriods.filter(x=>x.assignmentId===erikId);
+  assert.deepEqual(p.map(x=>x.effortPercent),[40,50,75]);
+ });
+ const bad=await fetch(base+"/api/data",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({action:"setAssignmentPeriods",activityId:1,employeeId:erik,periods:[{startDate:"2026-11-01",endDate:"2026-12-01",effortPercent:50},{startDate:"2026-11-15",endDate:"2026-12-18",effortPercent:100}]})});
+ check("Overlapping periods rejected without changing saved data",()=>{assert.equal(bad.status,400)});
+ snap=await request();
+ check("Rejected overlap left all three periods unchanged",()=>{
+  assert.deepEqual(snap.assignmentPeriods.filter(x=>x.assignmentId===erikId).map(x=>x.effortPercent),[40,50,75]);
+ });
+ const move=[{startDate:"2026-09-01",endDate:"2026-09-30",effortPercent:20},
+ {startDate:"2026-10-10",endDate:"2026-10-20",effortPercent:80},
+ {startDate:"2027-02-01",endDate:"2027-04-30",effortPercent:60}];
+ snap=await request("/api/data",{action:"setAssignmentPeriods",activityId:1,employeeId:erik,periods:move});
+ check("Resource periods can contain gaps and extend beyond project dates",()=>{
+  const p=snap.assignmentPeriods.filter(x=>x.assignmentId===erikId);
+  assert.equal(p[1].startDate,"2026-10-10");
+  assert.equal(p[2].endDate,"2027-04-30");
+  assert.equal(assignment(snap,1,erik).endDate,"2027-04-30");
+  assert.equal(activity(snap,1).endDate,originalProject.endDate);
+ });
+ // Staff quick editor must not flatten custom effort periods.
+ const quick=await fetch(base+"/api/data",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({action:"setActivityAssignments",activityId:1,resources:[{employeeId:erik,effortPercent:99},{employeeId:sara,effortPercent:40}]})});
+ check("Quick staffing refuses to flatten multiple customized periods",()=>{assert.equal(quick.status,400)});
+ snap=await request();
+ check("Quick-staff rejection preserves per-period percentages",()=>{
+  assert.deepEqual(snap.assignmentPeriods.filter(x=>x.assignmentId===erikId).map(x=>x.effortPercent),[20,80,60]);
+ });
  // Inspect the real SQLite state independently of API serialization.
  const sqliteFile=await findSqlite(join(dir,"data"));
  const sql=new DatabaseSync(sqliteFile,{readOnly:true});
