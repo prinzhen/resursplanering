@@ -89,15 +89,15 @@ export async function POST(req:Request){
    const toCheck=action==="setWorkPackageLeader"?employeeId:newId;
    if(toCheck!==null&&!await d.prepare("SELECT id FROM employees WHERE id=?").bind(toCheck).first())
     return Response.json({error:"Medarbetaren saknas."},{status:404});
-   const targetInfo=kind==="team"?
+   const targetInfo:{id:number;ownerId?:number|null;projectId?:number}|null=kind==="team"?
      await d.prepare("SELECT id,owner_id ownerId FROM employee_groups WHERE id=?").bind(target).first<{id:number;ownerId:number|null}>():
      kind==="workPackage"?
      await d.prepare("SELECT id,project_id projectId FROM work_packages WHERE id=?").bind(target).first<{id:number;projectId:number}>():
      await d.prepare("SELECT id FROM projects WHERE id=?").bind(target).first<{id:number}>();
    if(!targetInfo)return Response.json({error:"Projektet, uppdraget eller TEAMET saknas."},{status:404});
    const allowed=user.isAdmin||(user.isGroupManager&&(kind==="team"?
-       (targetInfo as {ownerId:number|null}).ownerId===user.employeeId:
-       scope.projectIds.has(kind==="project"?target:(targetInfo as {projectId:number}).projectId)));
+       targetInfo.ownerId===user.employeeId:
+       scope.projectIds.has(kind==="project"?target:targetInfo.projectId)));
    if(!allowed)return forbidden();
    const table=kind==="team"?"team_leaders":kind==="workPackage"?"work_package_leaders":"project_leaders";
    const col=kind==="team"?"team_id":kind==="workPackage"?"work_package_id":"project_id";
@@ -113,7 +113,7 @@ export async function POST(req:Request){
    if(newId!==null){
     if(kind==="team")q.push(d.prepare("INSERT OR IGNORE INTO employee_group_members(group_id,employee_id) VALUES(?,?)").bind(target,newId));
     if(kind==="project")q.push(d.prepare("INSERT OR IGNORE INTO project_members(project_id,employee_id) VALUES(?,?)").bind(target,newId));
-    if(kind==="workPackage")q.push(d.prepare("INSERT OR IGNORE INTO project_members(project_id,employee_id) VALUES(?,?)").bind((targetInfo as {projectId:number}).projectId,newId));
+    if(kind==="workPackage")q.push(d.prepare("INSERT OR IGNORE INTO project_members(project_id,employee_id) VALUES(?,?)").bind(targetInfo.projectId,newId));
     q.push(d.prepare(`INSERT OR IGNORE INTO ${table}(${col},employee_id) VALUES(?,?)`).bind(target,newId));
    }
    if(q.length)await d.batch(q);
