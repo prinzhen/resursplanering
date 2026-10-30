@@ -1,3 +1,4 @@
+import {setAssignmentStatus,reconcileActivityStatus,normalizeStatus,validStatuses} from "@/lib/assignment-status";
 import { env } from "cloudflare:workers";
 export const dynamic="force-dynamic";
 type Row=Record<string,unknown>;
@@ -50,6 +51,22 @@ export async function POST(request:Request){try{const d=db();const b=await reque
  else if(action==="workPackage")await d.prepare("INSERT INTO work_packages (project_id,code,name,description) VALUES (?,?,?,?)").bind(Number(b.projectId),text(b.code),text(b.name),text(b.description)||null).run();
  else if(action==="updateWorkPackage")await d.prepare("UPDATE work_packages SET project_id=?,code=?,name=?,description=? WHERE id=?").bind(Number(b.projectId),text(b.code),text(b.name),text(b.description)||null,Number(b.id)).run();
  else if(action==="activity")await d.prepare("INSERT INTO activities (project_id,work_package_id,parent_activity_id,code,name,description,start_date,end_date,estimated_hours,status) VALUES (?,?,?,?,?,?,?,?,?,?)").bind(Number(b.projectId),number(b.workPackageId),number(b.parentActivityId),text(b.code)||null,text(b.name),requiredActivityDescription(b.description),text(b.startDate),text(b.endDate),number(b.estimatedHours),text(b.status)||"Planerad").run();
+ else if(action==="setActivityStatus"||action==="setAssignmentStatus"){
+ const id=Number(b.activityId),raw=text(b.status),status=normalizeStatus(raw);
+ if(!Number.isSafeInteger(id)||id<=0||!validStatuses.some(x=>x===status))return Response.json({error:"Ogiltig aktivitet eller status."},{status:400});
+ const exists=await d.prepare("SELECT id FROM activities WHERE id=?").bind(id).first();
+ if(!exists)return Response.json({error:"Aktiviteten saknas."},{status:404});
+ if(action==="setAssignmentStatus"){
+  const employeeId=Number(b.employeeId);
+  if(!Number.isSafeInteger(employeeId)||employeeId<=0||!(await setAssignmentStatus(d,id,employeeId,status)))return Response.json({error:"Personen saknar bemanning på aktiviteten."},{status:404});
+  await reconcileActivityStatus(d,id);
+ }else{
+  const resources=await d.prepare("SELECT employee_id employeeId FROM assignments WHERE activity_id=?").bind(id).all<{employeeId:number}>();
+  for(const resource of resources.results)await setAssignmentStatus(d,id,resource.employeeId,status);
+  if(resources.results.length)await reconcileActivityStatus(d,id);
+  else await d.prepare("UPDATE activities SET status=? WHERE id=?").bind(status==="Pågående"?"Pågår":status,id).run();
+ }
+ }
  else if(action==="updateActivity"){
   const id=Number(b.id);
   const original=await d.prepare("SELECT id,start_date startDate,end_date endDate,status FROM activities WHERE id=?").bind(id).first<{id:number;startDate:string;endDate:string;status:string}>();
