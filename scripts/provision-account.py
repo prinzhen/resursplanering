@@ -8,6 +8,7 @@ parser.add_argument("--data-dir", default="/var/lib/resursplanering-test-excel/d
 parser.add_argument("--email",required=True)
 parser.add_argument("--employee-email",help="Link the login to an existing employee")
 parser.add_argument("--admin",action="store_true",help="Grant full administrator access")
+parser.add_argument("--group-manager",action="store_true",help="Allow managing direct reports and their TEAMs")
 parser.add_argument("--password-stdin",action="store_true",help="Read password from standard input")
 args=parser.parse_args()
 dbs=[p for p in glob.glob(args.data_dir+"/v3/d1/**/*.sqlite",recursive=True)
@@ -31,11 +32,11 @@ if args.employee_email:
 salt=secrets.token_bytes(16)
 digest=hashlib.pbkdf2_hmac("sha256",password.encode("utf-8"),salt,310000,dklen=32)
 with db:
- db.execute("""INSERT INTO user_accounts(employee_id,email,password_salt,password_hash,is_admin)
-  VALUES(?,?,?,?,?) ON CONFLICT(email) DO UPDATE SET
+ db.execute("""INSERT INTO user_accounts(employee_id,email,password_salt,password_hash,is_admin,is_group_manager)
+  VALUES(?,?,?,?,?,?) ON CONFLICT(email) DO UPDATE SET
   employee_id=excluded.employee_id,password_salt=excluded.password_salt,password_hash=excluded.password_hash,
-  is_admin=excluded.is_admin,is_disabled=0,failed_attempts=0,locked_until=NULL""",
-  (employee_id,email,salt.hex(),digest.hex(),int(args.admin)))
+  is_admin=excluded.is_admin,is_group_manager=excluded.is_group_manager,is_disabled=0,failed_attempts=0,locked_until=NULL""",
+  (employee_id,email,salt.hex(),digest.hex(),int(args.admin),int(args.group_manager)))
  id=db.execute("SELECT id FROM user_accounts WHERE email=?",(email,)).fetchone()[0]
  db.execute("DELETE FROM user_sessions WHERE user_id=?",(id,))
 print("Account provisioned:",email,"admin="+str(args.admin),"employee="+str(employee_id),"sessions revoked.")
