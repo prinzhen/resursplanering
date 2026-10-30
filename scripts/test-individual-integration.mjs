@@ -585,7 +585,7 @@ try{
  check("Admin rejects project proposal",()=>assert.equal(rejected.proposals.find(p=>p.id===rejectedProposal.id).status,"rejected"));
  const adminPlan=await request();
  check("Rejected proposal never appears as an active project",()=>assert.equal(adminPlan.projects.some(p=>p.code==="P-TEST-REJECT"),false));
- const unauthorizedProposals=await fetch(base+"/api/project-proposals",{headers:{cookie:""}});
+ const unauthorizedProposals=await originalFetch(base+"/api/project-proposals");
  check("Project proposal inbox is protected for anonymous users",()=>assert.equal(unauthorizedProposals.status,401));
  const approvedSnapshot=await request();
  check("Admin view still sees all original employees",()=>assert.equal(approvedSnapshot.employees.length>=4,true));
