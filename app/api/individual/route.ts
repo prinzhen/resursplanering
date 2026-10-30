@@ -96,6 +96,7 @@ export async function POST(req:Request){
   const email=txt(input.email).toLowerCase();
   if(!validEmail(email))return Response.json({error:"E-postadressen är ogiltig."},{status:400});
   let e=await employee(d,email);
+  if(identity.isGroupManager&&!identity.isAdmin&&identity.employeeId===null)return forbidden();
   const canCreate=identity.isAdmin||identity.isGroupManager;
   if(!e&&!canCreate)return Response.json({error:"Medarbetaren finns inte. Kontakta en gruppchef eller administratör för registrering."},{status:403});
   if(!identity.isAdmin&&e?.id!==identity.employeeId&&!(identity.isGroupManager&&(e===null||e.managerId===identity.employeeId)))return forbidden();
