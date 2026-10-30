@@ -630,6 +630,25 @@ try{
  const ordinaryNew=await fetch(base+"/api/individual",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(importTemplate("other.new@example.se","Ej behörig","P-EXCEL-DENY","Förbjudet projekt"))});
  check("Ordinary employee cannot create users/projects by Excel",()=>assert.equal(ordinaryNew.status,403));
  await asUser("ci-admin@example.se",adminPassword);
+ const newlyCreated=await request("/api/access");
+ check("Excel-created employee receives a disabled personal login until admin sets a password",()=>{
+  const account=newlyCreated.accounts.find(x=>x.employeeId===newReport.id);
+  assert.ok(account);
+  assert.equal(account.isDisabled,1);
+  assert.equal(account.isAdmin,0);
+ });
+ await request("/api/access",{action:"setEmployeePassword",employeeId:newReport.id,password:"Safe123"});
+ const activated=await request("/api/access");
+ check("Admin password provisioning activates the Excel-created employee account",()=>{
+  assert.equal(activated.accounts.find(x=>x.employeeId===newReport.id)?.isDisabled,0);
+ });
+ await asUser("new.report@example.se","Safe123");
+ const reportIdentity=await request();
+ check("Newly activated Excel employee can log in and see only own projects",()=>{
+  assert.equal(reportIdentity.viewer.employeeId,newReport.id);
+  assert.ok(reportIdentity.projects.some(p=>p.id===managerProject.id));
+ });
+ await asUser("ci-admin@example.se",adminPassword);
  const adminNew=await request("/api/individual",importTemplate("admin.new@example.se","Administrativt skapad","P-EXCEL-ADM","Projekt skapat av admin","2"));
  const adminState=await request();
  check("Admin import can create employee, project and activity without assigning a manager",()=>{
