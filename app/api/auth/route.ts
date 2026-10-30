@@ -1,7 +1,7 @@
 import {env} from "cloudflare:workers";
 import {sessionIdentity,verifyPassword,issueSession,setSessionCookie,deleteSessionCookie,revokeSession,passwordHash,randomHex,sameOrigin} from "@/lib/auth";
 export const dynamic="force-dynamic";
-const d=()=>env.DB;
+const d=()=>{if(!env.DB)throw Error("Databasen saknas");return env.DB};
 export async function GET(req:Request){
  const user=await sessionIdentity(req,d());
  return Response.json({user},{headers:{"cache-control":"no-store"}});
