@@ -143,6 +143,7 @@ export function filteredSnapshot<T extends Record<string,any>>(data:T,user:Ident
   activities,
   assignments,
   assignmentPeriods:(data.assignmentPeriods||[]).filter((p:{assignmentId:number})=>visibleAssignmentIds.has(p.assignmentId)),
+  activityPriorityHistory:(data.activityPriorityHistory||[]).filter((x:{activityId:number})=>allowedActivities.has(x.activityId)),
   projectMembers:(data.projectMembers||[]).filter((x:{employeeId:number;projectId:number})=>allowedEmployees.has(x.employeeId)&&scope.projectIds.has(x.projectId)),
   employeeProjectOrders:(data.employeeProjectOrders||[]).filter((x:{employeeId:number;projectId:number})=>allowedEmployees.has(x.employeeId)&&scope.projectIds.has(x.projectId)),
   employeeGroups:(data.employeeGroups||[]).filter((x:{id:number})=>visibleTeams.has(x.id)),
