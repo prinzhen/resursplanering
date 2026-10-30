@@ -19,15 +19,15 @@ export function equalDigest(a:string,b:string):boolean{
  let different=0;for(let i=0;i<a.length;i++)different|=a.charCodeAt(i)^b.charCodeAt(i);
  return different===0;
 }
-export type Identity={accountId:number;email:string;employeeId:number|null;isAdmin:boolean};
+export type Identity={accountId:number;email:string;employeeId:number|null;isAdmin:boolean;isGroupManager:boolean};
 export async function sessionIdentity(req:Request,d:D1Database):Promise<Identity|null>{
  const cookies=req.headers.get("cookie")||"";
  const raw=cookies.split(";").map(c=>c.trim()).find(c=>c.startsWith("rp_session="))?.slice("rp_session=".length)||"";
  if(!/^[a-f0-9]{64}$/.test(raw))return null;
- const row=await d.prepare(`SELECT u.id accountId,u.email,u.employee_id employeeId,u.is_admin isAdmin
+ const row=await d.prepare(`SELECT u.id accountId,u.email,u.employee_id employeeId,u.is_admin isAdmin,u.is_group_manager isGroupManager
  FROM user_sessions s JOIN user_accounts u ON u.id=s.user_id
- WHERE s.token_hash=? AND s.expires_at>? AND u.is_disabled=0`).bind(await tokenDigest(raw),Math.floor(Date.now()/1000)).first<{accountId:number;email:string;employeeId:number|null;isAdmin:number}>();
- return row?{accountId:row.accountId,email:row.email,employeeId:row.employeeId,isAdmin:!!row.isAdmin}:null;
+ WHERE s.token_hash=? AND s.expires_at>? AND u.is_disabled=0`).bind(await tokenDigest(raw),Math.floor(Date.now()/1000)).first<{accountId:number;email:string;employeeId:number|null;isAdmin:number;isGroupManager:number}>();
+ return row?{accountId:row.accountId,email:row.email,employeeId:row.employeeId,isAdmin:!!row.isAdmin,isGroupManager:!!row.isGroupManager}:null;
 }
 export function unauthorized(){return Response.json({error:"Du måste logga in.",loginRequired:true},{status:401,headers:{"cache-control":"no-store"}})}
 export function forbidden(){return Response.json({error:"Du saknar behörighet för åtgärden."},{status:403,headers:{"cache-control":"no-store"}})}
