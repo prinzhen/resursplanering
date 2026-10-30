@@ -18,7 +18,7 @@ async function snapshot(d:D1Database){const [e,p,w,a,s,m]=await Promise.all([
  d.prepare("SELECT id,code,name,color,description,status FROM projects ORDER BY code").all<Row>(),
  d.prepare("SELECT id,project_id projectId,code,name,description FROM work_packages ORDER BY project_id,code").all<Row>(),
  d.prepare("SELECT id,project_id projectId,work_package_id workPackageId,parent_activity_id parentActivityId,code,name,description,start_date startDate,end_date endDate,estimated_hours estimatedHours,status FROM activities ORDER BY start_date,name").all<Row>(),
- d.prepare("SELECT s.id,s.activity_id activityId,s.employee_id employeeId,s.effort_percent effortPercent,s.start_date startDate,s.end_date endDate,s.completed_at completedAt FROM assignments s ORDER BY s.start_date,s.id").all<Row>(),
+ d.prepare("SELECT s.id,s.activity_id activityId,s.employee_id employeeId,s.effort_percent effortPercent,s.start_date startDate,s.end_date endDate,s.completed_at completedAt,s.work_status workStatus FROM assignments s ORDER BY s.start_date,s.id").all<Row>(),
  d.prepare("SELECT project_id projectId,employee_id employeeId FROM project_members ORDER BY employee_id,project_id").all<Row>()]);
  return {employees:e.results,projects:p.results,workPackages:w.results,activities:a.results,assignments:s.results,projectMembers:m.results};}
 
