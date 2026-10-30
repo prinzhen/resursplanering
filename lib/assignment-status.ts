@@ -15,8 +15,8 @@ export async function setWholeActivityStatus(d:D1Database,activityId:number,stat
  work_status=?,
  completed_at=CASE WHEN ?='Klar' THEN COALESCE(completed_at,date('now')) ELSE NULL END,
  original_end_date=COALESCE(original_end_date,end_date),
- end_date=CASE WHEN ?='Klar' AND start_date<=date('now')
-  THEN MIN(COALESCE(original_end_date,end_date),date('now'))
+ end_date=CASE WHEN ?='Klar' AND start_date<=COALESCE(completed_at,date('now'))
+  THEN MIN(COALESCE(original_end_date,end_date),COALESCE(completed_at,date('now')))
   ELSE COALESCE(original_end_date,end_date) END,
  status_updated_at=CURRENT_TIMESTAMP WHERE activity_id=?`).bind(status,status,status,activityId).run();
 }
