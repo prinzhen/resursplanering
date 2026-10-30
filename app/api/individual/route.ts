@@ -28,7 +28,7 @@ export async function GET(req:Request){
   if(!email)return Response.json({error:"Välj en medarbetare."},{status:400});
   const e=await employee(d,email);if(!e)return Response.json({error:"Medarbetaren saknas."},{status:404});
   // Include existing project assignments as well as earlier spreadsheet items.
-  const items=await d.prepare(`SELECT a.id activityId, COALESCE(i.item_uid,'activity-'||a.id) uid,
+  const items=await d.prepare(`SELECT a.id activityId, COALESCE(i.item_uid,'employee-'||s.employee_id||'-activity-'||a.id) uid,
  COALESCE(i.current_week,'') savedWeek, COALESCE(i.first_week,'') firstWeek,
  a.name,a.description comment,a.status,a.estimated_hours hours,a.start_date startDate,s.completed_at completedAt,s.work_status workStatus,
  p.code projectCode,p.name projectName,p.id projectId,
@@ -70,9 +70,12 @@ export async function POST(req:Request){
    if(!code)throw Error("Projektkod saknas på rad "+(i+9));
    const uid=txt(a.uid)||crypto.randomUUID();
    if(!safeUID(uid))throw Error("Ogiltigt aktivitets-ID på rad "+(i+9));
-   const idMatch=/^activity-(\d+)$/.exec(uid);
-      const assigned=idMatch?await d.prepare("SELECT activity_id activityId FROM assignments WHERE activity_id=? AND employee_id=?").bind(Number(idMatch[1]),e.id).first<{activityId:number}>():null;
-      const existing=assigned||await d.prepare("SELECT i.activity_id activityId FROM individual_form_items i WHERE i.item_uid=? AND i.employee_id=?").bind(uid,e.id).first<{activityId:number}>();
+   const legacy=/^activity-(\d+)$/.exec(uid);
+   const scoped=/^employee-(\d+)-activity-(\d+)$/.exec(uid);
+   if(scoped&&Number(scoped[1])!==e.id)throw Error("Aktivitets-ID hör till en annan medarbetare.");
+   const assignedId=legacy?Number(legacy[1]):scoped?Number(scoped[2]):null;
+   const assigned=assignedId!==null?await d.prepare("SELECT activity_id activityId FROM assignments WHERE activity_id=? AND employee_id=?").bind(assignedId,e.id).first<{activityId:number}>():null;
+   const existing=assigned||await d.prepare("SELECT i.activity_id activityId FROM individual_form_items i WHERE i.item_uid=? AND i.employee_id=?").bind(uid,e.id).first<{activityId:number}>();
    if(a.uid&&!existing)throw Error("Aktivitets-ID "+uid+" tillhör inte denna medarbetare eller finns inte. Avbryter för att undvika dubbletter.");
    if(kind==="Projekt"){const p=await d.prepare("SELECT id FROM projects WHERE code=?").bind(code).first();if(!p)throw Error("Projektkoden "+code+" finns inte. Lägg upp projektet först.")}
    changes.push({uid,week:current,firstWeek:first,name:txt(a.name),kind,projectCode:code,hours:hrs,status,description:txt(a.comment).slice(0,500),reason:txt(a.reason).slice(0,500),activityId:existing?.activityId??null});
@@ -90,16 +93,17 @@ export async function POST(req:Request){
     const today=new Date().toISOString().slice(0,10);
     const person=await d.prepare("SELECT start_date startDate,end_date endDate,original_end_date originalEnd FROM assignments WHERE activity_id=? AND employee_id=?").bind(a.activityId,e.id).first<{startDate:string;endDate:string;originalEnd:string|null}>();
     if(!person)throw Error("Personens tilldelning saknas: "+a.name);
-    const prior=await d.prepare("SELECT current_week currentWeek FROM individual_form_items WHERE activity_id=? AND employee_id=?").bind(a.activityId,e.id).first<{currentWeek:string}>();
+    const prior=await d.prepare("SELECT item_uid itemUid,current_week currentWeek FROM individual_form_items WHERE activity_id=? AND employee_id=?").bind(a.activityId,e.id).first<{itemUid:string;currentWeek:string}>();
+    const storedUid=prior?.itemUid||(a.uid.startsWith("activity-")?`employee-${e.id}-activity-${a.activityId}`:a.uid);
     const done=a.status==="Klar";
     const originalEnd=person.originalEnd||person.endDate;
     const from=monday(a.week),until=friday(a.week);
     // The latest accepted import sets this person's status, including reopening a finished task.
     const q:D1PreparedStatement[]=[
-     d.prepare("INSERT INTO individual_form_items(item_uid,employee_id,activity_id,first_week,current_week) VALUES(?,?,?,?,?) ON CONFLICT(employee_id,activity_id) DO UPDATE SET current_week=excluded.current_week,updated_at=CURRENT_TIMESTAMP").bind(a.uid,e.id,a.activityId,a.firstWeek,a.week),
+     d.prepare("INSERT INTO individual_form_items(item_uid,employee_id,activity_id,first_week,current_week) VALUES(?,?,?,?,?) ON CONFLICT(employee_id,activity_id) DO UPDATE SET current_week=excluded.current_week,updated_at=CURRENT_TIMESTAMP").bind(storedUid,e.id,a.activityId,a.firstWeek,a.week),
      d.prepare("UPDATE assignments SET work_status=?,status_updated_at=CURRENT_TIMESTAMP,completed_at=?,original_end_date=COALESCE(original_end_date,?),start_date=?,end_date=? WHERE activity_id=? AND employee_id=?").bind(a.status,done?today:null,originalEnd,done?person.startDate:from,done?(today<person.startDate?person.startDate:today):until,a.activityId,e.id)
     ];
-    if(prior&&prior.currentWeek!==a.week)q.push(d.prepare("INSERT INTO individual_week_moves(item_uid,from_week,to_week,reason) VALUES(?,?,?,?)").bind(a.uid,prior.currentWeek,a.week,a.reason||null));
+    if(prior&&prior.currentWeek!==a.week)q.push(d.prepare("INSERT INTO individual_week_moves(item_uid,from_week,to_week,reason) VALUES(?,?,?,?)").bind(storedUid,prior.currentWeek,a.week,a.reason||null));
     await d.batch(q);
     const counts=await d.prepare("SELECT COUNT(*) total,SUM(CASE WHEN work_status='Klar' OR (work_status IS NULL AND completed_at IS NOT NULL) THEN 1 ELSE 0 END) finished FROM assignments WHERE activity_id=?").bind(a.activityId).first<{total:number;finished:number}>();
     if(counts&&counts.total>0&&counts.finished===counts.total){
