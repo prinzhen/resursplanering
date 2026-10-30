@@ -18,7 +18,7 @@ async function snapshot(d:D1Database){const [e,p,w,a,s,m]=await Promise.all([
  d.prepare("SELECT id,code,name,color,description,status FROM projects ORDER BY code").all<Row>(),
  d.prepare("SELECT id,project_id projectId,code,name,description FROM work_packages ORDER BY project_id,code").all<Row>(),
  d.prepare("SELECT id,project_id projectId,work_package_id workPackageId,parent_activity_id parentActivityId,code,name,description,start_date startDate,end_date endDate,estimated_hours estimatedHours,status FROM activities ORDER BY start_date,name").all<Row>(),
- d.prepare("SELECT s.id,s.activity_id activityId,s.employee_id employeeId,s.effort_percent effortPercent,a.start_date startDate,a.end_date endDate FROM assignments s JOIN activities a ON a.id=s.activity_id ORDER BY a.start_date").all<Row>(),
+ d.prepare("SELECT s.id,s.activity_id activityId,s.employee_id employeeId,s.effort_percent effortPercent,s.start_date startDate,s.end_date endDate,s.completed_at completedAt FROM assignments s ORDER BY s.start_date,s.id").all<Row>(),
  d.prepare("SELECT project_id projectId,employee_id employeeId FROM project_members ORDER BY employee_id,project_id").all<Row>()]);
  return {employees:e.results,projects:p.results,workPackages:w.results,activities:a.results,assignments:s.results,projectMembers:m.results};}
 
@@ -52,6 +52,33 @@ export async function POST(request:Request){try{const d=db();const b=await reque
  else if(action==="activity")await d.prepare("INSERT INTO activities (project_id,work_package_id,parent_activity_id,code,name,description,start_date,end_date,estimated_hours,status) VALUES (?,?,?,?,?,?,?,?,?,?)").bind(Number(b.projectId),number(b.workPackageId),number(b.parentActivityId),text(b.code)||null,text(b.name),requiredActivityDescription(b.description),text(b.startDate),text(b.endDate),number(b.estimatedHours),text(b.status)||"Planerad").run();
  else if(action==="updateActivity")await d.batch([d.prepare("UPDATE activities SET project_id=?,work_package_id=?,parent_activity_id=?,code=?,name=?,description=?,start_date=?,end_date=?,estimated_hours=?,status=? WHERE id=?").bind(Number(b.projectId),number(b.workPackageId),number(b.parentActivityId),text(b.code)||null,text(b.name),requiredActivityDescription(b.description),text(b.startDate),text(b.endDate),number(b.estimatedHours),text(b.status)||"Planerad",Number(b.id)),d.prepare("UPDATE assignments SET start_date=?,end_date=? WHERE activity_id=?").bind(text(b.startDate),text(b.endDate),Number(b.id))]);
  else if(action==="assignment"){const a=await d.prepare("SELECT start_date startDate,end_date endDate FROM activities WHERE id=?").bind(Number(b.activityId)).first<{startDate:string;endDate:string}>();if(!a)return Response.json({error:"Aktiviteten saknas."},{status:404});await d.prepare("INSERT INTO assignments (activity_id,employee_id,effort_percent,start_date,end_date) VALUES (?,?,?,?,?) ON CONFLICT(activity_id,employee_id) DO UPDATE SET effort_percent=excluded.effort_percent,start_date=excluded.start_date,end_date=excluded.end_date").bind(Number(b.activityId),Number(b.employeeId),Number(b.effortPercent),text(b.startDate)||a.startDate,text(b.endDate)||a.endDate).run()}
+ else if(action==="setActivityAssignments"){
+  const activityId=Number(b.activityId);
+  const activity=await d.prepare("SELECT id,start_date startDate,end_date endDate,status FROM activities WHERE id=?").bind(activityId).first<{id:number;startDate:string;endDate:string;status:string}>();
+  if(!activity)return Response.json({error:"Aktiviteten hittades inte."},{status:404});
+  if(!Array.isArray(b.resources)||b.resources.length>100)return Response.json({error:"Ogiltig bemanningslista."},{status:400});
+  const resources=b.resources.map((row:unknown)=>{
+   const x=row as Record<string,unknown>;return {employeeId:Number(x.employeeId),effortPercent:Number(x.effortPercent)};
+  });
+  if(resources.some(x=>!Number.isInteger(x.employeeId)||x.employeeId<=0||!Number.isFinite(x.effortPercent)||x.effortPercent<0||x.effortPercent>100)||new Set(resources.map(x=>x.employeeId)).size!==resources.length)
+   return Response.json({error:"Ogiltig eller dubblerad medarbetare/beläggning."},{status:400});
+  const valid=await d.prepare("SELECT id FROM employees").all<{id:number}>();
+  const ids=new Set(valid.results.map(x=>x.id));
+  if(resources.some(x=>!ids.has(x.employeeId)))return Response.json({error:"Någon medarbetare saknas."},{status:400});
+  const prev=await d.prepare("SELECT employee_id employeeId FROM assignments WHERE activity_id=?").bind(activityId).all<{employeeId:number}>();
+  const keep=new Set(resources.map(x=>x.employeeId));
+  const q:D1PreparedStatement[]=[];
+  for(const x of prev.results)if(!keep.has(x.employeeId)){
+   q.push(d.prepare("DELETE FROM assignments WHERE activity_id=? AND employee_id=?").bind(activityId,x.employeeId));
+   // Remove the obsolete spreadsheet identity for this particular assignment.
+   q.push(d.prepare("DELETE FROM individual_form_items WHERE activity_id=? AND employee_id=?").bind(activityId,x.employeeId));
+  }
+  for(const x of resources)q.push(d.prepare("INSERT INTO assignments(activity_id,employee_id,effort_percent,start_date,end_date,completed_at) VALUES(?,?,?,?,?,NULL) ON CONFLICT(activity_id,employee_id) DO UPDATE SET effort_percent=excluded.effort_percent").bind(activityId,x.employeeId,x.effortPercent,activity.startDate,activity.endDate));
+  // If a new colleague joins an activity that was already completed, reopen the project activity.
+  if(activity.status==="Klar"&&resources.some(x=>!prev.results.some(y=>y.employeeId===x.employeeId)))
+   q.push(d.prepare("UPDATE activities SET status='Pågår' WHERE id=?").bind(activityId));
+  if(q.length)await d.batch(q);
+ }
  else if(action==="setProjectMemberships"){const employeeId=Number(b.employeeId),projectIds=Array.isArray(b.projectIds)?[...new Set(b.projectIds.map(Number).filter(Number.isInteger))]:[];if(!employeeId)return Response.json({error:"Medarbetare saknas."},{status:400});const q=[d.prepare("DELETE FROM project_members WHERE employee_id=?").bind(employeeId),...projectIds.map(projectId=>d.prepare("INSERT INTO project_members (project_id,employee_id) VALUES (?,?)").bind(projectId,employeeId))];await d.batch(q)}
  else if(action==="import")await importRows(d,Array.isArray(b.rows)?b.rows as Array<Record<string,string>>:[]);
  else if(action==="restore")await restore(d,b.backup as Backup);
