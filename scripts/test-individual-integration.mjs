@@ -594,6 +594,110 @@ try{
  check("Passwords shorter than six characters are rejected",()=>assert.equal(shortPassword.status,400));
  const unauthorizedProposals=await originalFetch(base+"/api/project-proposals");
  check("Project proposal inbox is protected for anonymous users",()=>assert.equal(unauthorizedProposals.status,401));
+ // Excel importer may create missing employees/projects when run by admin or group manager.
+ const targetWeek="2026-W46";
+ const importTemplate=(email,name,projectCode,projectName,priority="4")=>({
+  email,name,members:[{code:projectCode,name:projectName,state:"Aktiv"}],
+  activities:[{uid:"",week:targetWeek,name:"Excel import role-created task",kind:"Projekt",link:projectName,projectCode,
+   hours:16,status:"Planerad",priority,dueDate:"",comment:"Automatiskt importerad aktivitet",firstWeek:targetWeek,reason:""}]
+ });
+ await asUser("anna@example.se");
+ const managerNew=await request("/api/individual",importTemplate("new.report@example.se","Nya Rapporten","P-EXCEL-MAN","Importerat gruppchefsprojekt"));
+ check("Group manager Excel import creates new employee and project",()=>{
+  assert.equal(managerNew.employeesCreated,1);
+  assert.equal(managerNew.projectsCreated,1);
+  assert.equal(managerNew.created,1);
+ });
+ const managerPlan=await request();
+ const newReport=managerPlan.employees.find(x=>x.email==="new.report@example.se"),managerProject=managerPlan.projects.find(p=>p.code==="P-EXCEL-MAN");
+ check("New Excel employee reports to importer and manager leads newly created project",()=>{
+  assert.ok(newReport&&managerProject);
+  assert.equal(newReport.managerId,1);
+  assert.ok(managerPlan.projectLeaders.some(x=>x.employeeId===1&&x.projectId===managerProject.id));
+  const task=managerPlan.activities.find(x=>x.projectId===managerProject.id&&x.name==="Excel import role-created task");
+  assert.ok(task&&assignment(managerPlan,task.id,newReport.id));
+  assert.equal(task.priority,4);
+ });
+ const reportSheet=await sheet("new.report@example.se");
+ check("Group manager can export report, including activity priority",()=>assert.equal(reportSheet.activities.find(a=>a.name==="Excel import role-created task").priority,"4"));
+ const managerReimport=await request("/api/individual",importTemplate("new.report@example.se","Nya Rapporten","P-EXCEL-MAN","Importerat gruppchefsprojekt"));
+ check("Reimporting same workbook creates no duplicate employee or project",()=>{
+  assert.equal(managerReimport.employeesCreated,0);
+  assert.equal(managerReimport.projectsCreated,0);
+  assert.equal(managerReimport.created,0);
+ });
+ await asUser("erik@example.se");
+ const ordinaryNew=await fetch(base+"/api/individual",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(importTemplate("other.new@example.se","Ej behörig","P-EXCEL-DENY","Förbjudet projekt"))});
+ check("Ordinary employee cannot create users/projects by Excel",()=>assert.equal(ordinaryNew.status,403));
+ await asUser("ci-admin@example.se",adminPassword);
+ const adminNew=await request("/api/individual",importTemplate("admin.new@example.se","Administrativt skapad","P-EXCEL-ADM","Projekt skapat av admin","2"));
+ const adminState=await request();
+ check("Admin import can create employee, project and activity without assigning a manager",()=>{
+  assert.equal(adminNew.employeesCreated,1);
+  assert.equal(adminNew.projectsCreated,1);
+  const newPerson=adminState.employees.find(x=>x.email==="admin.new@example.se");
+  assert.ok(newPerson);
+  assert.equal(newPerson.managerId,null);
+  assert.ok(adminState.projects.find(p=>p.code==="P-EXCEL-ADM"));
+ });
+ await asUser("anna@example.se");
+ const forbiddenExisting=await fetch(base+"/api/individual",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(importTemplate("admin.new@example.se","Administrativt skapad","P-EXCEL-ADM","Projekt skapat av admin","1"))});
+ check("Group manager cannot silently take over another manager's employee",()=>assert.equal(forbiddenExisting.status,403));
+ await asUser("ci-admin@example.se",adminPassword);
+
+ // Priority edits are effective on Swedish calendar import day, not from the
+ // activity's original start date. All current staffing segments split cleanly.
+ const {importDateSweden,previousISODate}=await import("../lib/individual-priority.ts");
+ const today=importDateSweden(),shiftDate=(offset)=>{
+  const date=new Date(today+"T00:00:00Z");date.setUTCDate(date.getUTCDate()+offset);return date.toISOString().slice(0,10);
+ };
+ const dated=await request("/api/data",{action:"activity",projectId:1,name:"Excel priority change regression",description:"Historisk bemanning och prioritet",startDate:shiftDate(-10),endDate:shiftDate(10),estimatedHours:40,status:"Planerad"});
+ const prioId=dated.activities.find(a=>a.name==="Excel priority change regression").id;
+ await request("/api/data",{action:"setActivityAssignments",activityId:prioId,resources:[{employeeId:erik,effortPercent:60},{employeeId:sara,effortPercent:30}]});
+ const originalSheet=await sheet("erik@example.se");
+ const priorityRow=originalSheet.activities.find(a=>a.name==="Excel priority change regression");
+ check("Activity priority is exported into existing Excel column H",()=>assert.equal(priorityRow.priority,"3"));
+ const priorityWorkbook={...originalSheet,activities:[{...priorityRow,priority:"1"}],members:[]};
+ const editedPriority=await request("/api/individual",priorityWorkbook);
+ check("Excel priority import detects changed priority",()=>assert.equal(editedPriority.prioritiesChanged,1));
+ let afterPrio=await request();
+ check("Changed priority is current while existing periods split for all assigned resources",()=>{
+  assert.equal(activity(afterPrio,prioId).priority,1);
+  for(const employeeId of [erik,sara]){
+   const a=assignment(afterPrio,prioId,employeeId),segments=afterPrio.assignmentPeriods.filter(p=>p.assignmentId===a.id);
+   assert.equal(segments.length,2);
+   assert.equal(segments[0].endDate,previousISODate(today));
+   assert.equal(segments[1].startDate,today);
+   assert.equal(segments[0].effortPercent,employeeId===erik?60:30);
+   assert.equal(segments[1].effortPercent,segments[0].effortPercent);
+  }
+ });
+ check("Priority history preserves original priority and new effective date",()=>{
+  const rows=afterPrio.activityPriorityHistory.filter(h=>h.activityId===prioId).sort((a,b)=>a.effectiveFrom.localeCompare(b.effectiveFrom));
+  assert.equal(rows.length,2);
+  assert.equal(rows[0].priority,3);
+  assert.equal(rows[1].priority,1);
+  assert.equal(rows[1].effectiveFrom,today);
+ });
+ const secondPriority=await request("/api/individual",priorityWorkbook);
+ check("Repeated Excel import with unchanged priority does not add allocation segments",()=>assert.equal(secondPriority.prioritiesChanged,0));
+ afterPrio=await request();
+ check("No duplicate split after repeated priority import",()=>{
+  for(const id of [erik,sara])assert.equal(afterPrio.assignmentPeriods.filter(p=>p.assignmentId===assignment(afterPrio,prioId,id).id).length,2);
+ });
+ const priorityAgain=await request("/api/individual",{...priorityWorkbook,activities:[{...priorityRow,priority:"2"}]});
+ check("Same-day reprioritization replaces effective-day record without another split",()=>assert.equal(priorityAgain.prioritiesChanged,1));
+ afterPrio=await request();
+ check("Same-day priority edit retains only one boundary in resource history",()=>{
+  assert.equal(afterPrio.activityPriorityHistory.filter(h=>h.activityId===prioId).length,2);
+  for(const id of [erik,sara])assert.equal(afterPrio.assignmentPeriods.filter(p=>p.assignmentId===assignment(afterPrio,prioId,id).id).length,2);
+ });
+ const backupPriorities=structuredClone(afterPrio);
+ const restoredPriorities=await request("/api/data",{action:"restore",backup:{version:3,data:backupPriorities}});
+ check("Backup roundtrip preserves priority and all dated allocation periods",()=>{
+  assert.deepEqual(restoredPriorities.activityPriorityHistory,backupPriorities.activityPriorityHistory);
+  assert.equal(activity(restoredPriorities,prioId).priority,2);
+ });
  const approvedSnapshot=await request();
  check("Admin view still sees all original employees",()=>assert.equal(approvedSnapshot.employees.length>=4,true));
  console.log("\nSUCCESS: integration tests passed; only isolated temp database was modified.");
