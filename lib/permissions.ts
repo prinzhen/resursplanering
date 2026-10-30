@@ -1,18 +1,18 @@
 import type {Identity} from "./auth";
 export type AccessScope={
- employeeIds:Set<number>;projectIds:Set<number>;projectLedIds:Set<number>;
+ employeeIds:Set<number>;projectIds:Set<number>;selfProjectIds:Set<number>;projectLedIds:Set<number>;
  managedIds:Set<number>;teamLedIds:Set<number>;teamIds:Set<number>;
 };
 const safe=(v:unknown)=>Number.isSafeInteger(Number(v))&&Number(v)>0?Number(v):0;
 export async function accessScope(d:D1Database,user:Identity):Promise<AccessScope>{
- const result:AccessScope={employeeIds:new Set(),projectIds:new Set(),projectLedIds:new Set(),managedIds:new Set(),teamLedIds:new Set(),teamIds:new Set()};
+ const result:AccessScope={employeeIds:new Set(),projectIds:new Set(),selfProjectIds:new Set(),projectLedIds:new Set(),managedIds:new Set(),teamLedIds:new Set(),teamIds:new Set()};
  if(user.isAdmin){
   const [employees,projects,teams]=await Promise.all([
    d.prepare("SELECT id FROM employees").all<{id:number}>(),
    d.prepare("SELECT id FROM projects").all<{id:number}>(),
    d.prepare("SELECT id FROM employee_groups").all<{id:number}>()]);
   for(const x of employees.results)result.employeeIds.add(x.id);
-  for(const x of projects.results)result.projectIds.add(x.id);
+  for(const x of projects.results){result.projectIds.add(x.id);result.selfProjectIds.add(x.id)}
   for(const x of teams.results)result.teamIds.add(x.id);
   return result;
  }
@@ -39,7 +39,7 @@ export async function accessScope(d:D1Database,user:Identity):Promise<AccessScop
  // (including assignments of coworkers), but cannot modify coworkers without permission.
  const membership=await d.prepare(`SELECT DISTINCT project_id id FROM project_members WHERE employee_id=?
  UNION SELECT DISTINCT a.project_id id FROM assignments s JOIN activities a ON a.id=s.activity_id WHERE s.employee_id=?`).bind(self,self).all<{id:number}>();
- for(const x of membership.results)result.projectIds.add(x.id);
+ for(const x of membership.results){result.projectIds.add(x.id);result.selfProjectIds.add(x.id)}
  // A manager/TEAM leader can also see projects their people are working on.
  const ids=[...result.employeeIds];
  if(ids.length){
@@ -76,7 +76,7 @@ export async function authorizePlanningAction(d:D1Database,user:Identity,action:
  switch(action){
  case "activity":
    // Any project participant can create an activity (automatically assigned to self).
-   return scope.projectIds.has(project);
+   return scope.selfProjectIds.has(project)||scope.projectLedIds.has(project);
  case "updateProject":return scope.projectLedIds.has(safe(body.id));
  case "workPackage":return scope.projectLedIds.has(project);
  case "updateWorkPackage":{
