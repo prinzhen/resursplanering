@@ -30,7 +30,7 @@ export async function GET(req:Request){
   const u=new URL(req.url),email=txt(u.searchParams.get("email"));
   if(!email)return Response.json({error:"Välj en medarbetare."},{status:400});
   const e=await employee(d,email);if(!e)return Response.json({error:"Medarbetaren saknas."},{status:404});
-  const scope=await accessScope(d,identity);if(!scope.employeeIds.has(e.id))return forbidden();
+  if(!identity.isAdmin&&identity.employeeId!==e.id)return forbidden(); // Full Excel export can contain other projects; only self/admin may read it.
   // Include existing project assignments as well as earlier spreadsheet items.
   const items=await d.prepare(`SELECT a.id activityId, COALESCE(i.item_uid,'employee-'||s.employee_id||'-activity-'||a.id) uid,
  COALESCE(i.current_week,'') savedWeek, COALESCE(i.first_week,'') firstWeek,
