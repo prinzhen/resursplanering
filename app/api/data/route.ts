@@ -2,7 +2,7 @@ import {setAssignmentStatus,setWholeActivityStatus,reconcileActivityStatus,norma
 import { env } from "cloudflare:workers";
 export const dynamic="force-dynamic";
 type Row=Record<string,unknown>;
-type Backup={version:number;data:{employees:Row[];projects:Row[];workPackages:Row[];activities:Row[];assignments:Row[];projectMembers?:Row[]}};
+type Backup={version:number;data:{employees:Row[];projects:Row[];workPackages:Row[];activities:Row[];assignments:Row[];projectMembers?:Row[];assignmentPeriods?:Row[]}};
 const db=()=>{if(!env.DB)throw new Error("Databasen är inte tillgänglig");return env.DB};
 const text=(v:unknown)=>String(v??"").trim();
 const number=(v:unknown)=>v===""||v==null?null:Number(v);
@@ -37,14 +37,28 @@ async function importRows(d:D1Database,rows:Array<Record<string,string>>){const 
   if(r.employee_email&&r.effort_percent){const e=await d.prepare("SELECT id FROM employees WHERE lower(email)=lower(?)").bind(r.employee_email).first<{id:number}>();if(e)await d.prepare("INSERT INTO assignments (activity_id,employee_id,effort_percent,start_date,end_date) VALUES (?,?,?,?,?) ON CONFLICT(activity_id,employee_id) DO UPDATE SET effort_percent=excluded.effort_percent,start_date=excluded.start_date,end_date=excluded.end_date").bind(activity.id,e.id,Number(r.effort_percent),r.start_date,r.end_date).run()}
 }}
 
-async function restore(d:D1Database,b:Backup){if(![1,2].includes(b.version)||!b.data||!Array.isArray(b.data.projects))throw new Error("Ogiltig säkerhetskopia");const q:D1PreparedStatement[]=[d.prepare("DELETE FROM project_members"),d.prepare("DELETE FROM assignments"),d.prepare("DELETE FROM activities"),d.prepare("DELETE FROM work_packages"),d.prepare("DELETE FROM projects"),d.prepare("DELETE FROM employees")];
- for(const x of b.data.employees)q.push(d.prepare("INSERT INTO employees (id,name,email,role,manager_id,capacity_percent) VALUES (?,?,?,?,?,?)").bind(x.id,x.name,x.email,x.role,x.managerId??null,x.capacityPercent));
- for(const x of b.data.projects)q.push(d.prepare("INSERT INTO projects (id,code,name,color,description,status) VALUES (?,?,?,?,?,?)").bind(x.id,x.code,x.name,x.color,x.description??null,x.status??"Aktivt"));
- for(const x of b.data.workPackages||[])q.push(d.prepare("INSERT INTO work_packages (id,project_id,code,name,description) VALUES (?,?,?,?,?)").bind(x.id,x.projectId,x.code,x.name,x.description??null));
- for(const x of b.data.activities)q.push(d.prepare("INSERT INTO activities (id,project_id,work_package_id,parent_activity_id,code,name,description,start_date,end_date,estimated_hours,status) VALUES (?,?,?,?,?,?,?,?,?,?,?)").bind(x.id,x.projectId,x.workPackageId??null,x.parentActivityId??null,x.code??null,x.name,x.description??null,x.startDate,x.endDate,x.estimatedHours??null,x.status));
- for(const x of b.data.assignments)q.push(d.prepare("INSERT INTO assignments (id,activity_id,employee_id,effort_percent,start_date,end_date) VALUES (?,?,?,?,?,?)").bind(x.id,x.activityId,x.employeeId,x.effortPercent,x.startDate,x.endDate));
- for(const x of b.data.projectMembers||[])q.push(d.prepare("INSERT INTO project_members (project_id,employee_id) VALUES (?,?)").bind(x.projectId,x.employeeId));await d.batch(q)}
-
+async function restore(d:D1Database,b:Backup){
+ if(![1,2,3].includes(b.version)||!b.data||!Array.isArray(b.data.projects)||!Array.isArray(b.data.assignments))throw Error("Ogiltig säkerhetskopia");
+ const q:D1PreparedStatement[]=[
+  d.prepare("DELETE FROM individual_week_moves"),d.prepare("DELETE FROM individual_form_items"),
+  d.prepare("DELETE FROM individual_project_state"),d.prepare("DELETE FROM assignment_periods"),
+  d.prepare("DELETE FROM project_members"),d.prepare("DELETE FROM assignments"),
+  d.prepare("DELETE FROM activities"),d.prepare("DELETE FROM work_packages"),
+  d.prepare("DELETE FROM projects"),d.prepare("DELETE FROM employees")
+ ];
+ for(const x of b.data.employees)q.push(d.prepare("INSERT INTO employees(id,name,email,role,manager_id,capacity_percent) VALUES(?,?,?,?,?,?)").bind(x.id,x.name,x.email,x.role,x.managerId??null,x.capacityPercent));
+ for(const x of b.data.projects)q.push(d.prepare("INSERT INTO projects(id,code,name,color,description,status) VALUES(?,?,?,?,?,?)").bind(x.id,x.code,x.name,x.color,x.description??null,x.status??"Aktivt"));
+ for(const x of b.data.workPackages||[])q.push(d.prepare("INSERT INTO work_packages(id,project_id,code,name,description) VALUES(?,?,?,?,?)").bind(x.id,x.projectId,x.code,x.name,x.description??null));
+ for(const x of b.data.activities)q.push(d.prepare("INSERT INTO activities(id,project_id,work_package_id,parent_activity_id,code,name,description,start_date,end_date,estimated_hours,status) VALUES(?,?,?,?,?,?,?,?,?,?,?)").bind(x.id,x.projectId,x.workPackageId??null,x.parentActivityId??null,x.code??null,x.name,x.description??null,x.startDate,x.endDate,x.estimatedHours??null,x.status));
+ for(const x of b.data.assignments)q.push(d.prepare("INSERT INTO assignments(id,activity_id,employee_id,effort_percent,start_date,end_date,completed_at,work_status,original_end_date,status_updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)").bind(x.id,x.activityId,x.employeeId,x.effortPercent,x.startDate,x.endDate,x.completedAt??null,x.workStatus??null,x.originalEndDate??x.endDate,x.statusUpdatedAt??null));
+ for(const x of b.data.projectMembers||[])q.push(d.prepare("INSERT INTO project_members(project_id,employee_id) VALUES(?,?)").bind(x.projectId,x.employeeId));
+ if(b.version===3&&Array.isArray(b.data.assignmentPeriods)){
+  for(const p of b.data.assignmentPeriods)q.push(d.prepare("INSERT INTO assignment_periods(id,assignment_id,start_date,end_date,effort_percent) VALUES(?,?,?,?,?)").bind(p.id,p.assignmentId,p.startDate,p.endDate,p.effortPercent));
+ }else{
+  for(const x of b.data.assignments)q.push(d.prepare("INSERT INTO assignment_periods(assignment_id,start_date,end_date,effort_percent) VALUES(?,?,?,?)").bind(x.id,x.startDate,x.originalEndDate??x.endDate,x.effortPercent));
+ }
+ await d.batch(q);
+}
 export async function POST(request:Request){try{const d=db();const b=await request.json() as Record<string,unknown>;const action=text(b.action);
  if(action==="employee")await d.prepare("INSERT INTO employees (name,email,role,manager_id,capacity_percent) VALUES (?,?,?,?,?)").bind(text(b.name),text(b.email),text(b.role)||"Medarbetare",number(b.managerId),Number(b.capacityPercent||100)).run();
  else if(action==="project")await d.prepare("INSERT INTO projects (code,name,color,description,status) VALUES (?,?,?,?,?)").bind(text(b.code),text(b.name),text(b.color)||"#2563eb",text(b.description)||null,text(b.status)||"Aktivt").run();
