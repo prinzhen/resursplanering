@@ -3,8 +3,8 @@ export type ProjectSortAssignment={activityId:number;employeeId:number};
 export type ProjectSortActivity={id:number;projectId:number};
 export type ProjectSortOrder={employeeId:number;projectId:number;sortOrder:number};
 
-export function defaultProjectOrder(
-  employeeId:number,projects:ProjectSortInfo[],
+export function defaultProjectOrder<P extends ProjectSortInfo>(
+  employeeId:number,projects:P[],
   assignments:ProjectSortAssignment[],activities:ProjectSortActivity[]
 ){
  const ids=new Set(assignments.filter(a=>a.employeeId===employeeId).map(a=>activities.find(x=>x.id===a.activityId)?.projectId).filter((v):v is number=>v!==undefined));
@@ -16,8 +16,8 @@ export function defaultProjectOrder(
  );
 }
 
-export function sortEmployeeProjects(
- employeeId:number,projects:ProjectSortInfo[],
+export function sortEmployeeProjects<P extends ProjectSortInfo>(
+ employeeId:number,projects:P[],
  assignments:ProjectSortAssignment[],activities:ProjectSortActivity[],
  savedOrders:ProjectSortOrder[]
 ){
