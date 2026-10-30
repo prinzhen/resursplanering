@@ -1,6 +1,7 @@
 "use client";
 import {useEffect,useMemo,useRef,useState} from "react";
 import {sortEmployeeProjects} from "@/lib/project-sort";
+import {ganttState,ganttColor} from "@/lib/gantt-status";
 import {createPortal} from "react-dom";
 import {Activity,BriefcaseBusiness,CalendarRange,ChartNoAxesGantt,ChevronDown,ChevronRight,CircleAlert,Download,FileUp,FolderKanban,Gauge,Pencil,Plus,Printer,Trash2,Users} from "lucide-react";
 import {Badge} from "@/components/ui/badge";import {Button} from "@/components/ui/button";import {Dialog,DialogContent,DialogDescription,DialogFooter,DialogHeader,DialogTitle} from "@/components/ui/dialog";import {Input} from "@/components/ui/input";import {Label} from "@/components/ui/label";import {NativeSelect,NativeSelectOption} from "@/components/ui/native-select";import {Progress} from "@/components/ui/progress";import {Tabs,TabsContent,TabsList,TabsTrigger} from "@/components/ui/tabs";import {Table,TableBody,TableCell,TableHead,TableHeader,TableRow} from "@/components/ui/table";import {Textarea} from "@/components/ui/textarea";import {AlertDialog,AlertDialogAction,AlertDialogCancel,AlertDialogContent,AlertDialogDescription,AlertDialogFooter,AlertDialogHeader,AlertDialogTitle} from "@/components/ui/alert-dialog";import {Sheet,SheetContent,SheetDescription,SheetHeader,SheetTitle} from "@/components/ui/sheet";import {Accordion,AccordionContent,AccordionItem,AccordionTrigger} from "@/components/ui/accordion";
