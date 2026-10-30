@@ -97,7 +97,7 @@ export async function POST(req:Request){
    if(!targetInfo)return Response.json({error:"Projektet, uppdraget eller TEAMET saknas."},{status:404});
    const allowed=user.isAdmin||(user.isGroupManager&&(kind==="team"?
        targetInfo.ownerId===user.employeeId:
-       scope.projectIds.has(kind==="project"?target:targetInfo.projectId)));
+       scope.projectIds.has(kind==="project"?target:(targetInfo.projectId??0))));
    if(!allowed)return forbidden();
    const table=kind==="team"?"team_leaders":kind==="workPackage"?"work_package_leaders":"project_leaders";
    const col=kind==="team"?"team_id":kind==="workPackage"?"work_package_id":"project_id";
