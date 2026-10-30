@@ -824,6 +824,14 @@ try{
   assert.ok(!groupSwapped.teamLeaders.some(t=>t.teamId===authTeam.id&&t.employeeId===sara));
  });
  await asUser("ci-admin@example.se",adminPassword);
+ const beforeLeadershipBackup=await request();
+ const restoredLeadership=await request("/api/data",{action:"restore",backup:{version:3,data:beforeLeadershipBackup}});
+ check("Backup and restore retain project, work-package and TEAM leader assignments",()=>{
+  assert.deepEqual(restoredLeadership.projectLeaders,beforeLeadershipBackup.projectLeaders);
+  assert.deepEqual(restoredLeadership.workPackageLeaders,beforeLeadershipBackup.workPackageLeaders);
+  assert.deepEqual(restoredLeadership.teamLeaders,beforeLeadershipBackup.teamLeaders);
+  assert.ok(assignment(restoredLeadership,wActivity.id,sara));
+ });
  const approvedSnapshot=await request();
  check("Admin view still sees all original employees",()=>assert.equal(approvedSnapshot.employees.length>=4,true));
  console.log("\nSUCCESS: integration tests passed; only isolated temp database was modified.");
