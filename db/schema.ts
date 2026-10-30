@@ -30,8 +30,9 @@ export const activities = sqliteTable("activities", {
   id: integer("id").primaryKey({ autoIncrement: true }), projectId: integer("project_id").notNull().references(() => projects.id),
   name: text("name").notNull(), startDate: text("start_date").notNull(), endDate: text("end_date").notNull(),
   estimatedHours: integer("estimated_hours"), status: text("status").notNull().default("Planerad"),
+  priority:integer("priority").notNull().default(3),
   code: text("code"), workPackageId: integer("work_package_id").references(() => workPackages.id),
-  parentActivityId: integer("parent_activity_id"), description: text("description"),
+  parentActivityId: integer("parent_activity_id"), description: text("description"),createdBy:integer("created_by").references(()=>employees.id,{onDelete:"set null"}),
 });
 export const assignments = sqliteTable("assignments", {
   id: integer("id").primaryKey({ autoIncrement: true }), activityId: integer("activity_id").notNull().references(() => activities.id),
@@ -59,3 +60,68 @@ export const employeeGroupMembers = sqliteTable("employee_group_members",{
  groupId:integer("group_id").notNull().references(()=>employeeGroups.id,{onDelete:"cascade"}),
  employeeId:integer("employee_id").notNull().references(()=>employees.id,{onDelete:"cascade"}),
 },t=>[uniqueIndex("idx_employee_group_members_group_employee").on(t.groupId,t.employeeId)]);
+
+export const userAccounts = sqliteTable("user_accounts", {
+ id:integer("id").primaryKey({autoIncrement:true}),
+ employeeId:integer("employee_id").unique().references(()=>employees.id,{onDelete:"set null"}),
+ email:text("email").notNull().unique(),passwordSalt:text("password_salt").notNull(),
+ passwordHash:text("password_hash").notNull(),
+ isAdmin:integer("is_admin").notNull().default(0),
+ isGroupManager:integer("is_group_manager").notNull().default(0),
+ isDisabled:integer("is_disabled").notNull().default(0),
+ failedAttempts:integer("failed_attempts").notNull().default(0),
+ lockedUntil:integer("locked_until"),
+ createdAt:text("created_at").notNull()
+});
+export const userSessions=sqliteTable("user_sessions",{
+ tokenHash:text("token_hash").primaryKey(),
+ userId:integer("user_id").notNull().references(()=>userAccounts.id,{onDelete:"cascade"}),
+ expiresAt:integer("expires_at").notNull(),createdAt:text("created_at").notNull()
+});
+export const projectLeaders=sqliteTable("project_leaders",{
+ projectId:integer("project_id").notNull().references(()=>projects.id,{onDelete:"cascade"}),
+ employeeId:integer("employee_id").notNull().references(()=>employees.id,{onDelete:"cascade"})
+},t=>[uniqueIndex("idx_project_leaders_project_person").on(t.projectId,t.employeeId)]);
+export const teamLeaders=sqliteTable("team_leaders",{
+ teamId:integer("team_id").notNull().references(()=>employeeGroups.id,{onDelete:"cascade"}),
+ employeeId:integer("employee_id").notNull().references(()=>employees.id,{onDelete:"cascade"})
+},t=>[uniqueIndex("idx_team_leaders_team_person").on(t.teamId,t.employeeId)]);
+export const workPackageLeaders=sqliteTable("work_package_leaders",{
+ workPackageId:integer("work_package_id").notNull().references(()=>workPackages.id,{onDelete:"cascade"}),
+ employeeId:integer("employee_id").notNull().references(()=>employees.id,{onDelete:"cascade"})
+},t=>[uniqueIndex("idx_work_package_leaders_key").on(t.workPackageId,t.employeeId)]);
+
+export const assignmentRequests=sqliteTable("assignment_requests",{
+ id:integer("id").primaryKey({autoIncrement:true}),
+ activityId:integer("activity_id").notNull().references(()=>activities.id,{onDelete:"cascade"}),
+ requestedBy:integer("requested_by").notNull().references(()=>employees.id,{onDelete:"cascade"}),
+ recipientId:integer("recipient_id").notNull().references(()=>employees.id,{onDelete:"cascade"}),
+ effortPercent:integer("effort_percent").notNull(),
+ startDate:text("start_date").notNull(),endDate:text("end_date").notNull(),
+ status:text("status").notNull().default("pending"),comment:text("comment"),decidedAt:text("decided_at"),createdAt:text("created_at").notNull()
+});
+
+export const projectProposals=sqliteTable("project_proposals",{
+ id:integer("id").primaryKey({autoIncrement:true}),
+ submittedBy:integer("submitted_by").notNull().references(()=>userAccounts.id,{onDelete:"restrict"}),
+ code:text("code").notNull(),name:text("name").notNull(),
+ description:text("description").notNull().default(""),
+ color:text("color").notNull().default("#2563eb"),
+ priority:integer("priority").notNull().default(3),
+ status:text("status").notNull().default("pending"),
+ reviewedBy:integer("reviewed_by").references(()=>userAccounts.id,{onDelete:"set null"}),
+ reviewedAt:text("reviewed_at"),
+ createdProjectId:integer("created_project_id").references(()=>projects.id,{onDelete:"set null"}),
+ comment:text("comment"),
+ createdAt:text("created_at").notNull()
+});
+
+export const activityPriorityHistory = sqliteTable("activity_priority_history", {
+ id:integer("id").primaryKey({autoIncrement:true}),
+ activityId:integer("activity_id").notNull().references(()=>activities.id,{onDelete:"cascade"}),
+ effectiveFrom:text("effective_from").notNull(),
+ priority:integer("priority").notNull(),
+ changedBy:integer("changed_by").references(()=>userAccounts.id,{onDelete:"set null"}),
+ source:text("source").notNull().default("excel"),
+ createdAt:text("created_at").notNull()
+},t=>[uniqueIndex("idx_activity_priority_history_activity_date").on(t.activityId,t.effectiveFrom)]);

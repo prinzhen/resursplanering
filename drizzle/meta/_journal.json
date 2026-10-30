@@ -64,6 +64,41 @@
       "when": 1793450000000,
       "tag": "0008_employee_groups",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "6",
+      "when": 1793460000000,
+      "tag": "0009_access_and_approvals",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "6",
+      "when": 1793463000000,
+      "tag": "0010_activity_ownership",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "6",
+      "when": 1793465000000,
+      "tag": "0011_project_proposals",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "6",
+      "when": 1793468000000,
+      "tag": "0012_activity_priority_history",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "6",
+      "when": 1793468010000,
+      "tag": "0013_work_package_leaders",
+      "breakpoints": true
     }
   ]
 }

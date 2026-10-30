@@ -1,8 +1,10 @@
 import {setAssignmentStatus,setWholeActivityStatus,reconcileActivityStatus,normalizeStatus,validStatuses} from "@/lib/assignment-status";
 import { env } from "cloudflare:workers";
+import {sessionIdentity,unauthorized,forbidden,sameOrigin,type Identity} from "@/lib/auth";
+import {accessScope,authorizePlanningAction,filteredSnapshot,projectOfActivity} from "@/lib/permissions";
 export const dynamic="force-dynamic";
 type Row=Record<string,unknown>;
-type Backup={version:number;data:{employees:Row[];projects:Row[];workPackages:Row[];activities:Row[];assignments:Row[];projectMembers?:Row[];assignmentPeriods?:Row[];individualFormItems?:Row[];individualWeekMoves?:Row[];individualProjectStates?:Row[];individualImportRuns?:Row[];employeeProjectOrders?:Row[];employeeGroups?:Row[];employeeGroupMembers?:Row[]}};
+type Backup={version:number;data:{employees:Row[];projects:Row[];workPackages:Row[];activities:Row[];assignments:Row[];projectMembers?:Row[];assignmentPeriods?:Row[];individualFormItems?:Row[];individualWeekMoves?:Row[];individualProjectStates?:Row[];individualImportRuns?:Row[];employeeProjectOrders?:Row[];employeeGroups?:Row[];employeeGroupMembers?:Row[];projectLeaders?:Row[];teamLeaders?:Row[];workPackageLeaders?:Row[];assignmentRequests?:Row[];projectProposals?:Row[];activityPriorityHistory?:Row[]}};
 const db=()=>{if(!env.DB)throw new Error("Databasen är inte tillgänglig");return env.DB};
 const text=(v:unknown)=>String(v??"").trim();
 const number=(v:unknown)=>v===""||v==null?null:Number(v);
@@ -15,11 +17,11 @@ async function seedIfEmpty(d:D1Database){const c=await d.prepare("SELECT COUNT(*
   d.prepare("INSERT INTO activities (project_id,name,start_date,end_date,estimated_hours,status,code) VALUES (?,?,?,?,?,?,?)").bind(1,"Systemdesign","2026-09-01","2026-12-18",420,"Pågår","A-10"),d.prepare("INSERT INTO activities (project_id,name,start_date,end_date,estimated_hours,status,code) VALUES (?,?,?,?,?,?,?)").bind(2,"Detaljprojektering","2026-10-01","2027-01-29",360,"Planerad","A-20"),d.prepare("INSERT INTO activities (project_id,name,start_date,end_date,estimated_hours,status,code) VALUES (?,?,?,?,?,?,?)").bind(3,"Granskning och provning","2026-11-02","2027-02-26",280,"Planerad","A-30"),d.prepare("INSERT INTO activities (project_id,name,start_date,end_date,estimated_hours,status,code) VALUES (?,?,?,?,?,?,?)").bind(1,"Driftsättning","2027-01-11","2027-03-31",300,"Planerad","A-40"),
   d.prepare("INSERT INTO assignments (activity_id,employee_id,effort_percent,start_date,end_date) VALUES (?,?,?,?,?)").bind(1,2,50,"2026-09-01","2026-12-18"),d.prepare("INSERT INTO assignments (activity_id,employee_id,effort_percent,start_date,end_date) VALUES (?,?,?,?,?)").bind(1,3,40,"2026-09-01","2026-12-18"),d.prepare("INSERT INTO assignments (activity_id,employee_id,effort_percent,start_date,end_date) VALUES (?,?,?,?,?)").bind(2,2,35,"2026-10-01","2027-01-29"),d.prepare("INSERT INTO assignments (activity_id,employee_id,effort_percent,start_date,end_date) VALUES (?,?,?,?,?)").bind(2,4,60,"2026-10-01","2027-01-29"),d.prepare("INSERT INTO assignments (activity_id,employee_id,effort_percent,start_date,end_date) VALUES (?,?,?,?,?)").bind(3,3,70,"2026-11-02","2027-02-26"),d.prepare("INSERT INTO assignments (activity_id,employee_id,effort_percent,start_date,end_date) VALUES (?,?,?,?,?)").bind(4,2,40,"2027-01-11","2027-03-31"),d.prepare("INSERT INTO assignments (activity_id,employee_id,effort_percent,start_date,end_date) VALUES (?,?,?,?,?)").bind(4,4,50,"2027-01-11","2027-03-31")]);}
 
-async function snapshot(d:D1Database){const [e,p,w,a,s,m,periods,formItems,weekMoves,projectStates,importRuns,orders,groups,groupMembers]=await Promise.all([
+async function snapshot(d:D1Database){const [e,p,w,a,s,m,periods,formItems,weekMoves,projectStates,importRuns,orders,groups,groupMembers,projectLeaders,teamLeaders,workPackageLeaders,assignmentRequests,projectProposals,activityPriorityHistory]=await Promise.all([
  d.prepare("SELECT id,name,email,role,manager_id managerId,capacity_percent capacityPercent FROM employees ORDER BY name").all<Row>(),
  d.prepare("SELECT id,code,name,color,description,status,priority FROM projects ORDER BY code").all<Row>(),
  d.prepare("SELECT id,project_id projectId,code,name,description FROM work_packages ORDER BY project_id,code").all<Row>(),
- d.prepare("SELECT id,project_id projectId,work_package_id workPackageId,parent_activity_id parentActivityId,code,name,description,start_date startDate,end_date endDate,estimated_hours estimatedHours,status FROM activities ORDER BY start_date,name").all<Row>(),
+ d.prepare("SELECT id,project_id projectId,work_package_id workPackageId,parent_activity_id parentActivityId,code,name,description,start_date startDate,end_date endDate,estimated_hours estimatedHours,status,priority FROM activities ORDER BY start_date,name").all<Row>(),
  d.prepare("SELECT s.id,s.activity_id activityId,s.employee_id employeeId,s.effort_percent effortPercent,s.start_date startDate,s.end_date endDate,s.completed_at completedAt,s.work_status workStatus,s.original_end_date originalEndDate,s.status_updated_at statusUpdatedAt FROM assignments s ORDER BY s.start_date,s.id").all<Row>(),
  d.prepare("SELECT project_id projectId,employee_id employeeId FROM project_members ORDER BY employee_id,project_id").all<Row>(),
  d.prepare("SELECT id,assignment_id assignmentId,start_date startDate,end_date endDate,effort_percent effortPercent FROM assignment_periods ORDER BY assignment_id,start_date,id").all<Row>(),
@@ -28,11 +30,29 @@ async function snapshot(d:D1Database){const [e,p,w,a,s,m,periods,formItems,weekM
  d.prepare("SELECT employee_id employeeId,project_id projectId,state,updated_at updatedAt FROM individual_project_state ORDER BY employee_id,project_id").all<Row>(),
  d.prepare("SELECT id,employee_id employeeId,imported_at importedAt,row_count rowCount,created_count createdCount,updated_count updatedCount FROM individual_import_runs ORDER BY id").all<Row>(),
  d.prepare("SELECT employee_id employeeId,project_id projectId,sort_order sortOrder FROM employee_project_orders ORDER BY employee_id,sort_order").all<Row>(),
- d.prepare("SELECT id,name,description,created_at createdAt FROM employee_groups ORDER BY name,id").all<Row>(),
- d.prepare("SELECT group_id groupId,employee_id employeeId FROM employee_group_members ORDER BY group_id,employee_id").all<Row>()]);
- return {employees:e.results,projects:p.results,workPackages:w.results,activities:a.results,assignments:s.results,projectMembers:m.results,assignmentPeriods:periods.results,individualFormItems:formItems.results,individualWeekMoves:weekMoves.results,individualProjectStates:projectStates.results,individualImportRuns:importRuns.results,employeeProjectOrders:orders.results,employeeGroups:groups.results,employeeGroupMembers:groupMembers.results};}
+ d.prepare("SELECT id,name,description,owner_id ownerId,created_at createdAt FROM employee_groups ORDER BY name,id").all<Row>(),
+ d.prepare("SELECT group_id groupId,employee_id employeeId FROM employee_group_members ORDER BY group_id,employee_id").all<Row>(),
+ d.prepare("SELECT l.project_id projectId,l.employee_id employeeId,e.name employeeName FROM project_leaders l JOIN employees e ON e.id=l.employee_id ORDER BY l.project_id,l.employee_id").all<Row>(),
+ d.prepare("SELECT l.team_id teamId,l.employee_id employeeId,e.name employeeName FROM team_leaders l JOIN employees e ON e.id=l.employee_id ORDER BY l.team_id,l.employee_id").all<Row>(),
+ d.prepare("SELECT l.work_package_id workPackageId,l.employee_id employeeId,e.name employeeName FROM work_package_leaders l JOIN employees e ON e.id=l.employee_id ORDER BY l.work_package_id,l.employee_id").all<Row>(),
+ d.prepare("SELECT id,activity_id activityId,requested_by requestedBy,recipient_id recipientId,effort_percent effortPercent,start_date startDate,end_date endDate,status,comment,decided_at decidedAt,created_at createdAt FROM assignment_requests ORDER BY id").all<Row>(),
+ d.prepare("SELECT id,submitted_by submittedBy,code,name,description,color,priority,status,reviewed_by reviewedBy,reviewed_at reviewedAt,created_project_id createdProjectId,comment,created_at createdAt FROM project_proposals ORDER BY id").all<Row>(),
+ d.prepare("SELECT id,activity_id activityId,effective_from effectiveFrom,priority,changed_by changedBy,source,created_at createdAt FROM activity_priority_history ORDER BY activity_id,effective_from,id").all<Row>()]);
+ return {employees:e.results,projects:p.results,workPackages:w.results,activities:a.results,assignments:s.results,projectMembers:m.results,assignmentPeriods:periods.results,individualFormItems:formItems.results,individualWeekMoves:weekMoves.results,individualProjectStates:projectStates.results,individualImportRuns:importRuns.results,employeeProjectOrders:orders.results,employeeGroups:groups.results,employeeGroupMembers:groupMembers.results,projectLeaders:projectLeaders.results,teamLeaders:teamLeaders.results,workPackageLeaders:workPackageLeaders.results,assignmentRequests:assignmentRequests.results,projectProposals:projectProposals.results,activityPriorityHistory:activityPriorityHistory.results};}
 
-export async function GET(){try{const d=db();await seedIfEmpty(d);return Response.json(await snapshot(d))}catch(e){console.error(e);return Response.json({error:"Kunde inte läsa planeringsdata."},{status:500})}}
+async function visibleSnapshot(d:D1Database,user:Identity){
+ const scope=await accessScope(d,user);
+ const data=await snapshot(d);
+ return {...filteredSnapshot(data,user,scope),
+  employeeDirectory:(user.isAdmin||user.isGroupManager)?data.employees.map(e=>({id:e.id,name:e.name})):[],
+  projectDirectory:(user.isAdmin||user.isGroupManager)?data.projects.map(p=>({id:p.id,code:p.code,name:p.name,color:p.color,priority:p.priority})):data.projects.filter(p=>scope.projectIds.has(Number(p.id))),viewer:{
+  accountId:user.accountId,email:user.email,employeeId:user.employeeId,isAdmin:user.isAdmin,isGroupManager:user.isGroupManager,
+  managedEmployeeIds:[...scope.managedIds],projectLeadIds:[...scope.projectLedIds],workPackageLeadIds:[...scope.workPackageLedIds],teamLeadIds:[...scope.teamLedIds],
+  readableProjectIds:[...scope.projectIds]
+ }};
+}
+export async function GET(req:Request){try{const d=db();const user=await sessionIdentity(req,d);if(!user)return unauthorized();await seedIfEmpty(d);return Response.json(await visibleSnapshot(d,user),{headers:{"cache-control":"no-store"}})}catch(e){console.error(e);return Response.json({error:"Kunde inte läsa planeringsdata."},{status:500})}}
+
 
 async function importRows(d:D1Database,rows:Array<Record<string,string>>){const limited=rows.slice(0,2000);for(const r of limited){if((r.record_type||"").toLowerCase()==="person"&&r.email&&r.name)await d.prepare("INSERT INTO employees (name,email,role,manager_id,capacity_percent) VALUES (?,?,?,?,?) ON CONFLICT(email) DO UPDATE SET name=excluded.name,role=excluded.role,capacity_percent=excluded.capacity_percent").bind(r.name,r.email,r.role||"Medarbetare",null,Number(r.capacity_percent||100)).run()}for(const r of limited){if((r.record_type||"").toLowerCase()==="person"&&r.email&&r.manager_email){const m=await d.prepare("SELECT id FROM employees WHERE lower(email)=lower(?)").bind(r.manager_email).first<{id:number}>();if(m)await d.prepare("UPDATE employees SET manager_id=? WHERE lower(email)=lower(?)").bind(m.id,r.email).run()}}
  for(const r of limited){
@@ -47,9 +67,10 @@ async function importRows(d:D1Database,rows:Array<Record<string,string>>){const 
 
 async function restore(d:D1Database,b:Backup){
  if(![1,2,3].includes(b.version)||!b.data||!Array.isArray(b.data.projects)||!Array.isArray(b.data.assignments))throw Error("Ogiltig säkerhetskopia");
+ const accountLinks=await d.prepare("SELECT u.id,u.employee_id employeeId,e.email employeeEmail FROM user_accounts u JOIN employees e ON e.id=u.employee_id").all<{id:number;employeeId:number;employeeEmail:string}>();
  const q:D1PreparedStatement[]=[
   d.prepare("DELETE FROM individual_week_moves"),d.prepare("DELETE FROM individual_form_items"),
-  d.prepare("DELETE FROM individual_project_state"),d.prepare("DELETE FROM individual_import_runs"),d.prepare("DELETE FROM employee_group_members"),d.prepare("DELETE FROM employee_groups"),d.prepare("DELETE FROM assignment_periods"),
+  d.prepare("DELETE FROM individual_project_state"),d.prepare("DELETE FROM individual_import_runs"),d.prepare("DELETE FROM project_proposals"),d.prepare("DELETE FROM activity_priority_history"),d.prepare("DELETE FROM assignment_requests"),d.prepare("DELETE FROM work_package_leaders"),d.prepare("DELETE FROM team_leaders"),d.prepare("DELETE FROM project_leaders"),d.prepare("DELETE FROM employee_group_members"),d.prepare("DELETE FROM employee_groups"),d.prepare("DELETE FROM assignment_periods"),
   d.prepare("DELETE FROM project_members"),d.prepare("DELETE FROM employee_project_orders"),d.prepare("DELETE FROM assignments"),
   d.prepare("DELETE FROM activities"),d.prepare("DELETE FROM work_packages"),
   d.prepare("DELETE FROM projects"),d.prepare("DELETE FROM employees")
@@ -57,8 +78,9 @@ async function restore(d:D1Database,b:Backup){
  for(const x of b.data.employees)q.push(d.prepare("INSERT INTO employees(id,name,email,role,manager_id,capacity_percent) VALUES(?,?,?,?,?,?)").bind(x.id,x.name,x.email,x.role,x.managerId??null,x.capacityPercent));
  for(const x of b.data.projects)q.push(d.prepare("INSERT INTO projects(id,code,name,color,description,status,priority) VALUES(?,?,?,?,?,?,?)").bind(x.id,x.code,x.name,x.color,x.description??null,x.status??"Aktivt",priority(x.priority)));
  for(const x of b.data.workPackages||[])q.push(d.prepare("INSERT INTO work_packages(id,project_id,code,name,description) VALUES(?,?,?,?,?)").bind(x.id,x.projectId,x.code,x.name,x.description??null));
- for(const x of b.data.activities)q.push(d.prepare("INSERT INTO activities(id,project_id,work_package_id,parent_activity_id,code,name,description,start_date,end_date,estimated_hours,status) VALUES(?,?,?,?,?,?,?,?,?,?,?)").bind(x.id,x.projectId,x.workPackageId??null,x.parentActivityId??null,x.code??null,x.name,x.description??null,x.startDate,x.endDate,x.estimatedHours??null,x.status));
- for(const x of b.data.assignments)q.push(d.prepare("INSERT INTO assignments(id,activity_id,employee_id,effort_percent,start_date,end_date,completed_at,work_status,original_end_date,status_updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)").bind(x.id,x.activityId,x.employeeId,x.effortPercent,x.startDate,x.endDate,x.completedAt??null,x.workStatus??null,b.version===3?(x.originalEndDate??null):x.endDate,x.statusUpdatedAt??null));
+ for(const x of b.data.activities)q.push(d.prepare("INSERT INTO activities(id,project_id,work_package_id,parent_activity_id,code,name,description,start_date,end_date,estimated_hours,status,priority) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)").bind(x.id,x.projectId,x.workPackageId??null,x.parentActivityId??null,x.code??null,x.name,x.description??null,x.startDate,x.endDate,x.estimatedHours??null,x.status,priority(x.priority)));
+ for(const x of b.data.activityPriorityHistory||[])q.push(d.prepare("INSERT INTO activity_priority_history(id,activity_id,effective_from,priority,changed_by,source,created_at) VALUES(?,?,?,?,?,?,?)").bind(x.id,x.activityId,x.effectiveFrom,priority(x.priority),x.changedBy??null,x.source||"excel",x.createdAt||new Date().toISOString()));
+  for(const x of b.data.assignments)q.push(d.prepare("INSERT INTO assignments(id,activity_id,employee_id,effort_percent,start_date,end_date,completed_at,work_status,original_end_date,status_updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)").bind(x.id,x.activityId,x.employeeId,x.effortPercent,x.startDate,x.endDate,x.completedAt??null,x.workStatus??null,b.version===3?(x.originalEndDate??null):x.endDate,x.statusUpdatedAt??null));
  for(const x of b.data.projectMembers||[])q.push(d.prepare("INSERT INTO project_members(project_id,employee_id) VALUES(?,?)").bind(x.projectId,x.employeeId));
  if(b.version===3&&Array.isArray(b.data.assignmentPeriods)){
   for(const p of b.data.assignmentPeriods)q.push(d.prepare("INSERT INTO assignment_periods(id,assignment_id,start_date,end_date,effort_percent) VALUES(?,?,?,?,?)").bind(p.id,p.assignmentId,p.startDate,p.endDate,p.effortPercent));
@@ -71,18 +93,62 @@ async function restore(d:D1Database,b:Backup){
   for(const x of b.data.individualProjectStates||[])q.push(d.prepare("INSERT INTO individual_project_state(employee_id,project_id,state,updated_at) VALUES(?,?,?,?)").bind(x.employeeId,x.projectId,x.state,x.updatedAt||new Date().toISOString()));
   for(const x of b.data.individualImportRuns||[])q.push(d.prepare("INSERT INTO individual_import_runs(id,employee_id,imported_at,row_count,created_count,updated_count) VALUES(?,?,?,?,?,?)").bind(x.id,x.employeeId,x.importedAt,x.rowCount,x.createdCount,x.updatedCount));
   for(const x of b.data.employeeProjectOrders||[])q.push(d.prepare("INSERT INTO employee_project_orders(employee_id,project_id,sort_order) VALUES(?,?,?)").bind(x.employeeId,x.projectId,x.sortOrder));
-  for(const x of b.data.employeeGroups||[])q.push(d.prepare("INSERT INTO employee_groups(id,name,description,created_at) VALUES(?,?,?,?)").bind(x.id,x.name,x.description??null,x.createdAt??new Date().toISOString()));
+  for(const x of b.data.employeeGroups||[])q.push(d.prepare("INSERT INTO employee_groups(id,name,description,owner_id,created_at) VALUES(?,?,?,?,?)").bind(x.id,x.name,x.description??null,x.ownerId??null,x.createdAt??new Date().toISOString()));
   for(const x of b.data.employeeGroupMembers||[])q.push(d.prepare("INSERT INTO employee_group_members(group_id,employee_id) VALUES(?,?)").bind(x.groupId,x.employeeId));
+  for(const x of b.data.projectLeaders||[])q.push(d.prepare("INSERT INTO project_leaders(project_id,employee_id) VALUES(?,?)").bind(x.projectId,x.employeeId));
+  for(const x of b.data.teamLeaders||[])q.push(d.prepare("INSERT INTO team_leaders(team_id,employee_id) VALUES(?,?)").bind(x.teamId,x.employeeId));
+  for(const x of b.data.workPackageLeaders||[])q.push(d.prepare("INSERT INTO work_package_leaders(work_package_id,employee_id) VALUES(?,?)").bind(x.workPackageId,x.employeeId));
+  for(const x of b.data.assignmentRequests||[])q.push(d.prepare("INSERT INTO assignment_requests(id,activity_id,requested_by,recipient_id,effort_percent,start_date,end_date,status,comment,decided_at,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)").bind(x.id,x.activityId,x.requestedBy,x.recipientId,x.effortPercent,x.startDate,x.endDate,x.status,x.comment??null,x.decidedAt??null,x.createdAt??new Date().toISOString()));
+  for(const x of b.data.projectProposals||[])q.push(d.prepare("INSERT INTO project_proposals(id,submitted_by,code,name,description,color,priority,status,reviewed_by,reviewed_at,created_project_id,comment,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)").bind(x.id,x.submittedBy,x.code,x.name,x.description??"",x.color??"#2563eb",x.priority??3,x.status,x.reviewedBy??null,x.reviewedAt??null,x.createdProjectId??null,x.comment??null,x.createdAt??new Date().toISOString()));
  }
  await d.batch(q);
+ // Authentication records are not included in planning exports.
+ // Re-associate active user accounts with employee records after replacement.
+ const validEmployees=await d.prepare("SELECT id,email FROM employees").all<{id:number;email:string}>();
+ const ids=new Map(validEmployees.results.map(e=>[e.id,e.email.toLowerCase()]));
+ for(const link of accountLinks.results)if(ids.get(link.employeeId)===link.employeeEmail.toLowerCase()){
+  await d.prepare("UPDATE user_accounts SET employee_id=? WHERE id=?").bind(link.employeeId,link.id).run();
+ }
 }
-export async function POST(request:Request){try{const d=db();const b=await request.json() as Record<string,unknown>;const action=text(b.action);
- if(action==="employee")await d.prepare("INSERT INTO employees (name,email,role,manager_id,capacity_percent) VALUES (?,?,?,?,?)").bind(text(b.name),text(b.email),text(b.role)||"Medarbetare",number(b.managerId),Number(b.capacityPercent||100)).run();
- else if(action==="project")await d.prepare("INSERT INTO projects (code,name,color,description,status,priority) VALUES (?,?,?,?,?,?)").bind(text(b.code),text(b.name),text(b.color)||"#2563eb",text(b.description)||null,text(b.status)||"Aktivt",priority(b.priority)).run();
+export async function POST(request:Request){try{const d=db();const user=await sessionIdentity(request,d);if(!user)return unauthorized();
+ if(!sameOrigin(request))return forbidden();
+ const b=await request.json() as Record<string,unknown>;const action=text(b.action);
+ if(!await authorizePlanningAction(d,user,action,b))return forbidden();
+ if(action==="employee"){
+ const managerId=user.isAdmin?number(b.managerId):user.employeeId;
+ await d.prepare("INSERT INTO employees (name,email,role,manager_id,capacity_percent) VALUES (?,?,?,?,?)").bind(text(b.name),text(b.email),text(b.role)||"Medarbetare",managerId,Number(b.capacityPercent||100)).run();
+ }
+ else if(action==="project"){
+  const code=text(b.code).toUpperCase(),name=text(b.name),description=text(b.description),color=text(b.color)||"#2563eb";
+  if(!/^[A-Z0-9][A-Z0-9._-]{0,39}$/.test(code)||name.length<3||name.length>150||description.length>1500||!/^#[0-9a-fA-F]{6}$/.test(color))
+   return Response.json({error:"Ogiltig projektkod, namn, beskrivning eller färg."},{status:400});
+  if(await d.prepare("SELECT id FROM projects WHERE code=? COLLATE NOCASE").bind(code).first())
+   return Response.json({error:"Projektkoden används redan."},{status:409});
+  const created=await d.prepare("INSERT INTO projects (code,name,color,description,status,priority) VALUES (?,?,?,?,?,?)").bind(code,name,color,description||null,"Aktivt",priority(b.priority)).run();
+  if(user.isGroupManager&&user.employeeId){
+   const id=Number(created.meta.last_row_id);
+   await d.batch([
+    d.prepare("INSERT OR IGNORE INTO project_leaders(project_id,employee_id) VALUES(?,?)").bind(id,user.employeeId),
+    d.prepare("INSERT OR IGNORE INTO project_members(project_id,employee_id) VALUES(?,?)").bind(id,user.employeeId)
+   ]);
+  }
+ }
  else if(action==="updateProject")await d.prepare("UPDATE projects SET code=?,name=?,color=?,description=?,status=?,priority=? WHERE id=?").bind(text(b.code),text(b.name),text(b.color)||"#2563eb",text(b.description)||null,text(b.status)||"Aktivt",priority(b.priority),Number(b.id)).run();
  else if(action==="workPackage")await d.prepare("INSERT INTO work_packages (project_id,code,name,description) VALUES (?,?,?,?)").bind(Number(b.projectId),text(b.code),text(b.name),text(b.description)||null).run();
  else if(action==="updateWorkPackage")await d.prepare("UPDATE work_packages SET project_id=?,code=?,name=?,description=? WHERE id=?").bind(Number(b.projectId),text(b.code),text(b.name),text(b.description)||null,Number(b.id)).run();
- else if(action==="activity")await d.prepare("INSERT INTO activities (project_id,work_package_id,parent_activity_id,code,name,description,start_date,end_date,estimated_hours,status) VALUES (?,?,?,?,?,?,?,?,?,?)").bind(Number(b.projectId),number(b.workPackageId),number(b.parentActivityId),text(b.code)||null,text(b.name),requiredActivityDescription(b.description),text(b.startDate),text(b.endDate),number(b.estimatedHours),text(b.status)||"Planerad").run();
+ else if(action==="activity"){
+  const projectId=Number(b.projectId),start=text(b.startDate),end=text(b.endDate);
+  if(start>end)return Response.json({error:"Slutdatum måste vara efter startdatum."},{status:400});
+  const workId=number(b.workPackageId),parentId=number(b.parentActivityId);
+  if(workId&&!await d.prepare("SELECT id FROM work_packages WHERE id=? AND project_id=?").bind(workId,projectId).first())return Response.json({error:"Uppdraget tillhör inte valt projekt."},{status:400});
+  if(parentId&&!await d.prepare("SELECT id FROM activities WHERE id=? AND project_id=?").bind(parentId,projectId).first())return Response.json({error:"Huvudaktiviteten tillhör inte valt projekt."},{status:400});
+  const result=await d.prepare("INSERT INTO activities (project_id,work_package_id,parent_activity_id,code,name,description,start_date,end_date,estimated_hours,status,created_by) VALUES (?,?,?,?,?,?,?,?,?,?,?)").bind(projectId,workId,parentId,text(b.code)||null,text(b.name),requiredActivityDescription(b.description),start,end,number(b.estimatedHours),text(b.status)||"Planerad",user.employeeId).run();
+  if(!user.isAdmin&&user.employeeId){
+   const id=Number(result.meta.last_row_id);
+   const ass=await d.prepare("INSERT INTO assignments(activity_id,employee_id,effort_percent,start_date,end_date,work_status,original_end_date) VALUES(?,?,?,?,?,?,?)").bind(id,user.employeeId,0,start,end,"Planerad",end).run();
+   await d.prepare("INSERT INTO assignment_periods(assignment_id,start_date,end_date,effort_percent) VALUES(?,?,?,?)").bind(Number(ass.meta.last_row_id),start,end,0).run();
+  }
+ }
  else if(action==="setAssignmentPeriods"){
   const activityId=Number(b.activityId),employeeId=Number(b.employeeId);
   if(!Number.isSafeInteger(activityId)||!Number.isSafeInteger(employeeId)||activityId<=0||employeeId<=0)
@@ -143,7 +209,7 @@ export async function POST(request:Request){try{const d=db();const b=await reque
   if(conflict)return Response.json({error:"Gruppnamnet används redan."},{status:409});
   let groupId=id;
   if(groupId===null){
-   const created=await d.prepare("INSERT INTO employee_groups(name,description) VALUES(?,?)").bind(name,description||null).run();
+   const created=await d.prepare("INSERT INTO employee_groups(name,description,owner_id) VALUES(?,?,?)").bind(name,description||null,user.employeeId).run();
    groupId=Number(created.meta.last_row_id);
   }
   const commands:D1PreparedStatement[]=[];
@@ -187,6 +253,12 @@ export async function POST(request:Request){try{const d=db();const b=await reque
  }
  }
  else if(action==="updateActivity"){
+  if(!user.isAdmin){
+   const nextProject=Number(b.projectId);
+   const access=await accessScope(d,user);
+   if(!access.selfProjectIds.has(nextProject)&&!access.projectLedIds.has(nextProject))return forbidden();
+  }
+
   const id=Number(b.id);
   const original=await d.prepare("SELECT id,start_date startDate,end_date endDate,status FROM activities WHERE id=?").bind(id).first<{id:number;startDate:string;endDate:string;status:string}>();
   if(!original)return Response.json({error:"Aktiviteten saknas."},{status:404});
@@ -260,17 +332,32 @@ export async function POST(request:Request){try{const d=db();const b=await reque
   // Initialize a period for new assignees, preserving customized existing periods.
   await d.prepare("INSERT INTO assignment_periods(assignment_id,start_date,end_date,effort_percent) SELECT s.id,s.start_date,COALESCE(s.original_end_date,s.end_date),s.effort_percent FROM assignments s WHERE s.activity_id=? AND NOT EXISTS (SELECT 1 FROM assignment_periods p WHERE p.assignment_id=s.id)").bind(activityId).run();
  }
+ else if(action==="setSingleProjectMember"){
+   const projectId=Number(b.projectId),employeeId=Number(b.employeeId);
+   if(!Number.isSafeInteger(projectId)||!Number.isSafeInteger(employeeId)||projectId<=0||employeeId<=0)return Response.json({error:"Ogiltigt projekt eller medarbetare"},{status:400});
+   if(!await d.prepare("SELECT id FROM projects WHERE id=?").bind(projectId).first()||!await d.prepare("SELECT id FROM employees WHERE id=?").bind(employeeId).first())return Response.json({error:"Projektet eller medarbetaren saknas"},{status:404});
+   if(Boolean(b.enabled))await d.prepare("INSERT OR IGNORE INTO project_members(project_id,employee_id) VALUES(?,?)").bind(projectId,employeeId).run();
+   else await d.prepare("DELETE FROM project_members WHERE project_id=? AND employee_id=?").bind(projectId,employeeId).run();
+ }
  else if(action==="setProjectMemberships"){const employeeId=Number(b.employeeId),projectIds=Array.isArray(b.projectIds)?[...new Set(b.projectIds.map(Number).filter(Number.isInteger))]:[];if(!employeeId)return Response.json({error:"Medarbetare saknas."},{status:400});const q=[d.prepare("DELETE FROM project_members WHERE employee_id=?").bind(employeeId),...projectIds.map(projectId=>d.prepare("INSERT INTO project_members (project_id,employee_id) VALUES (?,?)").bind(projectId,employeeId))];await d.batch(q)}
  else if(action==="import")await importRows(d,Array.isArray(b.rows)?b.rows as Array<Record<string,string>>:[]);
  else if(action==="restore")await restore(d,b.backup as Backup);
- else return Response.json({error:"Okänd åtgärd."},{status:400});return Response.json(await snapshot(d));
+ else return Response.json({error:"Okänd åtgärd."},{status:400});return Response.json(await visibleSnapshot(d,user));
  }catch(e){console.error(e);return Response.json({error:e instanceof Error?e.message:"Kunde inte spara ändringen."},{status:500})}}
 
-export async function DELETE(request:Request){try{const d=db();const u=new URL(request.url);const type=u.searchParams.get("type");const id=Number(u.searchParams.get("id"));if(!id)return Response.json({error:"ID saknas."},{status:400});
+export async function DELETE(request:Request){try{const d=db();const user=await sessionIdentity(request,d);if(!user)return unauthorized();if(!sameOrigin(request))return forbidden();const u=new URL(request.url);const type=u.searchParams.get("type");const id=Number(u.searchParams.get("id"));if(!Number.isSafeInteger(id)||id<=0)return Response.json({error:"ID saknas."},{status:400});
+ if(!user.isAdmin){
+  const access=await accessScope(d,user);
+  const canDelete=type==="employee"?access.managedIds.has(id):
+   type==="group"?!!await d.prepare("SELECT id FROM employee_groups WHERE id=? AND owner_id=?").bind(id,user.employeeId).first():
+   type==="activity"?access.projectLedIds.has(await projectOfActivity(d,id)):
+   type==="workPackage"?access.projectLedIds.size>0&&!!await d.prepare("SELECT id FROM work_packages WHERE id=? AND project_id IN ("+[...access.projectLedIds].map(()=>"?").join(",")+")").bind(id,...access.projectLedIds).first():false;
+  if(!canDelete)return forbidden();
+ }
  if(type==="group")await d.batch([d.prepare("DELETE FROM employee_group_members WHERE group_id=?").bind(id),d.prepare("DELETE FROM employee_groups WHERE id=?").bind(id)]);
  else if(type==="employee")await d.batch([d.prepare("UPDATE employees SET manager_id=NULL WHERE manager_id=?").bind(id),d.prepare("DELETE FROM project_members WHERE employee_id=?").bind(id),d.prepare("DELETE FROM employee_group_members WHERE employee_id=?").bind(id),d.prepare("DELETE FROM assignments WHERE employee_id=?").bind(id),d.prepare("DELETE FROM employees WHERE id=?").bind(id)]);
  else if(type==="project")await d.batch([d.prepare("DELETE FROM project_members WHERE project_id=?").bind(id),d.prepare("DELETE FROM assignments WHERE activity_id IN (SELECT id FROM activities WHERE project_id=?)").bind(id),d.prepare("DELETE FROM activities WHERE project_id=?").bind(id),d.prepare("DELETE FROM work_packages WHERE project_id=?").bind(id),d.prepare("DELETE FROM projects WHERE id=?").bind(id)]);
  else if(type==="workPackage")await d.batch([d.prepare("DELETE FROM assignments WHERE activity_id IN (WITH RECURSIVE tree(id) AS (SELECT id FROM activities WHERE work_package_id=? UNION ALL SELECT a.id FROM activities a JOIN tree t ON a.parent_activity_id=t.id) SELECT id FROM tree)").bind(id),d.prepare("DELETE FROM activities WHERE id IN (WITH RECURSIVE tree(id) AS (SELECT id FROM activities WHERE work_package_id=? UNION ALL SELECT a.id FROM activities a JOIN tree t ON a.parent_activity_id=t.id) SELECT id FROM tree)").bind(id),d.prepare("DELETE FROM work_packages WHERE id=?").bind(id)]);
  else if(type==="activity")await d.batch([d.prepare("DELETE FROM assignments WHERE activity_id IN (WITH RECURSIVE tree(id) AS (SELECT id FROM activities WHERE id=? UNION ALL SELECT a.id FROM activities a JOIN tree t ON a.parent_activity_id=t.id) SELECT id FROM tree)").bind(id),d.prepare("DELETE FROM activities WHERE id IN (WITH RECURSIVE tree(id) AS (SELECT id FROM activities WHERE id=? UNION ALL SELECT a.id FROM activities a JOIN tree t ON a.parent_activity_id=t.id) SELECT id FROM tree)").bind(id)]);
- else return Response.json({error:"Okänd typ."},{status:400});return Response.json(await snapshot(d));
+ else return Response.json({error:"Okänd typ."},{status:400});return Response.json(await visibleSnapshot(d,user));
  }catch(e){console.error(e);return Response.json({error:"Kunde inte ta bort posten."},{status:500})}}

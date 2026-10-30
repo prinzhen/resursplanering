@@ -3,11 +3,12 @@ FROM node:24-bookworm-slim AS build
 ENV CI=true
 WORKDIR /app
 
-RUN corepack enable
+RUN corepack enable && apt-get update && apt-get install -y --no-install-recommends python3 && rm -rf /var/lib/apt/lists/*
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc ./
 RUN pnpm install --frozen-lockfile
 
 COPY . .
+RUN bash -n scripts/install-team-test-3200.sh
 RUN pnpm build
 RUN pnpm exec tsc --noEmit
 RUN node scripts/test-individual-integration.mjs
@@ -35,6 +36,6 @@ VOLUME ["/data"]
 EXPOSE 3000
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
-  CMD node -e "fetch('http://127.0.0.1:3000/api/data').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"
+  CMD node -e "fetch('http://127.0.0.1:3000/api/auth').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"
 
 CMD ["node", "scripts/start-selfhosted.mjs"]
