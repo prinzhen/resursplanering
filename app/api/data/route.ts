@@ -62,7 +62,7 @@ async function importRows(d:D1Database,rows:Array<Record<string,string>>){const 
 
 async function restore(d:D1Database,b:Backup){
  if(![1,2,3].includes(b.version)||!b.data||!Array.isArray(b.data.projects)||!Array.isArray(b.data.assignments))throw Error("Ogiltig säkerhetskopia");
- const accountLinks=await d.prepare("SELECT id,employee_id employeeId FROM user_accounts WHERE employee_id IS NOT NULL").all<{id:number;employeeId:number}>();
+ const accountLinks=await d.prepare("SELECT u.id,u.employee_id employeeId,e.email employeeEmail FROM user_accounts u JOIN employees e ON e.id=u.employee_id").all<{id:number;employeeId:number;employeeEmail:string}>();
  const q:D1PreparedStatement[]=[
   d.prepare("DELETE FROM individual_week_moves"),d.prepare("DELETE FROM individual_form_items"),
   d.prepare("DELETE FROM individual_project_state"),d.prepare("DELETE FROM individual_import_runs"),d.prepare("DELETE FROM assignment_requests"),d.prepare("DELETE FROM team_leaders"),d.prepare("DELETE FROM project_leaders"),d.prepare("DELETE FROM employee_group_members"),d.prepare("DELETE FROM employee_groups"),d.prepare("DELETE FROM assignment_periods"),
@@ -96,9 +96,9 @@ async function restore(d:D1Database,b:Backup){
  await d.batch(q);
  // Authentication records are not included in planning exports.
  // Re-associate active user accounts with employee records after replacement.
- const validEmployees=await d.prepare("SELECT id FROM employees").all<{id:number}>();
- const ids=new Set(validEmployees.results.map(e=>e.id));
- for(const link of accountLinks.results)if(ids.has(link.employeeId)){
+ const validEmployees=await d.prepare("SELECT id,email FROM employees").all<{id:number;email:string}>();
+ const ids=new Map(validEmployees.results.map(e=>[e.id,e.email.toLowerCase()]));
+ for(const link of accountLinks.results)if(ids.get(link.employeeId)===link.employeeEmail.toLowerCase()){
   await d.prepare("UPDATE user_accounts SET employee_id=? WHERE id=?").bind(link.employeeId,link.id).run();
  }
 }
