@@ -8,6 +8,18 @@ export async function setAssignmentStatus(d:D1Database,activityId:number,employe
  await d.prepare("UPDATE assignments SET work_status=?,completed_at=?,status_updated_at=CURRENT_TIMESTAMP,original_end_date=COALESCE(original_end_date,?),end_date=? WHERE id=?").bind(status,done?(row.completedAt||today):null,end,actualEnd,row.id).run();
  return true;
 }
+export async function setWholeActivityStatus(d:D1Database,activityId:number,status:string){
+ // One atomic SQL statement changes every employee allocation consistently.
+ // The historical planning period survives completion and can be restored.
+ await d.prepare(`UPDATE assignments SET
+ work_status=?,
+ completed_at=CASE WHEN ?='Klar' THEN COALESCE(completed_at,date('now')) ELSE NULL END,
+ original_end_date=COALESCE(original_end_date,end_date),
+ end_date=CASE WHEN ?='Klar' AND start_date<=date('now')
+  THEN MIN(COALESCE(original_end_date,end_date),date('now'))
+  ELSE COALESCE(original_end_date,end_date) END,
+ status_updated_at=CURRENT_TIMESTAMP WHERE activity_id=?`).bind(status,status,status,activityId).run();
+}
 export async function reconcileActivityStatus(d:D1Database,id:number){
  const a=await d.prepare("SELECT work_status status,completed_at completedAt,original_end_date originalEnd,end_date endDate FROM assignments WHERE activity_id=?").bind(id).all<{status:string|null;completedAt:string|null;originalEnd:string|null;endDate:string}>();
  if(!a.results.length)return;
