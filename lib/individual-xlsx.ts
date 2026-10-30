@@ -46,7 +46,8 @@ function zip(entries:Record<string,string>){
  e.setUint16(10,central.length,true);
  e.setUint32(12,cdir.length,true);
  e.setUint32(16,at,true);
- return new Blob([...locals,cdir,end],{type:"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"});
+ const parts=[...locals,cdir,end].map(chunk=>{const buffer=new ArrayBuffer(chunk.byteLength);new Uint8Array(buffer).set(chunk);return buffer});
+ return new Blob(parts,{type:"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"});
 }
 async function unzip(bytes:Uint8Array){
  const v=new DataView(bytes.buffer,bytes.byteOffset,bytes.byteLength);let e=-1;
