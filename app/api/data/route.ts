@@ -234,7 +234,7 @@ export async function POST(request:Request){try{const d=db();const user=await se
   if(!user.isAdmin){
    const nextProject=Number(b.projectId);
    const access=await accessScope(d,user);
-   if(!access.projectIds.has(nextProject))return forbidden();
+   if(!access.selfProjectIds.has(nextProject)&&!access.projectLedIds.has(nextProject))return forbidden();
   }
 
   const id=Number(b.id);
