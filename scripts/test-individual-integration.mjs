@@ -520,6 +520,73 @@ try{
  const wrongProject=await fetch(base+"/api/data",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({action:"updateProject",id:3,code:"P-1110",name:"Denied update",description:"",color:"#ca8a04",priority:3})});
  check("Project leader cannot alter unrelated project",()=>assert.equal(wrongProject.status,403));
  await asUser("ci-admin@example.se",adminPassword);
+ // Passwords: admin can provision every employee by ID, reset without changing roles,
+ // six-character passwords work, and password reset revokes existing sessions.
+ const johanEmployee=snap.employees.find(e=>e.name.toLowerCase().includes("johan"));
+ assert.ok(johanEmployee,"Missing Johan employee in fixture");
+ await request("/api/access",{action:"setEmployeePassword",employeeId:johanEmployee.id,password:"Abc123"});
+ const allAccounts=await request("/api/access");
+ check("Admin can create a six-character password for an employee without an account",()=>{
+  const account=allAccounts.accounts.find(a=>a.employeeId===johanEmployee.id);
+  assert.ok(account);
+  assert.equal(account.isAdmin,0);
+  assert.equal(account.isGroupManager,0);
+ });
+ await asUser(johanEmployee.email,"Abc123");
+ const johanAccess=await request("/api/access");
+ check("New employee password logs in with normal, not admin permissions",()=>assert.equal(johanAccess.viewer.isAdmin,false));
+ const forbiddenPassword=await fetch(base+"/api/access",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({action:"setEmployeePassword",employeeId:erik,password:"Abc123"})});
+ check("Ordinary employee cannot change other users passwords",()=>assert.equal(forbiddenPassword.status,403));
+ const selfChange=await fetch(base+"/api/auth",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({action:"changePassword",currentPassword:"Abc123",newPassword:"Xyz789"})});
+ check("Employee can change own password to six characters",()=>assert.equal(selfChange.status,200));
+ const afterChange=await fetch(base+"/api/data");
+ check("Changing personal password revokes previous session",()=>assert.equal(afterChange.status,401));
+ await asUser(johanEmployee.email,"Xyz789");
+ await asUser("ci-admin@example.se",adminPassword);
+ await request("/api/access",{action:"setEmployeePassword",employeeId:johanEmployee.id,password:"Qwe456"});
+ const oldLogin=await fetch(base+"/api/auth",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({action:"login",email:johanEmployee.email,password:"Xyz789"})});
+ check("Old employee password rejected after admin reset",()=>assert.equal(oldLogin.status,401));
+ await asUser(johanEmployee.email,"Qwe456");
+ const accountAfterReset=await request("/api/access");
+ check("Password reset does not elevate user roles",()=>assert.equal(accountAfterReset.viewer.isAdmin,false));
+ await asUser("ci-admin@example.se",adminPassword);
+
+ // Suggestions: ordinary users may submit, but only admin/manager may review.
+ await asUser("sara@example.se");
+ const projectCountBefore=(await request()).projects.length;
+ const forbiddenDirectProject=await fetch(base+"/api/data",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({action:"project",code:"P-FORBIDDEN",name:"Forbidden project",priority:3})});
+ check("Employee cannot directly create a project",()=>assert.equal(forbiddenDirectProject.status,403));
+ const proposed=await request("/api/project-proposals",{action:"submit",code:"P-TEST-APPROVE",name:"Föreslaget nytt projekt",description:"Granskas av gruppchef",priority:2,color:"#146c94"});
+ const proposal=proposed.proposals.find(p=>p.code==="P-TEST-APPROVE");
+ check("Employee submits pending proposal without creating project",()=>assert.ok(proposal&&proposal.status==="pending"));
+ const cannotApprove=await fetch(base+"/api/project-proposals",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({action:"review",id:proposal.id,approve:true})});
+ check("Employee cannot approve own proposal",()=>assert.equal(cannotApprove.status,403));
+ const proposalOnly=(await request()).projects;
+ check("Pending proposal has no effect on project registry",()=>assert.equal(proposalOnly.length,projectCountBefore));
+ await asUser("anna@example.se");
+ const managerView=await request("/api/project-proposals");
+ check("Group manager sees all pending project proposals",()=>assert.ok(managerView.canReview&&managerView.proposals.some(p=>p.id===proposal.id)));
+ const managerCreated=await request("/api/data",{action:"project",code:"P-MANAGER-DIRECT",name:"Eget gruppchefsprojekt",description:"Skapad direkt av gruppchef",color:"#2563eb",priority:2});
+ check("Group manager can create projects directly and becomes project leader",()=>{
+  const p=managerCreated.projects.find(p=>p.code==="P-MANAGER-DIRECT");
+  assert.ok(p);
+  assert.ok(managerCreated.viewer.projectLeadIds.includes(p.id));
+ });
+ const managerApproved=await request("/api/project-proposals",{action:"review",id:proposal.id,approve:true,comment:"Godkänt i test"});
+ check("Group manager approval creates exactly one new project",()=>assert.equal(managerApproved.proposals.find(p=>p.id===proposal.id).status,"approved"));
+ const afterApproval=await request();
+ check("Approving group manager gets access to created project",()=>assert.ok(afterApproval.projects.some(p=>p.code==="P-TEST-APPROVE")));
+ const reapprove=await fetch(base+"/api/project-proposals",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({action:"review",id:proposal.id,approve:true})});
+ check("Duplicate project approval is rejected",()=>assert.equal(reapprove.status,409));
+ await asUser("sara@example.se");
+ const rejectedProposal=(await request("/api/project-proposals",{action:"submit",code:"P-TEST-REJECT",name:"Projekt som avslås",description:"Begäran ska inte skapa projekt",priority:3,color:"#2563eb"})).proposals.find(p=>p.code==="P-TEST-REJECT");
+ await asUser("ci-admin@example.se",adminPassword);
+ const rejected=await request("/api/project-proposals",{action:"review",id:rejectedProposal.id,approve:false,comment:"Ej prioriterat"});
+ check("Admin rejects project proposal",()=>assert.equal(rejected.proposals.find(p=>p.id===rejectedProposal.id).status,"rejected"));
+ const adminPlan=await request();
+ check("Rejected proposal never appears as an active project",()=>assert.equal(adminPlan.projects.some(p=>p.code==="P-TEST-REJECT"),false));
+ const unauthorizedProposals=await fetch(base+"/api/project-proposals",{headers:{cookie:""}});
+ check("Project proposal inbox is protected for anonymous users",()=>assert.equal(unauthorizedProposals.status,401));
  const approvedSnapshot=await request();
  check("Admin view still sees all original employees",()=>assert.equal(approvedSnapshot.employees.length>=4,true));
  console.log("\nSUCCESS: integration tests passed; only isolated temp database was modified.");
