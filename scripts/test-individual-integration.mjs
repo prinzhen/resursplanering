@@ -664,6 +664,23 @@ try{
  check("Group manager cannot silently take over another manager's employee",()=>assert.equal(forbiddenExisting.status,403));
  await asUser("ci-admin@example.se",adminPassword);
 
+ // Legacy worksheets with an empty H-column preserve the stored priority.
+ const oldPrioritySheet=await sheet("admin.new@example.se");
+ const priorityBefore=oldPrioritySheet.activities.find(a=>a.name==="Excel import role-created task");
+ check("Administrator exports imported activity priority",()=>assert.equal(priorityBefore.priority,"2"));
+ await request("/api/individual",{...oldPrioritySheet,activities:[{...priorityBefore,priority:""}],members:[]});
+ const oldAfter=await request();
+ check("Legacy Excel workbook with blank priority leaves activity priority unchanged",()=>{
+  const id=oldAfter.projects.find(p=>p.code==="P-EXCEL-ADM").id;
+  assert.equal(oldAfter.activities.find(a=>a.projectId===id&&a.name==="Excel import role-created task").priority,2);
+ });
+ const invalidPriority=await fetch(base+"/api/individual",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(importTemplate("bad.priority@example.se","Bad Priority","P-PRIO-INVALID","Får inte skapas","6"))});
+ check("Invalid priority is rejected before new employee and project are created",()=>assert.equal(invalidPriority.status,400));
+ const afterInvalidPriority=await request();
+ check("Rejected priority import leaves employee/project registries unchanged",()=>{
+  assert.equal(afterInvalidPriority.employees.some(e=>e.email==="bad.priority@example.se"),false);
+  assert.equal(afterInvalidPriority.projects.some(p=>p.code==="P-PRIO-INVALID"),false);
+ });
  // Priority edits are effective on Swedish calendar import day, not from the
  // activity's original start date. All current staffing segments split cleanly.
  const {importDateSweden,previousISODate}=await import("../lib/individual-priority.ts");
