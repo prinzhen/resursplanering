@@ -14,7 +14,7 @@ RUN_USER="${SUDO_USER:-prinzhen}"
 [[ "${RUN_USER}" != root ]] || RUN_USER="prinzhen"
 [[ -d "${SOURCE}" ]] || { echo "Saknar källdatabas: ${SOURCE}" >&2; exit 1; }
 id "${RUN_USER}" >/dev/null || { echo "Användaren ${RUN_USER} finns inte." >&2; exit 1; }
-for tool in git node pnpm python3 systemctl ss; do command -v "${tool}" >/dev/null || { echo "Saknar kommando: ${tool}" >&2; exit 1; }; done
+for tool in git node pnpm python3 systemctl ss runuser getent curl; do command -v "${tool}" >/dev/null || { echo "Saknar kommando: ${tool}" >&2; exit 1; }; done
 [[ ! -e "${ROOT}" && ! -e "${BASE}" && ! -e "/etc/systemd/system/${SERVICE}" ]] || {
  echo "Avbryter: testinstallationens katalog eller tjänst finns redan. Ingenting skrivs över." >&2; exit 1;
 }
