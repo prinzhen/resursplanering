@@ -237,6 +237,29 @@ try{
  check("Quick-staff rejection preserves per-period percentages",()=>{
   assert.deepEqual(snap.assignmentPeriods.filter(x=>x.assignmentId===erikId).map(x=>x.effortPercent),[20,80,60]);
  });
+ const globalStart="2026-09-07",globalEnd="2026-12-22";
+ snap=await request("/api/data",{action:"updateActivity",id:1,projectId:1,workPackageId:"",parentActivityId:"",code:"A-10",name:"Systemdesign",description:"Automatiskt test av global period",startDate:globalStart,endDate:globalEnd,estimatedHours:420,status:"Pågår"});
+ check("Editing overall project start/end dates updates the activity",()=>{
+  assert.equal(activity(snap,1).startDate,globalStart);
+  assert.equal(activity(snap,1).endDate,globalEnd);
+ });
+ check("Project date edit moves only single-period resources matching old project period",()=>{
+  const saras=snap.assignmentPeriods.filter(x=>x.assignmentId===assignment(snap,1,sara).id);
+  assert.equal(saras.length,1);
+  assert.equal(saras[0].startDate,globalStart);
+  assert.equal(saras[0].endDate,globalEnd);
+  const eriks=snap.assignmentPeriods.filter(x=>x.assignmentId===erikId);
+  assert.equal(eriks.length,3);
+  assert.equal(eriks[0].startDate,"2026-09-01");
+  assert.equal(eriks[2].endDate,"2027-04-30");
+ });
+ const backedUp=structuredClone(snap);
+ snap=await request("/api/data",{action:"restore",backup:{version:3,data:backedUp}});
+ check("Version 3 backup and restore preserve all individual variable periods",()=>{
+  assert.deepEqual(snap.assignmentPeriods,backedUp.assignmentPeriods);
+  assert.deepEqual(snap.assignments,backedUp.assignments);
+  assert.equal(snap.individualFormItems.length,backedUp.individualFormItems.length);
+ });
  // Inspect the real SQLite state independently of API serialization.
  const sqliteFile=await findSqlite(join(dir,"data"));
  const sql=new DatabaseSync(sqliteFile,{readOnly:true});
