@@ -94,3 +94,18 @@ export const assignmentRequests=sqliteTable("assignment_requests",{
  startDate:text("start_date").notNull(),endDate:text("end_date").notNull(),
  status:text("status").notNull().default("pending"),comment:text("comment"),decidedAt:text("decided_at"),createdAt:text("created_at").notNull()
 });
+
+export const projectProposals=sqliteTable("project_proposals",{
+ id:integer("id").primaryKey({autoIncrement:true}),
+ submittedBy:integer("submitted_by").notNull().references(()=>userAccounts.id,{onDelete:"restrict"}),
+ code:text("code").notNull(),name:text("name").notNull(),
+ description:text("description").notNull().default(""),
+ color:text("color").notNull().default("#2563eb"),
+ priority:integer("priority").notNull().default(3),
+ status:text("status").notNull().default("pending"),
+ reviewedBy:integer("reviewed_by").references(()=>userAccounts.id,{onDelete:"set null"}),
+ reviewedAt:text("reviewed_at"),
+ createdProjectId:integer("created_project_id").references(()=>projects.id,{onDelete:"set null"}),
+ comment:text("comment"),
+ createdAt:text("created_at").notNull()
+});
