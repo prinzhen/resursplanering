@@ -13,13 +13,13 @@ export default function Requests(){
  const reload=async()=>{
   const [a,b]=await Promise.all([fetch("/api/data",{cache:"no-store"}),fetch("/api/requests",{cache:"no-store"})]);
   if(a.status===401||b.status===401){window.location.assign("/login");return}
-  const d=await a.json(),r=await b.json();if(!a.ok||!b.ok)throw Error(d.error||r.error||"Kan inte hämta begäranden");
+  const d=await a.json() as Data&{error?:string},r=await b.json() as {requests:RequestItem[];eligibleRecipients:Recipient[];error?:string};if(!a.ok||!b.ok)throw Error(d.error||r.error||"Kan inte hämta begäranden");
   setData(d);setRequests(r.requests||[]);setEligible(r.eligibleRecipients||[]);
  };
  useEffect(()=>{reload().catch(e=>setError(String(e)))},[]);
  const post=async(payload:Record<string,unknown>)=>{setBusy(true);setError("");setMessage("");try{
   const r=await fetch("/api/requests",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(payload)});
-  const d=await r.json();if(!r.ok)throw Error(d.error||"Åtgärden misslyckades");
+  const d=await r.json() as {error?:string};if(!r.ok)throw Error(d.error||"Åtgärden misslyckades");
   setMessage("Ändringen sparades.");await reload();return true;
  }catch(e){setError(e instanceof Error?e.message:String(e));return false}finally{setBusy(false)}};
  const selectedActivity=data?.activities.find(a=>a.id===Number(activity));
