@@ -31,6 +31,7 @@ echo "[2/6] Installerar beroenden, bygger och typkontrollerar."
 pnpm install --frozen-lockfile
 pnpm build
 pnpm exec tsc --noEmit
+node scripts/test-individual-integration.mjs
 echo "[3/6] Kopierar testdata med SQLite online backup; port 3100 fortsätter köras."
 mkdir -p "${DATA}" "${CONFIG}"
 python3 - "${SOURCE}" "${DATA}" <<'PY'
