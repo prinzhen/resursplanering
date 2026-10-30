@@ -775,9 +775,20 @@ try{
  const wData=await request("/api/data",{action:"workPackage",projectId:wProjId,code:"UPP-1",name:"Separat uppdrag",description:"Egen ledare"});
  const wId=wData.workPackages.find(w=>w.projectId===wProjId&&w.code==="UPP-1").id;
  await setLead("workPackage",{workPackageId:wId},null,sara);
+ const inScope=await request("/api/data",{action:"activity",projectId:wProjId,workPackageId:wId,name:"Assignment within led work package",description:"Coworker in own work package",startDate:"2026-11-01",endDate:"2026-11-15",estimatedHours:16,status:"Planerad"});
+ const inScopeId=inScope.activities.find(x=>x.name==="Assignment within led work package").id;
+ await request("/api/data",{action:"setActivityAssignments",activityId:inScopeId,resources:[{employeeId:3,effortPercent:25},{employeeId:4,effortPercent:50}]});
+ const outScope=await request("/api/data",{action:"activity",projectId:wProjId,name:"Unrelated task outside led work package",description:"Only the manager should see this assignment",startDate:"2026-11-01",endDate:"2026-11-15",estimatedHours:16,status:"Planerad"});
+ const outScopeId=outScope.activities.find(x=>x.name==="Unrelated task outside led work package").id;
+ await request("/api/data",{action:"setActivityAssignments",activityId:outScopeId,resources:[{employeeId:4,effortPercent:35}]});
  const assignedW=await request("/api/access");
  check("Work package receives independent leader and auto-membership",()=>assert.ok(assignedW.workPackageLeaders.some(w=>w.workPackageId===wId&&w.employeeId===sara)));
  await asUser("sara@example.se");
+ const workVisible=await request();
+ check("Work-package leader sees coworker assignment only within their own uppdrag",()=>{
+  assert.ok(workVisible.assignments.some(a=>a.activityId===inScopeId&&a.employeeId===4));
+  assert.equal(workVisible.assignments.some(a=>a.activityId===outScopeId&&a.employeeId===4),false);
+ });
  const createdWork=await request("/api/data",{action:"activity",projectId:wProjId,workPackageId:wId,name:"Uppdragsledare arbetar själv",description:"Bemanningsbar uppdragsledare",startDate:"2026-11-01",endDate:"2026-11-30",estimatedHours:32,status:"Planerad"});
  const wActivity=createdWork.activities.find(a=>a.name==="Uppdragsledare arbetar själv");
  check("Work package leader may create and be allocated to own activity",()=>assert.ok(wActivity&&assignment(createdWork,wActivity.id,sara)));
