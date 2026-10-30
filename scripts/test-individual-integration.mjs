@@ -585,6 +585,13 @@ try{
  check("Admin rejects project proposal",()=>assert.equal(rejected.proposals.find(p=>p.id===rejectedProposal.id).status,"rejected"));
  const adminPlan=await request();
  check("Rejected proposal never appears as an active project",()=>assert.equal(adminPlan.projects.some(p=>p.code==="P-TEST-REJECT"),false));
+ const restoredProposals=await request("/api/data",{action:"restore",backup:{version:3,data:adminPlan}});
+ check("Backup and restore preserve project proposal review history",()=>{
+  assert.deepEqual(restoredProposals.projectProposals,adminPlan.projectProposals);
+  assert.ok(restoredProposals.projects.some(p=>p.code==="P-TEST-APPROVE"));
+ });
+ const shortPassword=await fetch(base+"/api/access",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({action:"setEmployeePassword",employeeId:erik,password:"abc12"})});
+ check("Passwords shorter than six characters are rejected",()=>assert.equal(shortPassword.status,400));
  const unauthorizedProposals=await originalFetch(base+"/api/project-proposals");
  check("Project proposal inbox is protected for anonymous users",()=>assert.equal(unauthorizedProposals.status,401));
  const approvedSnapshot=await request();
