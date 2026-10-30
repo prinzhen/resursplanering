@@ -48,10 +48,17 @@ export async function POST(req:Request){
    if(target===user.accountId)return Response.json({error:"Du kan inte inaktivera ditt eget administratörskonto."},{status:400});
    await d.prepare("UPDATE user_accounts SET is_disabled=? WHERE id=?").bind(Number(Boolean(b.disabled)),target).run();
    await d.prepare("DELETE FROM user_sessions WHERE user_id=?").bind(target).run();
-  }else if(action==="setProjectLeader"||action==="setTeamLeader"){
+  }else if(action==="setTeamOwner"){
+   if(!user.isAdmin)return forbidden();
+   const teamId=Number(b.teamId);
+   const managerId=b.employeeId===null?null:Number(b.employeeId);
+   if(!Number.isSafeInteger(teamId)||teamId<=0||managerId!==null&&(!Number.isSafeInteger(managerId)||managerId<=0))
+    return Response.json({error:"Ogiltigt TEAM eller gruppchef."},{status:400});
+   await d.prepare("UPDATE employee_groups SET owner_id=? WHERE id=?").bind(managerId,teamId).run();
+ }else if(action==="setProjectLeader"||action==="setTeamLeader"){
    if(!Number.isSafeInteger(employeeId)||employeeId<=0||!await d.prepare("SELECT id FROM employees WHERE id=?").bind(employeeId).first())
     return Response.json({error:"Välj en befintlig medarbetare."},{status:400});
-   if(!user.isAdmin&&!scope.managedIds.has(employeeId))return forbidden();
+   if(!user.isAdmin&&(!user.isGroupManager||!scope.managedIds.has(employeeId)))return forbidden();
    const enabled=Boolean(b.enabled);
    if(action==="setProjectLeader"){
     if(!Number.isSafeInteger(projectId)||projectId<=0||!await d.prepare("SELECT id FROM projects WHERE id=?").bind(projectId).first())
