@@ -94,7 +94,7 @@ export async function POST(req:Request){
    const assigned=assignedId!==null?await d.prepare("SELECT activity_id activityId FROM assignments WHERE activity_id=? AND employee_id=?").bind(assignedId,e.id).first<{activityId:number}>():null;
    const existing=assigned||matched||await d.prepare("SELECT i.activity_id activityId FROM individual_form_items i WHERE i.item_uid=? AND i.employee_id=?").bind(uid,e.id).first<{activityId:number}>();
    if(a.uid&&!existing)throw Error("Aktivitets-ID "+uid+" tillhör inte denna medarbetare eller finns inte. Avbryter för att undvika dubbletter.");
-   if(kind==="Projekt"){const p=await d.prepare("SELECT id FROM projects WHERE code=?").bind(code).first<{id:number}>();if(!p)throw Error("Projektkoden "+code+" finns inte. Lägg upp projektet först.");if(!allowed.projectIds.has(p.id))return forbidden()}
+   if(kind==="Projekt"){const p=await d.prepare("SELECT id FROM projects WHERE code=?").bind(code).first<{id:number}>();if(!p)throw Error("Projektkoden "+code+" finns inte. Lägg upp projektet först.");if(!allowed.selfProjectIds.has(p.id)&&!allowed.projectLedIds.has(p.id))return forbidden()}
    changes.push({uid,week:current,firstWeek:first,name:txt(a.name),kind,projectCode:code,hours:hrs,status,description:txt(a.comment).slice(0,500),reason:txt(a.reason).slice(0,500),activityId:existing?.activityId??null});
   }
   const seenActivityIds=new Set<number>(),seenUIDs=new Set<string>();
@@ -107,7 +107,7 @@ export async function POST(req:Request){
     }
   }
   const memberChanges:{projectId:number;state:string}[]=[];
-  for(const m of input.members){const code=txt(m.code);if(!code)continue;const project=await d.prepare("SELECT id FROM projects WHERE code=?").bind(code).first<{id:number}>();if(!project)throw Error("Projektet "+code+" hittas inte.");if(!allowed.projectIds.has(project.id))return forbidden();const state=txt(m.state)||"Aktiv";if(!["Aktiv","Vilande"].includes(state))throw Error("Ogiltigt projektmedlemskap");memberChanges.push({projectId:project.id,state})}
+  for(const m of input.members){const code=txt(m.code);if(!code)continue;const project=await d.prepare("SELECT id FROM projects WHERE code=?").bind(code).first<{id:number}>();if(!project)throw Error("Projektet "+code+" hittas inte.");if(!allowed.selfProjectIds.has(project.id)&&!allowed.projectLedIds.has(project.id))return forbidden();const state=txt(m.state)||"Aktiv";if(!["Aktiv","Vilande"].includes(state))throw Error("Ogiltigt projektmedlemskap");memberChanges.push({projectId:project.id,state})}
   // No writes until all rows validated.
   const queries:D1PreparedStatement[]=[];
   for(const code of new Set(changes.map(a=>a.projectCode).filter(code=>code==="INTERNAL-VERK"||code==="INTERNAL-OVR"))){const p=await d.prepare("SELECT id FROM projects WHERE code=?").bind(code).first();if(!p)queries.push(d.prepare("INSERT INTO projects(code,name,color,status) VALUES (?,?,?,?)").bind(code,code==="INTERNAL-VERK"?"Verksamhetsarbete":"Övrigt arbete","#64748b","Aktivt"))}
