@@ -427,6 +427,56 @@ try{
    assert.equal(rows.completedAt,null);
   });
  }finally{sql.close()}
+ // Roles are exercised as real separately logged-in users.
+ const userPassword="EmployeePassphrase-2026!";
+ await request("/api/access",{action:"saveAccount",email:"erik@example.se",employeeId:erik,password:userPassword,isAdmin:false});
+ await request("/api/access",{action:"saveAccount",email:"sara@example.se",employeeId:sara,password:userPassword,isAdmin:false});
+ const asUser=async(email,password=userPassword)=>{
+  const res=await fetch(base+"/api/auth",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({action:"login",email,password})});
+  if(!res.ok)throw Error("Could not log in as "+email+": "+await res.text());
+  sessionCookie=(res.headers.get("set-cookie")||"").split(";")[0];
+  assert.match(sessionCookie,/^rp_session=/);
+ };
+ await asUser("erik@example.se");
+ let userData=await request();
+ check("Employee sees project 1 and project 2 where assigned, not unrelated project 3",()=>{
+  assert.ok(userData.projects.some(p=>p.id===1));
+  assert.ok(userData.projects.some(p=>p.id===2));
+  assert.equal(userData.projects.some(p=>p.id===3),false);
+  assert.ok(userData.activities.some(a=>a.id===1));
+ });
+ const denied=await fetch(base+"/api/data",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({action:"setAssignmentStatus",activityId:1,employeeId:sara,status:"Klar"})});
+ check("Ordinary employee cannot change colleague assignment",()=>assert.equal(denied.status,403));
+ const deniedExport=await fetch(base+"/api/individual?email=sara@example.se");
+ check("Ordinary employee cannot export colleague Excel",()=>assert.equal(deniedExport.status,403));
+ const created=await request("/api/data",{action:"activity",projectId:1,name:"Approval end-to-end activity",description:"Requires colleague acceptance before assignment",startDate:"2026-11-02",endDate:"2026-11-20",estimatedHours:40,status:"Planerad"});
+ const createdAct=created.activities.find(a=>a.name==="Approval end-to-end activity");
+ check("Employee can create task for self in a joined project",()=>{
+  assert.ok(createdAct);
+  assert.ok(assignment(created,createdAct.id,erik));
+  assert.equal(assignment(created,createdAct.id,sara),undefined);
+ });
+ const requestData=await request("/api/requests",{action:"request",activityId:createdAct.id,recipientId:sara,effortPercent:40,startDate:"2026-11-02",endDate:"2026-11-20"});
+ check("Self-service request stays pending without creating recipient workload",()=>{
+  assert.equal(requestData.requests.some(r=>r.activityId===createdAct.id&&r.status==="pending"),true);
+ });
+ userData=await request();
+ check("Pending request has not assigned recipient to the activity",()=>assert.equal(assignment(userData,createdAct.id,sara),undefined));
+ await asUser("sara@example.se");
+ const saraInbox=await request("/api/requests");
+ const pending=saraInbox.requests.find(r=>r.activityId===createdAct.id&&r.status==="pending");
+ check("Recipient sees pending request in personal inbox",()=>assert.ok(pending));
+ const accepted=await request("/api/requests",{action:"answer",id:pending.id,approve:true});
+ check("Recipient approves and pending request moves to approved",()=>assert.equal(accepted.requests.find(r=>r.id===pending.id)?.status,"approved"));
+ const saraPlan=await request();
+ check("Approved request creates exactly one employee assignment",()=>{
+  assert.equal(saraPlan.assignments.filter(s=>s.activityId===createdAct.id&&s.employeeId===sara).length,1);
+ });
+ const duplicateApproval=await fetch(base+"/api/requests",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({action:"answer",id:pending.id,approve:true})});
+ check("Repeat approval rejected",()=>assert.equal(duplicateApproval.status,409));
+ await asUser("ci-admin@example.se",adminPassword);
+ const approvedSnapshot=await request();
+ check("Admin view still sees all original employees",()=>assert.equal(approvedSnapshot.employees.length>=4,true));
  console.log("\nSUCCESS: integration tests passed; only isolated temp database was modified.");
 }catch(err){
  console.error("\nFAILED:",err);
