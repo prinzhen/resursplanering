@@ -111,23 +111,50 @@ function MiniStat({label,value}:{label:string;value:string|number}){return <div 
 // The planned period stays in SQLite. If an assignment is marked complete
 // before its planned start, the Gantt chart shows a completion milestone
 // on the actual date rather than pretending that the work runs in the future.
-function ganttWindow(a:Assignment){
- if(a.completedAt&&a.completedAt<a.startDate)return{start:a.completedAt,end:a.completedAt};
- return{start:a.startDate,end:a.completedAt&&a.completedAt<a.endDate?a.completedAt:a.endDate};
+function ganttPeriodRows(a:Assignment,d:Data,base:GanttItem):GanttItem[]{
+ const periods=assignmentPeriods(a,d).filter(p=>!a.completedAt||p.startDate<=a.completedAt);
+ const shown=periods.length?periods.map(p=>({
+  start:p.startDate,end:a.completedAt&&a.completedAt<p.endDate?a.completedAt:p.endDate,effortPercent:p.effortPercent,id:p.id
+ })):(a.completedAt?[{start:a.completedAt,end:a.completedAt,effortPercent:0,id:-a.id}]:[]);
+ return shown.map((p,i)=>({
+  ...base,id:base.id+"-period-"+p.id+"-"+i,start:p.start,end:p.end,
+  sub:base.sub+" · "+p.effortPercent+"%"+(shown.length>1?" (period "+(i+1)+")":""),
+  effort:p.effortPercent,completed:!!a.completedAt,completedAt:a.completedAt||undefined,
+  status:a.workStatus||base.status
+ }));
 }
-function employeeGantt(e:Employee,d:Data):GanttItem[]{return d.assignments.filter(s=>s.employeeId===e.id).flatMap(s=>{const a=d.activities.find(x=>x.id===s.activityId),p=d.projects.find(x=>x.id===a?.projectId),w=d.workPackages.find(x=>x.id===a?.workPackageId);return a&&p?[{id:String(s.id),group:`${p.code} · ${p.name}`,label:`${a.parentActivityId?"↳ ":""}${a.code?`${a.code} · `:""}${a.name}`,sub:`${w?`${w.code} · ${w.name} · `:""}${s.effortPercent}% insats`,...ganttWindow(s),color:p.color,effort:s.effortPercent,completed:!!s.completedAt,completedAt:s.completedAt||undefined,status:s.workStatus||a.status}]:[]}).sort((a,b)=>a.group.localeCompare(b.group,"sv")||a.start.localeCompare(b.start)||a.label.localeCompare(b.label,"sv"))}
-function activitySelectionGantt(activities:WorkActivity[],d:Data):GanttItem[]{return activities.flatMap(a=>{const p=d.projects.find(x=>x.id===a.projectId),w=d.workPackages.find(x=>x.id===a.workPackageId),ass=d.assignments.filter(s=>s.activityId===a.id),group=`${p?`${p.code} · ${p.name}`:"Okänt projekt"} — ${w?`${w.code} · ${w.name}`:"Direkt i projektet"}`,label=`${a.parentActivityId?"↳ ":""}${a.code?`${a.code} · `:""}${a.name}`,color=p?.color||"#2563eb";if(!ass.length)return[{id:`selection-${a.id}-empty`,group,label,sub:"Ej bemannad",start:a.startDate,end:a.endDate,color}];return ass.map(s=>{const e=d.employees.find(x=>x.id===s.employeeId);return{id:`selection-${a.id}-${s.id}`,group,label,sub:`${e?.name||"Okänd resurs"} · ${s.effortPercent}% insats`,...ganttWindow(s),color,effort:s.effortPercent,completed:!!s.completedAt,completedAt:s.completedAt||undefined,status:s.workStatus||a.status}})}).sort((a,b)=>a.group.localeCompare(b.group,"sv")||a.start.localeCompare(b.start)||a.label.localeCompare(b.label,"sv")||a.sub.localeCompare(b.sub,"sv"))}
-function projectGantt(p:Project,d:Data):GanttItem[]{return d.activities.filter(a=>a.projectId===p.id).flatMap(a=>{const w=d.workPackages.find(x=>x.id===a.workPackageId),ass=d.assignments.filter(s=>s.activityId===a.id),group=w?`${w.code} · ${w.name}`:"Direkt i projektet",label=`${a.parentActivityId?"↳ ":""}${a.code?`${a.code} · `:""}${a.name}`;if(!ass.length)return[{id:`${a.id}-empty`,group,label,sub:"Ej bemannad",start:a.startDate,end:a.endDate,color:p.color}];return ass.map(s=>{const e=d.employees.find(x=>x.id===s.employeeId);return{id:`${a.id}-${s.id}`,group,label,sub:`${e?.name||"Okänd resurs"} · ${s.effortPercent}% insats`,...ganttWindow(s),color:p.color,effort:s.effortPercent,completed:!!s.completedAt,completedAt:s.completedAt||undefined,status:s.workStatus||a.status}})}).sort((a,b)=>a.group.localeCompare(b.group,"sv")||a.start.localeCompare(b.start)||a.label.localeCompare(b.label,"sv")||a.sub.localeCompare(b.sub,"sv"))}
-function activityGantt(a:WorkActivity,d:Data):GanttItem[]{const p=d.projects.find(x=>x.id===a.projectId),group=`${a.code?`${a.code} · `:""}${a.name}`;return d.assignments.filter(s=>s.activityId===a.id).map(s=>{const e=d.employees.find(x=>x.id===s.employeeId);return{id:String(s.id),group,label:e?.name||"Resurs",sub:`${e?.role||"Medarbetare"} · ${s.effortPercent}% insats`,...ganttWindow(s),color:p?.color||"#2563eb",effort:s.effortPercent,completed:!!s.completedAt,completedAt:s.completedAt||undefined,status:s.workStatus||a.status}}).sort((a,b)=>a.label.localeCompare(b.label,"sv"))}
-function ganttState(i:GanttItem){
- if(i.completed)return "Klar";
- if(i.status==="Fryst"||i.status==="Pausad")return i.status;
- return i.status==="Pågår"?"Pågående":i.status||"Planerad";
+function employeeGantt(e:Employee,d:Data):GanttItem[]{
+ return d.assignments.filter(s=>s.employeeId===e.id).flatMap(s=>{
+  const a=d.activities.find(x=>x.id===s.activityId),p=d.projects.find(x=>x.id===a?.projectId),w=d.workPackages.find(x=>x.id===a?.workPackageId);
+  if(!a||!p)return [];
+  return ganttPeriodRows(s,d,{id:String(s.id),group:p.code+" · "+p.name,
+   label:(a.parentActivityId?"↳ ":"")+(a.code?a.code+" · ":"")+a.name,
+   sub:w?w.code+" · "+w.name:"Resursperiod",start:s.startDate,end:s.endDate,color:p.color,status:a.status});
+ }).sort((x,y)=>x.group.localeCompare(y.group,"sv")||x.start.localeCompare(y.start));
 }
-function ganttColor(i:GanttItem){
- const state=ganttState(i);
- return state==="Klar"?`color-mix(in srgb, ${i.color} 34%, white)`:
-  state==="Fryst"||state==="Pausad"?`color-mix(in srgb, ${i.color} 48%, white)`:i.color;
+function activitySelectionGantt(activities:WorkActivity[],d:Data):GanttItem[]{
+ return activities.flatMap(a=>{
+  const p=d.projects.find(x=>x.id===a.projectId),w=d.workPackages.find(x=>x.id===a.workPackageId);
+  const ass=d.assignments.filter(s=>s.activityId===a.id),group=(p?p.code+" · "+p.name:"Okänt projekt")+" — "+(w?w.code+" · "+w.name:"Direkt i projektet");
+  const label=(a.parentActivityId?"↳ ":"")+(a.code?a.code+" · ":"")+a.name,color=p?.color||"#2563eb";
+  if(!ass.length)return[{id:"selection-"+a.id+"-empty",group,label,sub:"Ej bemannad",start:a.startDate,end:a.endDate,color}];
+  return ass.flatMap(s=>ganttPeriodRows(s,d,{id:"selection-"+a.id+"-"+s.id,group,label,sub:d.employees.find(e=>e.id===s.employeeId)?.name||"Okänd resurs",start:s.startDate,end:s.endDate,color,status:a.status}));
+ }).sort((x,y)=>x.group.localeCompare(y.group,"sv")||x.start.localeCompare(y.start)||x.sub.localeCompare(y.sub));
+}
+function projectGantt(p:Project,d:Data):GanttItem[]{
+ return d.activities.filter(a=>a.projectId===p.id).flatMap(a=>{
+  const w=d.workPackages.find(x=>x.id===a.workPackageId),ass=d.assignments.filter(s=>s.activityId===a.id),
+  group=w?w.code+" · "+w.name:"Direkt i projektet",label=(a.parentActivityId?"↳ ":"")+(a.code?a.code+" · ":"")+a.name;
+  if(!ass.length)return[{id:String(a.id)+"-empty",group,label,sub:"Ej bemannad",start:a.startDate,end:a.endDate,color:p.color}];
+  return ass.flatMap(s=>ganttPeriodRows(s,d,{id:a.id+"-"+s.id,group,label,sub:d.employees.find(e=>e.id===s.employeeId)?.name||"Okänd resurs",start:s.startDate,end:s.endDate,color:p.color,status:a.status}));
+ }).sort((x,y)=>x.group.localeCompare(y.group,"sv")||x.start.localeCompare(y.start)||x.sub.localeCompare(y.sub));
+}
+function activityGantt(a:WorkActivity,d:Data):GanttItem[]{
+ const p=d.projects.find(x=>x.id===a.projectId);
+ return d.assignments.filter(s=>s.activityId===a.id).flatMap(s=>{
+  const person=d.employees.find(e=>e.id===s.employeeId);
+  return ganttPeriodRows(s,d,{id:String(s.id),group:(a.code?a.code+" · ":"")+a.name,label:person?.name||"Resurs",sub:person?.role||"Medarbetare",start:s.startDate,end:s.endDate,color:p?.color||"#2563eb",status:a.status});
+ }).sort((x,y)=>x.label.localeCompare(y.label,"sv")||x.start.localeCompare(y.start));
 }
 function GanttView({items,empty,load,segments:givenSegments,rangeStart="2026-09-01",rangeEnd="2027-03-31"}:{items:GanttItem[];empty:string;load?:LoadPoint[];segments?:TimelineSegment[];rangeStart?:string;rangeEnd?:string}){const start=new Date(`${rangeStart}T00:00:00Z`),endExclusive=new Date(`${rangeEnd}T00:00:00Z`).getTime()+86400000,span=Math.max(86400000,endExclusive-start.getTime()),segments=givenSegments||timelineSegments(rangeStart,rangeEnd),daily=segments.every(segment=>segment.start===segment.end),posStart=(date:string)=>Math.max(0,Math.min(100,(new Date(`${date}T00:00:00Z`).getTime()-start.getTime())/span*100)),posEnd=(date:string)=>Math.max(0,Math.min(100,(new Date(`${date}T00:00:00Z`).getTime()+86400000-start.getTime())/span*100)),groups=[...new Set(items.map(i=>i.group))],columns=timelineColumns(segments);return <section className="gantt-card">{load&&<div className="gantt-load"><div className="gantt-load-label"><strong>Beläggning</strong><span>Grön &lt;85% · Gul 85–100% · Röd &gt;100%</span></div><div className={`gantt-load-scale${daily?" is-daily":""}`} style={{gridTemplateColumns:columns}}>{load.map(point=><div key={point.key} title={`${point.label}: ${point.value}% beläggning`} className={point.value>100?"load-red":point.value>=85?"load-yellow":"load-green"}><strong>{point.value}%</strong><span>{point.label}</span></div>)}</div></div>}<div className={`gantt-head${daily?" is-daily":""}`}><div>Aktivitet / resurs</div><TimelineScale segments={segments} className="gantt-head-scale"/></div>{groups.map(group=><div key={group}><div className="gantt-group"><FolderKanban/><span>{group}</span><Badge variant="secondary">{items.filter(i=>i.group===group).length} rader</Badge></div>{items.filter(i=>i.group===group).map(i=>{const left=posStart(i.start),right=posEnd(i.end),width=Math.max(1.5,right-left),continuesLeft=i.start<rangeStart,continuesRight=i.end>rangeEnd;return <div className="gantt-row" key={i.id}><div className="gantt-label"><strong>{i.label}{ganttState(i)==="Klar"?" ✓ Klar":ganttState(i)==="Fryst"?" ⏸ Fryst":ganttState(i)==="Pausad"?" ⏸ Pausad":""}</strong><span>{i.sub.replace(" insats"," planerad")} · {ganttState(i)}{i.completedAt?" · avslutad "+i.completedAt:""}</span></div><div className="gantt-track"><div className="gantt-grid" style={{gridTemplateColumns:columns}}>{segments.map(segment=><i key={segment.key}/>)}</div><div className={`gantt-bar${ganttState(i)==="Klar"?" gantt-is-completed":ganttState(i)==="Fryst"||ganttState(i)==="Pausad"?" gantt-is-paused":""}${continuesLeft?" continues-left":""}${continuesRight?" continues-right":""}`} title={`${i.label} · ${i.sub} · status ${ganttState(i)}: ${i.start} – ${i.end}${i.completedAt?" · färdig "+i.completedAt:""}${continuesLeft||continuesRight?" · fortsätter utanför visningsperioden":""}`} style={{left:`${left}%`,width:`${width}%`,background:ganttColor(i)}}><span>{continuesLeft&&"‹ "}{i.effort?`${i.effort}%`:""}{continuesRight&&" ›"}</span></div></div></div>})}</div>)}{!items.length&&<div className="p-10 text-center text-sm text-slate-400">{empty}</div>}</section>}
 
