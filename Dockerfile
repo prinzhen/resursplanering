@@ -8,6 +8,7 @@ COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc ./
 RUN pnpm install --frozen-lockfile
 
 COPY . .
+RUN bash -n scripts/install-team-test-3200.sh
 RUN pnpm build
 RUN pnpm exec tsc --noEmit
 RUN node scripts/test-individual-integration.mjs
