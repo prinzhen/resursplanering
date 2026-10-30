@@ -1,33 +1,37 @@
 import type {Identity} from "./auth";
 export type AccessScope={
- employeeIds:Set<number>;projectIds:Set<number>;selfProjectIds:Set<number>;projectLedIds:Set<number>;
+ employeeIds:Set<number>;projectIds:Set<number>;selfProjectIds:Set<number>;projectLedIds:Set<number>;workPackageIds:Set<number>;workPackageLedIds:Set<number>;
  managedIds:Set<number>;teamLedIds:Set<number>;teamIds:Set<number>;
 };
 const safe=(v:unknown)=>Number.isSafeInteger(Number(v))&&Number(v)>0?Number(v):0;
 export async function accessScope(d:D1Database,user:Identity):Promise<AccessScope>{
- const result:AccessScope={employeeIds:new Set(),projectIds:new Set(),selfProjectIds:new Set(),projectLedIds:new Set(),managedIds:new Set(),teamLedIds:new Set(),teamIds:new Set()};
+ const result:AccessScope={employeeIds:new Set(),projectIds:new Set(),selfProjectIds:new Set(),projectLedIds:new Set(),workPackageIds:new Set(),workPackageLedIds:new Set(),managedIds:new Set(),teamLedIds:new Set(),teamIds:new Set()};
  if(user.isAdmin){
-  const [employees,projects,teams]=await Promise.all([
+  const [employees,projects,teams,workPackages]=await Promise.all([
    d.prepare("SELECT id FROM employees").all<{id:number}>(),
    d.prepare("SELECT id FROM projects").all<{id:number}>(),
-   d.prepare("SELECT id FROM employee_groups").all<{id:number}>()]);
+   d.prepare("SELECT id FROM employee_groups").all<{id:number}>(),
+   d.prepare("SELECT id FROM work_packages").all<{id:number}>()]);
   for(const x of employees.results)result.employeeIds.add(x.id);
   for(const x of projects.results){result.projectIds.add(x.id);result.selfProjectIds.add(x.id)}
   for(const x of teams.results)result.teamIds.add(x.id);
+  for(const x of workPackages.results)result.workPackageIds.add(x.id);
   return result;
  }
  const self=user.employeeId;
  if(self===null)return result;
  result.employeeIds.add(self);
- const [managed,ledProjects,ledTeams,memberTeams,ownedTeams]=await Promise.all([
+ const [managed,ledProjects,ledTeams,memberTeams,ownedTeams,ledWorkPackages]=await Promise.all([
   d.prepare("SELECT id FROM employees WHERE manager_id=?").bind(self).all<{id:number}>(),
   d.prepare("SELECT project_id id FROM project_leaders WHERE employee_id=?").bind(self).all<{id:number}>(),
   d.prepare("SELECT team_id id FROM team_leaders WHERE employee_id=?").bind(self).all<{id:number}>(),
   d.prepare("SELECT group_id id FROM employee_group_members WHERE employee_id=?").bind(self).all<{id:number}>(),
-  d.prepare("SELECT id FROM employee_groups WHERE owner_id=?").bind(self).all<{id:number}>()
+  d.prepare("SELECT id FROM employee_groups WHERE owner_id=?").bind(self).all<{id:number}>(),
+  d.prepare("SELECT w.id,w.project_id projectId FROM work_packages w JOIN work_package_leaders l ON l.work_package_id=w.id WHERE l.employee_id=?").bind(self).all<{id:number;projectId:number}>()
  ]);
  for(const x of managed.results){result.managedIds.add(x.id);result.employeeIds.add(x.id)}
  for(const x of ledProjects.results){result.projectLedIds.add(x.id);result.projectIds.add(x.id)}
+ for(const x of ledWorkPackages.results){result.workPackageLedIds.add(x.id);result.workPackageIds.add(x.id);result.projectIds.add(x.projectId)}
  for(const x of ledTeams.results){result.teamLedIds.add(x.id);result.teamIds.add(x.id)}
  for(const x of memberTeams.results)result.teamIds.add(x.id);
  for(const x of ownedTeams.results)result.teamIds.add(x.id);
@@ -48,7 +52,10 @@ export async function accessScope(d:D1Database,user:Identity):Promise<AccessScop
    UNION SELECT DISTINCT a.project_id id FROM assignments s JOIN activities a ON a.id=s.activity_id WHERE s.employee_id IN (${placeholders})`).bind(...ids,...ids).all<{id:number}>();
   for(const x of q.results)result.projectIds.add(x.id);
  }
- // Project leads need to see every resource on their projects.
+ // Read-only work packages are available wherever the enclosing project is visible.
+ const allWorkPackages=await d.prepare("SELECT id,project_id projectId FROM work_packages").all<{id:number;projectId:number}>();
+ for(const w of allWorkPackages.results)if(result.projectIds.has(w.projectId))result.workPackageIds.add(w.id);
+  // Project leads need to see every resource on their projects.
  if(result.projectLedIds.size){
   const ids=[...result.projectLedIds],inSql=ids.map(()=>"?").join(",");
   const results=await d.prepare(`SELECT DISTINCT s.employee_id id FROM assignments s JOIN activities a ON a.id=s.activity_id WHERE a.project_id IN (${inSql})`).bind(...ids).all<{id:number}>();
@@ -72,12 +79,14 @@ export async function authorizePlanningAction(d:D1Database,user:Identity,action:
  const project=safe(body.projectId),employee=safe(body.employeeId),activity=safe(body.activityId||body.id);
  const context=action==="activity"||action==="project"||action==="updateProject"||action==="workPackage"||action==="updateWorkPackage"?project:await projectOfActivity(d,activity);
  const isProjectLead=scope.projectLedIds.has(context);
+ const workId=action==="activity"?safe(body.workPackageId):await d.prepare("SELECT work_package_id id FROM activities WHERE id=?").bind(activity).first<{id:number|null}>().then(x=>x?.id||0);
+ const isWorkLead=scope.workPackageLedIds.has(workId);
  const managerOf=(id:number)=>scope.managedIds.has(id);
  switch(action){
  case "project": return user.isGroupManager;
  case "activity":
    // Any project participant can create an activity (automatically assigned to self).
-   return scope.selfProjectIds.has(project)||scope.projectLedIds.has(project);
+   return scope.selfProjectIds.has(project)||scope.projectLedIds.has(project)||scope.workPackageLedIds.has(safe(body.workPackageId));
  case "updateProject":return scope.projectLedIds.has(safe(body.id));
  case "workPackage":return scope.projectLedIds.has(project);
  case "updateWorkPackage":{
@@ -88,21 +97,23 @@ export async function authorizePlanningAction(d:D1Database,user:Identity,action:
    const existingProject=await projectOfActivity(d,activity);
    const nextProject=safe(body.projectId);
    if(scope.projectLedIds.has(existingProject)&&scope.projectLedIds.has(nextProject))return true;
+   const nextWork=safe(body.workPackageId);
+   if(isWorkLead&&nextProject===existingProject&&nextWork===workId)return true;
    const origin=await d.prepare("SELECT created_by employeeId FROM activities WHERE id=?").bind(activity).first<{employeeId:number|null}>();
    const teammates=await d.prepare("SELECT COUNT(*) count FROM assignments WHERE activity_id=? AND employee_id<>?").bind(activity,self).first<{count:number}>();
    return origin?.employeeId===self&&nextProject===existingProject&&(teammates?.count??0)===0;
  }
  case "setAssignmentStatus":
-   return employee===self||(user.isGroupManager&&managerOf(employee))||isProjectLead;
+   return employee===self||(user.isGroupManager&&managerOf(employee))||isProjectLead||isWorkLead;
  case "setAssignmentPeriods":
-   if(employee!==self)return (user.isGroupManager&&managerOf(employee))||isProjectLead;
+   if(employee!==self)return (user.isGroupManager&&managerOf(employee))||isProjectLead||isWorkLead;
    return scope.projectIds.has(context);
  case "setActivityStatus":
-   if(isProjectLead)return true;
+   if(isProjectLead||isWorkLead)return true;
    const c=await d.prepare("SELECT COUNT(*) n FROM assignments WHERE activity_id=? AND employee_id<>?").bind(activity,self).first<{n:number}>();
    return c?.n===0&&!!await d.prepare("SELECT id FROM assignments WHERE activity_id=? AND employee_id=?").bind(activity,self).first();
  case "setActivityAssignments":
-   return isProjectLead;
+   return isProjectLead||isWorkLead;
  case "setProjectMemberships":
    return user.isGroupManager&&managerOf(employee);
  case "setSingleProjectMember":
