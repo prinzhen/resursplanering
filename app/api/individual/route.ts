@@ -80,6 +80,15 @@ export async function POST(req:Request){
    if(kind==="Projekt"){const p=await d.prepare("SELECT id FROM projects WHERE code=?").bind(code).first();if(!p)throw Error("Projektkoden "+code+" finns inte. Lägg upp projektet först.")}
    changes.push({uid,week:current,firstWeek:first,name:txt(a.name),kind,projectCode:code,hours:hrs,status,description:txt(a.comment).slice(0,500),reason:txt(a.reason).slice(0,500),activityId:existing?.activityId??null});
   }
+  const seenActivityIds=new Set<number>(),seenUIDs=new Set<string>();
+  for(const a of changes){
+    if(seenUIDs.has(a.uid))throw Error("Samma aktivitets-ID finns flera gånger i filen: "+a.uid);
+    seenUIDs.add(a.uid);
+    if(a.activityId!==null){
+      if(seenActivityIds.has(a.activityId))throw Error("Samma projektaktivitet förekommer flera gånger i filen: "+a.name);
+      seenActivityIds.add(a.activityId);
+    }
+  }
   const memberChanges:{projectId:number;state:string}[]=[];
   for(const m of input.members){const code=txt(m.code);if(!code)continue;const project=await d.prepare("SELECT id FROM projects WHERE code=?").bind(code).first<{id:number}>();if(!project)throw Error("Projektet "+code+" hittas inte.");const state=txt(m.state)||"Aktiv";if(!["Aktiv","Vilande"].includes(state))throw Error("Ogiltigt projektmedlemskap");memberChanges.push({projectId:project.id,state})}
   // No writes until all rows validated.
