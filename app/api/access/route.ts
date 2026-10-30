@@ -7,7 +7,7 @@ export async function GET(req:Request){
  const user=await sessionIdentity(req,db());if(!user)return unauthorized();
  const scope=await accessScope(db(),user);
  const [accounts,projects,teams]=await Promise.all([
- user.isAdmin?db().prepare("SELECT id,email,employee_id employeeId,is_admin isAdmin,is_disabled isDisabled,created_at createdAt FROM user_accounts ORDER BY email").all():Promise.resolve({results:[]}),
+ user.isAdmin?db().prepare("SELECT id,email,employee_id employeeId,is_admin isAdmin,is_group_manager isGroupManager,is_disabled isDisabled,created_at createdAt FROM user_accounts ORDER BY email").all():Promise.resolve({results:[]}),
  db().prepare("SELECT project_id projectId,employee_id employeeId FROM project_leaders ORDER BY project_id").all<{projectId:number;employeeId:number}>(),
  db().prepare("SELECT team_id teamId,employee_id employeeId FROM team_leaders ORDER BY team_id").all<{teamId:number;employeeId:number}>(),
  ]);
@@ -34,13 +34,13 @@ export async function POST(req:Request){
    const person=b.employeeId===null||b.employeeId===undefined||b.employeeId===""?null:employeeId;
    if(person!==null&&!await d.prepare("SELECT id FROM employees WHERE id=?").bind(person).first())
     return Response.json({error:"Medarbetaren saknas."},{status:400});
-   const salt=randomHex(16),hash=await passwordHash(password,salt),isAdmin=Number(Boolean(b.isAdmin));
+   const salt=randomHex(16),hash=await passwordHash(password,salt),isAdmin=Number(Boolean(b.isAdmin)),groupManager=Number(Boolean(b.isGroupManager));
    const existing=await d.prepare("SELECT id FROM user_accounts WHERE lower(email)=lower(?)").bind(email).first<{id:number}>();
    if(existing){
-    await d.prepare("UPDATE user_accounts SET employee_id=?,password_salt=?,password_hash=?,is_admin=?,is_disabled=0,failed_attempts=0,locked_until=NULL WHERE id=?").bind(person,salt,hash,isAdmin,existing.id).run();
+    await d.prepare("UPDATE user_accounts SET employee_id=?,password_salt=?,password_hash=?,is_admin=?,is_group_manager=?,is_disabled=0,failed_attempts=0,locked_until=NULL WHERE id=?").bind(person,salt,hash,isAdmin,groupManager,existing.id).run();
     await d.prepare("DELETE FROM user_sessions WHERE user_id=?").bind(existing.id).run();
    }else{
-    await d.prepare("INSERT INTO user_accounts(employee_id,email,password_salt,password_hash,is_admin) VALUES(?,?,?,?,?)").bind(person,email,salt,hash,isAdmin).run();
+    await d.prepare("INSERT INTO user_accounts(employee_id,email,password_salt,password_hash,is_admin,is_group_manager) VALUES(?,?,?,?,?,?)").bind(person,email,salt,hash,isAdmin,groupManager).run();
    }
   }else if(action==="setAccountDisabled"){
    if(!user.isAdmin)return forbidden();
