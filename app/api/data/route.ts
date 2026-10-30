@@ -158,6 +158,9 @@ export async function POST(request:Request){try{const d=db();const b=await reque
   });
   if(resources.some(x=>!Number.isInteger(x.employeeId)||x.employeeId<=0||!Number.isFinite(x.effortPercent)||x.effortPercent<0||x.effortPercent>100)||new Set(resources.map(x=>x.employeeId)).size!==resources.length)
    return Response.json({error:"Ogiltig eller dubblerad medarbetare/beläggning."},{status:400});
+  const existingPeriods=await d.prepare("SELECT s.employee_id employeeId,s.effort_percent effortPercent,COUNT(p.id) periodCount FROM assignments s LEFT JOIN assignment_periods p ON p.assignment_id=s.id WHERE s.activity_id=? GROUP BY s.id").bind(activityId).all<{employeeId:number;effortPercent:number;periodCount:number}>();
+  if(resources.some(x=>existingPeriods.results.some(old=>old.employeeId===x.employeeId&&old.periodCount>1&&old.effortPercent!==x.effortPercent)))
+   return Response.json({error:"Resursen har flera bemanningsperioder. Ändra procent för varje period via Ändra perioder."},{status:400});
   const valid=await d.prepare("SELECT id FROM employees").all<{id:number}>();
   const ids=new Set(valid.results.map(x=>x.id));
   if(resources.some(x=>!ids.has(x.employeeId)))return Response.json({error:"Någon medarbetare saknas."},{status:400});
@@ -175,6 +178,8 @@ export async function POST(request:Request){try{const d=db();const b=await reque
   if(activity.status==="Klar"&&resources.some(x=>!prev.results.some(y=>y.employeeId===x.employeeId)))
    q.push(d.prepare("UPDATE activities SET status='Pågår' WHERE id=?").bind(activityId));
   if(q.length)await d.batch(q);
+  // A single-period resource can still change its percent in the quick staffing dialog.
+  for(const row of resources)await d.prepare("UPDATE assignment_periods SET effort_percent=? WHERE assignment_id=(SELECT id FROM assignments WHERE activity_id=? AND employee_id=?) AND (SELECT COUNT(*) FROM assignment_periods WHERE assignment_id=(SELECT id FROM assignments WHERE activity_id=? AND employee_id=?))=1").bind(row.effortPercent,activityId,row.employeeId,activityId,row.employeeId).run();
   // Initialize a period for new assignees, preserving customized existing periods.
   await d.prepare("INSERT INTO assignment_periods(assignment_id,start_date,end_date,effort_percent) SELECT s.id,s.start_date,COALESCE(s.original_end_date,s.end_date),s.effort_percent FROM assignments s WHERE s.activity_id=? AND NOT EXISTS (SELECT 1 FROM assignment_periods p WHERE p.assignment_id=s.id)").bind(activityId).run();
  }
