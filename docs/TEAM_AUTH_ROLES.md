@@ -58,3 +58,17 @@ sudo python3 /opt/resursplanering-test-access/scripts/provision-account.py \
 5. Prova logins och nekade API-anrop under separata webbläsarprofiler innan extern åtkomst.
 
 **OBS:** Starta inte denna gren på den befintliga port 3100 utan först ett separat verifierat test. Den tidigare delade Basic Auth räcker inte för behörighetsstyrning på API-nivå. Konton och rättighetsdata ska aldrig kopieras till ett publikt testsystem utan åtkomstskydd.
+
+## Projektförslag och projektregistrering
+- Alla inloggade användare kan lämna förslag på `/project-proposals` med kod, namn, syfte, prioritet och färg.
+- Förslag sparas i `project_proposals` som `pending`, helt utan att skapa ett projekt eller belasta resurser.
+- Administratör och **gruppchef** får en granskningskö och kan godkänna eller avslå med en kommentar. En godkänd ansökan skapar exakt ett nytt projekt; ett avslag skapar inget projekt.
+- Gruppchef får också skapa projekt direkt i ordinarie projektformulär. Gruppchef blir automatiskt projektledare/medlem i det skapade projektet.
+- Projektförslag, granskare, beslut och datum finns i planeringsbackup. Lösenord och sessioner ingår fortfarande **inte** i den exporten.
+
+## Lösenord och kontoadministration
+- Administratören kan i `/access` se **alla medarbetare**, skapa ett konto för var och en genom att ange ett lösenord och ändra lösenord för redan registrerade konton.
+- Kontot kopplas via den registrerade e-postadressen; byte av lösenord påverkar inte rollerna. Aktiva sessioner för kontot återkallas.
+- Varje medarbetare kan själv byta lösenord via `/account` och måste ange sitt nuvarande lösenord.
+- **Teknisk miniminivå är sex tecken**, enligt önskemål. Rekommenderad faktisk lösenordslängd är minst 12 tecken eller en lång lösenfras. Det finns tillfällig spärr mot upprepade misslyckade inloggningsförsök.
+- Administratören kan inte nollställa sitt eget aktuella konto via medarbetarlistan, utan använder `/account` för att undvika att oväntat bli utloggad mitt under en administration.
