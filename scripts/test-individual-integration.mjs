@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import {spawn} from "node:child_process";
+import {spawn,spawnSync} from "node:child_process";
 import {mkdtemp,rm,readdir,cp} from "node:fs/promises";
 import {DatabaseSync} from "node:sqlite";
 import {tmpdir} from "node:os";
@@ -9,6 +9,17 @@ import {setTimeout as sleep} from "node:timers/promises";
 const dir=await mkdtemp(join(tmpdir(),"resursplanering-e2e-"));
 if(process.env.TEST_DATA_SOURCE){await cp(process.env.TEST_DATA_SOURCE,join(dir,"data"),{recursive:true});console.log("Testing disposable COPY of existing SQLite data:",process.env.TEST_DATA_SOURCE)}
 const port=32137,base=`http://127.0.0.1:${port}`;
+let sessionCookie="";
+const originalFetch=globalThis.fetch;
+globalThis.fetch=(input,init={})=>{
+ const url=typeof input==="string"?input:input instanceof URL?String(input):input.url;
+ if(url.startsWith(base)&&sessionCookie){
+  const headers=new Headers(init.headers);headers.set("cookie",sessionCookie);
+  return originalFetch(input,{...init,headers});
+ }
+ return originalFetch(input,init);
+};
+
 const server=spawn(process.execPath,["scripts/start-selfhosted.mjs"],{
  cwd:process.cwd(),env:{...process.env,DATA_DIR:join(dir,"data"),HOST:"127.0.0.1",PORT:String(port),CI:"true",NO_COLOR:"1"},
  detached:true,stdio:["ignore","pipe","pipe"]
@@ -45,11 +56,22 @@ try{
  let ready=false;
  for(let i=0;i<90;i++){
   if(server.exitCode!==null)throw Error("Wrangler stopped during startup: "+server.exitCode);
-  try{let r=await fetch(base+"/api/data",{signal:AbortSignal.timeout(1000)});if(r.ok){ready=true;break}}catch{}
+  try{let r=await fetch(base+"/api/auth",{signal:AbortSignal.timeout(1000)});if(r.ok){ready=true;break}}catch{}
   await sleep(1000);
  }
  if(!ready)throw Error("Selfhosted API did not start in 90 seconds. Logs:\n"+logs.slice(-12000));
  console.log("Fresh test instance started with isolated SQLite at",dir);
+ // Provision a real administrator using the same offline CLI as deployment.
+ const adminPassword="SampleAdminPassphrase-2026!";
+ const provision=spawnSync("python3",["scripts/provision-account.py","--data-dir",join(dir,"data"),"--email","ci-admin@example.se","--admin","--password-stdin"],{input:adminPassword+"\n",encoding:"utf8"});
+ if(provision.status!==0)throw Error("Admin provisioning failed: "+provision.stderr+" "+provision.stdout);
+ const anon=await fetch(base+"/api/data");
+ check("Anonymous planning API is protected",()=>assert.equal(anon.status,401));
+ const auth=await fetch(base+"/api/auth",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({action:"login",email:"ci-admin@example.se",password:adminPassword})});
+ if(!auth.ok)throw Error("Admin login failed: "+await auth.text());
+ sessionCookie=(auth.headers.get("set-cookie")||"").split(";")[0];
+ check("Admin login sets an HttpOnly session cookie",()=>{assert.match(sessionCookie,/^rp_session=/);assert.match(auth.headers.get("set-cookie"),/HttpOnly/);});
+
  let snap=await request();
  const erik=person(snap,"Erik Holm"),sara=person(snap,"Sara Berg");
  assert.ok(erik&&sara);
