@@ -41,7 +41,7 @@ async function visibleSnapshot(d:D1Database,user:Identity){
  const scope=await accessScope(d,user);
  const data=await snapshot(d);
  return {...filteredSnapshot(data,user,scope),viewer:{
-  accountId:user.accountId,email:user.email,employeeId:user.employeeId,isAdmin:user.isAdmin,
+  accountId:user.accountId,email:user.email,employeeId:user.employeeId,isAdmin:user.isAdmin,isGroupManager:user.isGroupManager,
   managedEmployeeIds:[...scope.managedIds],projectLeadIds:[...scope.projectLedIds],teamLeadIds:[...scope.teamLedIds],
   readableProjectIds:[...scope.projectIds]
  }};
