@@ -75,6 +75,12 @@ export async function authorizePlanningAction(d:D1Database,user:Identity,action:
  case "activity":
    // Any project participant can create an activity (automatically assigned to self).
    return scope.projectIds.has(project);
+ case "updateProject":return scope.projectLedIds.has(safe(body.id));
+ case "workPackage":return scope.projectLedIds.has(project);
+ case "updateWorkPackage":{
+  const old=await d.prepare("SELECT project_id projectId FROM work_packages WHERE id=?").bind(safe(body.id)).first<{projectId:number}>();
+  return !!old&&scope.projectLedIds.has(old.projectId)&&scope.projectLedIds.has(project);
+ }
  case "updateActivity":{
    const existingProject=await projectOfActivity(d,activity);
    const nextProject=safe(body.projectId);
@@ -137,5 +143,7 @@ export function filteredSnapshot<T extends Record<string,any>>(data:T,user:Ident
   individualWeekMoves:[],
   individualProjectStates:[],
   individualImportRuns:[],
+  projectLeaders:(data.projectLeaders||[]).filter((x:{projectId:number})=>scope.projectIds.has(x.projectId)),
+  teamLeaders:(data.teamLeaders||[]).filter((x:{teamId:number})=>visibleTeams.has(x.teamId)),
  };
 }
