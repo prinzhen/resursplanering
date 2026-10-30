@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import {spawn} from "node:child_process";
-import {mkdtemp,rm} from "node:fs/promises";
+import {mkdtemp,rm,readdir} from "node:fs/promises";
+import {DatabaseSync} from "node:sqlite";
 import {tmpdir} from "node:os";
 import {join} from "node:path";
 import {setTimeout as sleep} from "node:timers/promises";
@@ -21,6 +22,19 @@ const request=async(path="/api/data",payload)=>{
  if(!res.ok)throw Error(`HTTP ${res.status} ${path}: ${JSON.stringify(data)}`);
  return data;
 };
+async function findSqlite(root){
+ const found=[];
+ async function visit(folder){
+  for(const entry of await readdir(folder,{withFileTypes:true})){
+   const path=join(folder,entry.name);
+   if(entry.isDirectory())await visit(path);
+   else if(entry.name.endsWith(".sqlite")&&entry.name!=="metadata.sqlite")found.push(path);
+  }
+ }
+ await visit(root);
+ assert.equal(found.length,1,"Expected exactly one isolated D1 application database");
+ return found[0];
+}
 const check=(label,fn)=>{fn();console.log("PASS",label)};
 const assignment=(snap,aid,eid)=>snap.assignments.find(a=>a.activityId===aid&&a.employeeId===eid);
 const activity=(snap,aid)=>snap.activities.find(a=>a.id===aid);
@@ -144,6 +158,28 @@ try{
   assert.ok(assignment(snap,1,erik));
   assert.equal(assignment(snap,1,erik).effortPercent,50);
  });
+ // Inspect the real SQLite state independently of API serialization.
+ const sqliteFile=await findSqlite(join(dir,"data"));
+ const sql=new DatabaseSync(sqliteFile,{readOnly:true});
+ try{
+  check("SQLite PRAGMA integrity_check",()=>{
+   assert.equal(sql.prepare("PRAGMA integrity_check").get().integrity_check,"ok");
+  });
+  check("SQLite has no foreign key violations",()=>{
+   assert.equal(sql.prepare("PRAGMA foreign_key_check").all().length,0);
+  });
+  check("SQLite has exactly one copy of the twice-imported task",()=>{
+   assert.equal(sql.prepare("SELECT COUNT(*) count FROM activities WHERE name=?").get("API integration row").count,1);
+  });
+  check("SQLite records successful import batches",()=>{
+   assert.ok(sql.prepare("SELECT COUNT(*) count FROM individual_import_runs WHERE employee_id=?").get(erik).count>=4);
+  });
+  check("SQLite stores original end date for reopened allocations",()=>{
+   const rows=sql.prepare("SELECT original_end_date originalEnd,completed_at completedAt FROM assignments WHERE activity_id=? AND employee_id=?").get(1,erik);
+   assert.ok(rows.originalEnd);
+   assert.equal(rows.completedAt,null);
+  });
+ }finally{sql.close()}
  console.log("\nSUCCESS: integration tests passed; only isolated temp database was modified.");
 }catch(err){
  console.error("\nFAILED:",err);
