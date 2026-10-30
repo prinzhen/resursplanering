@@ -50,7 +50,33 @@ export async function POST(request:Request){try{const d=db();const b=await reque
  else if(action==="workPackage")await d.prepare("INSERT INTO work_packages (project_id,code,name,description) VALUES (?,?,?,?)").bind(Number(b.projectId),text(b.code),text(b.name),text(b.description)||null).run();
  else if(action==="updateWorkPackage")await d.prepare("UPDATE work_packages SET project_id=?,code=?,name=?,description=? WHERE id=?").bind(Number(b.projectId),text(b.code),text(b.name),text(b.description)||null,Number(b.id)).run();
  else if(action==="activity")await d.prepare("INSERT INTO activities (project_id,work_package_id,parent_activity_id,code,name,description,start_date,end_date,estimated_hours,status) VALUES (?,?,?,?,?,?,?,?,?,?)").bind(Number(b.projectId),number(b.workPackageId),number(b.parentActivityId),text(b.code)||null,text(b.name),requiredActivityDescription(b.description),text(b.startDate),text(b.endDate),number(b.estimatedHours),text(b.status)||"Planerad").run();
- else if(action==="updateActivity")await d.batch([d.prepare("UPDATE activities SET project_id=?,work_package_id=?,parent_activity_id=?,code=?,name=?,description=?,start_date=?,end_date=?,estimated_hours=?,status=? WHERE id=?").bind(Number(b.projectId),number(b.workPackageId),number(b.parentActivityId),text(b.code)||null,text(b.name),requiredActivityDescription(b.description),text(b.startDate),text(b.endDate),number(b.estimatedHours),text(b.status)||"Planerad",Number(b.id)),d.prepare("UPDATE assignments SET start_date=?,end_date=? WHERE activity_id=? AND completed_at IS NULL").bind(text(b.startDate),text(b.endDate),Number(b.id))]);
+ else if(action==="updateActivity"){
+  const id=Number(b.id);
+  const original=await d.prepare("SELECT id,start_date startDate,end_date endDate,status FROM activities WHERE id=?").bind(id).first<{id:number;startDate:string;endDate:string;status:string}>();
+  if(!original)return Response.json({error:"Aktiviteten saknas."},{status:404});
+  const start=text(b.startDate),end=text(b.endDate);
+  if(!/^\d{4}-\d{2}-\d{2}$/.test(start)||!/^\d{4}-\d{2}-\d{2}$/.test(end)||start>end)
+   return Response.json({error:"Felaktig start- eller slutdag."},{status:400});
+  const people=await d.prepare("SELECT work_status workStatus,completed_at completedAt FROM assignments WHERE activity_id=?").bind(id).all<{workStatus:string|null;completedAt:string|null}>();
+  const states=people.results.map(x=>x.workStatus||(x.completedAt?"Klar":original.status));
+  const state=states.length===0?(text(b.status)||original.status):
+    states.every(x=>x==="Klar")?"Klar":
+    states.some(x=>x==="Pågående"||x==="Pågår")?"Pågår":
+    states.some(x=>x==="Planerad")?"Planerad":
+    states.some(x=>x==="Pausad")?"Pausad":
+    states.some(x=>x==="Fryst")?"Fryst":"Planerad";
+  const q:D1PreparedStatement[]=[
+   d.prepare("UPDATE activities SET project_id=?,work_package_id=?,parent_activity_id=?,code=?,name=?,description=?,start_date=?,end_date=?,estimated_hours=?,status=? WHERE id=?")
+    .bind(Number(b.projectId),number(b.workPackageId),number(b.parentActivityId),text(b.code)||null,text(b.name),requiredActivityDescription(b.description),start,end,number(b.estimatedHours),state,id)
+  ];
+  // Preserve person-specific dates when editing a project activity.
+  // Synchronize only allocations that still mirror the previous project window.
+  if(start!==original.startDate||end!==original.endDate){
+   q.push(d.prepare("UPDATE assignments SET start_date=CASE WHEN start_date=? THEN ? ELSE start_date END,end_date=CASE WHEN end_date=? THEN ? ELSE end_date END,original_end_date=CASE WHEN original_end_date=? THEN ? ELSE original_end_date END WHERE activity_id=? AND completed_at IS NULL")
+    .bind(original.startDate,start,original.endDate,end,original.endDate,end,id));
+  }
+  await d.batch(q);
+ }
  else if(action==="assignment"){const a=await d.prepare("SELECT start_date startDate,end_date endDate FROM activities WHERE id=?").bind(Number(b.activityId)).first<{startDate:string;endDate:string}>();if(!a)return Response.json({error:"Aktiviteten saknas."},{status:404});await d.prepare("INSERT INTO assignments (activity_id,employee_id,effort_percent,start_date,end_date,work_status,original_end_date) VALUES (?,?,?,?,?,?,?) ON CONFLICT(activity_id,employee_id) DO UPDATE SET effort_percent=excluded.effort_percent,start_date=CASE WHEN assignments.completed_at IS NULL THEN excluded.start_date ELSE assignments.start_date END,end_date=CASE WHEN assignments.completed_at IS NULL THEN excluded.end_date ELSE assignments.end_date END").bind(Number(b.activityId),Number(b.employeeId),Number(b.effortPercent),text(b.startDate)||a.startDate,text(b.endDate)||a.endDate,"Planerad",text(b.endDate)||a.endDate).run()}
  else if(action==="setActivityAssignments"){
   const activityId=Number(b.activityId);
