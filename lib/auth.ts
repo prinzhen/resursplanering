@@ -41,8 +41,16 @@ export function deleteSessionCookie(req:Request){
 }
 export function sameOrigin(req:Request){
  const origin=req.headers.get("origin");if(!origin)return true;
- const u=new URL(req.url);
- return new URL(origin).host===u.host&&new URL(origin).protocol===u.protocol;
+ try{
+  const o=new URL(origin),u=new URL(req.url);
+  const forwardedProto=req.headers.get("x-forwarded-proto"),forwardedHost=req.headers.get("x-forwarded-host");
+  if(o.host===u.host&&(o.protocol===u.protocol||(forwardedProto==="https"&&o.protocol==="https:")))return true;
+  // Loopback-only deployment can be fronted by Tailscale Serve / Nginx TLS.
+  // Browsers cannot forge the reverse proxy header without a CORS preflight.
+  return (u.hostname==="127.0.0.1"||u.hostname==="localhost")&&
+   !!forwardedHost&&o.host===forwardedHost&&
+   o.protocol===(forwardedProto==="https"?"https:":"http:");
+ }catch{return false}
 }
 export async function issueSession(d:D1Database,userId:number){
  const token=randomHex(),expires=Math.floor(Date.now()/1000)+SESSION_SECONDS;
