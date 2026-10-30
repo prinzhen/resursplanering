@@ -8,9 +8,9 @@ type Planning={employees:Employee[];projects:Project[];projectDirectory?:Project
 function EmployeeCredentialRow({person,account,onSetPassword,busy}:{person:Employee;account?:Access["accounts"][number];onSetPassword:(employeeId:number,password:string)=>Promise<boolean>;busy:boolean}){
  const [password,setPassword]=useState(""),[show,setShow]=useState(false);
  return <div className="grid gap-2 rounded-lg border bg-white p-3 sm:grid-cols-[minmax(0,1fr)_minmax(180px,240px)_auto] sm:items-center">
-  <div className="min-w-0"><div className="font-semibold text-slate-900">{person.name}</div><div className="truncate text-xs text-slate-500">{person.email}</div><span className={`text-xs ${account?"text-emerald-700":"text-amber-700"}`}>{account?"Konto finns · lösenord kan återställas":"Inget konto · skapa med lösenord"}</span></div>
+  <div className="min-w-0"><div className="font-semibold text-slate-900">{person.name}</div><div className="truncate text-xs text-slate-500">{person.email}</div><span className={`text-xs ${account?"text-emerald-700":"text-amber-700"}`}>{account?.isDisabled?"Konto inaktivt · ange lösenord för att aktivera":account?"Konto finns · lösenord kan återställas":"Inget konto · skapa med lösenord"}</span></div>
   <div className="flex items-center gap-2"><input aria-label={`Nytt lösenord för ${person.name}`} type={show?"text":"password"} value={password} minLength={6} maxLength={256} autoComplete="new-password" placeholder="Nytt lösenord (minst 6)" onChange={e=>setPassword(e.target.value)} className="min-w-0 w-full rounded-md border px-3 py-2 text-sm"/><button type="button" className="shrink-0 text-xs text-blue-700" onClick={()=>setShow(v=>!v)}>{show?"Dölj":"Visa"}</button></div>
-  <button type="button" disabled={busy||password.length<6} className="rounded-lg bg-blue-700 px-3 py-2 text-sm font-semibold text-white disabled:opacity-50" onClick={async()=>{if(await onSetPassword(person.id,password))setPassword("")}}>{account?"Byt lösenord":"Skapa konto"}</button>
+  <button type="button" disabled={busy||password.length<6} className="rounded-lg bg-blue-700 px-3 py-2 text-sm font-semibold text-white disabled:opacity-50" onClick={async()=>{if(await onSetPassword(person.id,password))setPassword("")}}>{account?.isDisabled?"Aktivera konto":account?"Byt lösenord":"Skapa konto"}</button>
  </div>;
 }
 export default function AccessPage(){
