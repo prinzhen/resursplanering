@@ -427,6 +427,8 @@ try{
    assert.equal(rows.completedAt,null);
   });
  }finally{sql.close()}
+ // Create a deliberately unassigned project to detect accidental project-data leakage.
+ snap=await request("/api/data",{action:"project",code:"P-RBAC-ISOLATED",name:"Access denied test project",description:"Visible to admins only",status:"Aktivt",priority:3,color:"#475569"});
  // Roles are exercised as real separately logged-in users.
  const userPassword="EmployeePassphrase-2026!";
  await request("/api/access",{action:"saveAccount",email:"erik@example.se",employeeId:erik,password:userPassword,isAdmin:false});
