@@ -113,7 +113,7 @@ export async function POST(req:Request){
     updated++;   }else{
     const result=await d.prepare("INSERT INTO activities (project_id,name,description,start_date,end_date,estimated_hours,status) VALUES(?,?,?,?,?,?,?)").bind(p.id,a.name,a.description||"Aktivitet från individuellt formulär",monday(a.week),friday(a.week),a.hours,a.status).run();
     const activityId=Number(result.meta.last_row_id);
-    await d.batch([d.prepare("INSERT INTO assignments (activity_id,employee_id,effort_percent,start_date,end_date) VALUES(?,?,?,?,?)").bind(activityId,e.id,0,monday(a.week),friday(a.week)),d.prepare("INSERT INTO individual_form_items(item_uid,employee_id,activity_id,first_week,current_week) VALUES(?,?,?,?,?)").bind(a.uid,e.id,activityId,a.firstWeek,a.week)]);created++;
+    await d.batch([d.prepare("INSERT INTO assignments (activity_id,employee_id,effort_percent,start_date,end_date,completed_at) VALUES(?,?,?,?,?,?)").bind(activityId,e.id,0,monday(a.week),friday(a.week),a.status==="Klar"?new Date().toISOString().slice(0,10):null),d.prepare("INSERT INTO individual_form_items(item_uid,employee_id,activity_id,first_week,current_week) VALUES(?,?,?,?,?)").bind(a.uid,e.id,activityId,a.firstWeek,a.week)]);created++;
    }
   }
   for(const m of memberChanges)await d.batch([d.prepare("INSERT OR IGNORE INTO project_members(project_id,employee_id) VALUES(?,?)").bind(m.projectId,e.id),d.prepare("INSERT INTO individual_project_state(employee_id,project_id,state) VALUES(?,?,?) ON CONFLICT(employee_id,project_id) DO UPDATE SET state=excluded.state,updated_at=CURRENT_TIMESTAMP").bind(e.id,m.projectId,m.state)]);
