@@ -497,8 +497,17 @@ try{
  await asUser("ci-admin@example.se",adminPassword);
  await request("/api/access",{action:"setTeamLeader",teamId:authTeam.id,employeeId:erik,enabled:true});
  await request("/api/access",{action:"setProjectLeader",projectId:1,employeeId:erik,enabled:true});
+ const visibleOnly=await request("/api/data",{action:"project",code:"P-TEAM-READONLY",name:"TEAM-only project",status:"Aktivt",priority:3,color:"#334155",description:"Accessible only through team colleague"});
+ const teamOnlyId=visibleOnly.projects.find(p=>p.code==="P-TEAM-READONLY").id;
+ await request("/api/data",{action:"setSingleProjectMember",projectId:teamOnlyId,employeeId:sara,enabled:true});
  await asUser("erik@example.se");
  const erikLed=await request();
+ check("TEAM leader can see colleague's project without belonging to it",()=>{
+  assert.ok(erikLed.projects.some(p=>p.id===teamOnlyId));
+  assert.equal(erikLed.viewer.projectLeadIds.includes(teamOnlyId),false);
+ });
+ const forbiddenTeamCreate=await fetch(base+"/api/data",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({action:"activity",projectId:teamOnlyId,name:"Unauthorized team project work",description:"Must be forbidden",startDate:"2026-11-02",endDate:"2026-11-06",estimatedHours:8,status:"Planerad"})});
+ check("TEAM read visibility does not grant right to create work in colleague's project",()=>assert.equal(forbiddenTeamCreate.status,403));
  check("TEAM leader sees TEAM membership and project leader role",()=>{
   assert.ok(erikLed.employeeGroups.some(t=>t.id===authTeam.id));
   assert.ok(erikLed.viewer.teamLeadIds.includes(authTeam.id));
