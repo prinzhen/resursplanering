@@ -317,6 +317,66 @@ try{
   assert.match(source,/function GanttView\(/);
   assert.equal((source.match(/ganttState\(/g)||[]).length>=3,true);
  });
+ // Reusable employee groups and Kanban integration.
+ const {kanbanForPeople,kanbanForActivities,normalizeKanbanStatus}=await import("../lib/kanban.ts");
+ check("All-person Kanban contains every assignment as its own card",()=>{
+  const cards=kanbanForPeople(snap.employees.map(e=>e.id),snap.employees,snap.projects,snap.activities,snap.assignments);
+  assert.equal(cards.length,snap.assignments.length);
+  assert.equal(new Set(cards.map(c=>c.key)).size,cards.length);
+ });
+ snap=await request("/api/data",{action:"saveEmployeeGroup",name:"Testgrupp konstruktion",description:"Test av medarbetargrupp",employeeIds:[erik,sara]});
+ const group=snap.employeeGroups.find(x=>x.name==="Testgrupp konstruktion");
+ check("New group persists members and name",()=>{
+  assert.ok(group);
+  assert.deepEqual(snap.employeeGroupMembers.filter(x=>x.groupId===group.id).map(x=>x.employeeId).sort((a,b)=>a-b),[erik,sara].sort((a,b)=>a-b));
+ });
+ const testGroupId=group.id;
+ const invalidGroup=await fetch(base+"/api/data",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({action:"saveEmployeeGroup",id:testGroupId,name:"Invalid",description:"",employeeIds:[999999]})});
+ check("Group update with unknown employee is rejected",()=>assert.equal(invalidGroup.status,400));
+ snap=await request();
+ check("Rejected group update preserves name and original members",()=>{
+  assert.equal(snap.employeeGroups.find(g=>g.id===testGroupId).name,"Testgrupp konstruktion");
+  assert.equal(snap.employeeGroupMembers.filter(x=>x.groupId===testGroupId).length,2);
+ });
+ snap=await request("/api/data",{action:"saveEmployeeGroup",id:testGroupId,name:"Testgrupp Uppdaterad",description:"Ny beskrivning",employeeIds:[sara]});
+ check("Group membership can be updated without changing employee assignments",()=>{
+  assert.deepEqual(snap.employeeGroupMembers.filter(x=>x.groupId===testGroupId).map(x=>x.employeeId),[sara]);
+  assert.ok(assignment(snap,1,erik));
+ });
+ const groupBackup=structuredClone(snap);
+ snap=await request("/api/data",{action:"restore",backup:{version:3,data:groupBackup}});
+ check("Group names and memberships survive full backup/restore",()=>{
+  assert.deepEqual(snap.employeeGroups,groupBackup.employeeGroups);
+  assert.deepEqual(snap.employeeGroupMembers,groupBackup.employeeGroupMembers);
+ });
+ snap=await request("/api/data",{action:"setAssignmentStatus",activityId:1,employeeId:erik,status:"Klar"});
+ snap=await request("/api/data",{action:"setAssignmentStatus",activityId:1,employeeId:sara,status:"Pågående"});
+ const grouped=kanbanForPeople([erik,sara],snap.employees,snap.projects,snap.activities,snap.assignments);
+ const two=grouped.filter(c=>c.activityId===1);
+ check("Kanban keeps distinct status for two people on same activity",()=>{
+  assert.equal(two.length,2);
+  assert.equal(two.find(c=>c.employeeId===erik).status,"Klar");
+  assert.equal(two.find(c=>c.employeeId===sara).status,"Pågående");
+ });
+ const board=kanbanForActivities(snap.activities.filter(a=>a.id===1),snap.employees,snap.projects,snap.assignments);
+ check("Project Kanban groups shared activity into one card",()=>{
+  assert.equal(board.length,1);
+  assert.equal(board[0].employeeId,null);
+  assert.ok(board[0].people.length>=2);
+ });
+ check("Kanban normalizes all activity status values",()=>{
+  assert.equal(normalizeKanbanStatus("Pågår"),"Pågående");
+  assert.equal(normalizeKanbanStatus("Fryst"),"Fryst");
+  assert.equal(normalizeKanbanStatus("Klar"),"Klar");
+ });
+ const deletedGroup=await fetch(base+"/api/data?type=group&id="+testGroupId,{method:"DELETE"});
+ assert.equal(deletedGroup.status,200);
+ snap=await deletedGroup.json();
+ check("Deleting group leaves employees and activity assignments untouched",()=>{
+  assert.equal(snap.employeeGroups.some(g=>g.id===testGroupId),false);
+  assert.ok(snap.employees.some(e=>e.id===erik));
+  assert.ok(assignment(snap,1,erik));
+ });
  // Inspect the real SQLite state independently of API serialization.
  const sqliteFile=await findSqlite(join(dir,"data"));
  const sql=new DatabaseSync(sqliteFile,{readOnly:true});
