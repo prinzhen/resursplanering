@@ -86,6 +86,11 @@ export const teamLeaders=sqliteTable("team_leaders",{
  teamId:integer("team_id").notNull().references(()=>employeeGroups.id,{onDelete:"cascade"}),
  employeeId:integer("employee_id").notNull().references(()=>employees.id,{onDelete:"cascade"})
 },t=>[uniqueIndex("idx_team_leaders_team_person").on(t.teamId,t.employeeId)]);
+export const workPackageLeaders=sqliteTable("work_package_leaders",{
+ workPackageId:integer("work_package_id").notNull().references(()=>workPackages.id,{onDelete:"cascade"}),
+ employeeId:integer("employee_id").notNull().references(()=>employees.id,{onDelete:"cascade"})
+},t=>[uniqueIndex("idx_work_package_leaders_key").on(t.workPackageId,t.employeeId)]);
+
 export const assignmentRequests=sqliteTable("assignment_requests",{
  id:integer("id").primaryKey({autoIncrement:true}),
  activityId:integer("activity_id").notNull().references(()=>activities.id,{onDelete:"cascade"}),
