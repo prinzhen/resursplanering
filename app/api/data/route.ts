@@ -62,6 +62,7 @@ async function importRows(d:D1Database,rows:Array<Record<string,string>>){const 
 
 async function restore(d:D1Database,b:Backup){
  if(![1,2,3].includes(b.version)||!b.data||!Array.isArray(b.data.projects)||!Array.isArray(b.data.assignments))throw Error("Ogiltig säkerhetskopia");
+ const accountLinks=await d.prepare("SELECT id,employee_id employeeId FROM user_accounts WHERE employee_id IS NOT NULL").all<{id:number;employeeId:number}>();
  const q:D1PreparedStatement[]=[
   d.prepare("DELETE FROM individual_week_moves"),d.prepare("DELETE FROM individual_form_items"),
   d.prepare("DELETE FROM individual_project_state"),d.prepare("DELETE FROM individual_import_runs"),d.prepare("DELETE FROM assignment_requests"),d.prepare("DELETE FROM team_leaders"),d.prepare("DELETE FROM project_leaders"),d.prepare("DELETE FROM employee_group_members"),d.prepare("DELETE FROM employee_groups"),d.prepare("DELETE FROM assignment_periods"),
@@ -95,7 +96,11 @@ async function restore(d:D1Database,b:Backup){
  await d.batch(q);
  // Authentication records are not included in planning exports.
  // Re-associate active user accounts with employee records after replacement.
- await d.prepare("UPDATE user_accounts SET employee_id=(SELECT e.id FROM employees e WHERE lower(e.email)=lower(user_accounts.email)) WHERE employee_id IS NULL").run();
+ const validEmployees=await d.prepare("SELECT id FROM employees").all<{id:number}>();
+ const ids=new Set(validEmployees.results.map(e=>e.id));
+ for(const link of accountLinks.results)if(ids.has(link.employeeId)){
+  await d.prepare("UPDATE user_accounts SET employee_id=? WHERE id=?").bind(link.employeeId,link.id).run();
+ }
 }
 export async function POST(request:Request){try{const d=db();const user=await sessionIdentity(request,d);if(!user)return unauthorized();
  if(!sameOrigin(request))return forbidden();
