@@ -44,7 +44,7 @@ export async function GET(req:Request){
  FROM project_members m JOIN projects p ON p.id=m.project_id
  LEFT JOIN individual_project_state s ON s.employee_id=m.employee_id AND s.project_id=p.id
  WHERE m.employee_id=? AND p.code NOT LIKE 'INTERNAL-%' ORDER BY p.code`).bind(e.id).all<{code:string;name:string;state:string}>();
-  const result:FormValues={name:e.name,email:e.email,activities:sourceRows.filter(a=>!a.completedAt&&["Planerad","Pågående","Pausad","Pågår"].includes(String(a.workStatus||a.status))).map(a=>({
+  const result:FormValues={name:e.name,email:e.email,activities:sourceRows.filter(a=>u.searchParams.get("includeClosed")!=="0"||["Planerad","Pågående","Pausad","Pågår"].includes(String(a.workStatus||a.status))&&!a.completedAt).map(a=>({
    uid:String(a.uid),week:String(a.savedWeek||iso(String(a.startDate))),name:String(a.name),kind:String(a.kind),
    link:String(a.projectName||""),projectCode:String(a.projectCode).startsWith("INTERNAL-")?"":String(a.projectCode),
    hours:Number(a.hours||0),status:cleanStatus(String(a.workStatus||a.status)),priority:"",dueDate:"",
@@ -68,14 +68,24 @@ export async function POST(req:Request){
    const kind=txt(a.kind)||"Övrigt";if(!["Projekt","Verksamhet","Övrigt"].includes(kind))throw Error("Ogiltig typ på rad "+(i+9));
    const code=kind==="Verksamhet"?"INTERNAL-VERK":kind==="Övrigt"?"INTERNAL-OVR":txt(a.projectCode);
    if(!code)throw Error("Projektkod saknas på rad "+(i+9));
-   const uid=txt(a.uid)||crypto.randomUUID();
+   // A workbook created before the first successful import can have empty IDs.
+   // Match only an unambiguous earlier import of the same activity for the
+   // same employee, project and originally planned week; never guess otherwise.
+   let uid=txt(a.uid);
+   let matched:{itemUid:string;activityId:number}|null=null;
+   if(!uid){
+    const old=await d.prepare("SELECT i.item_uid itemUid,i.activity_id activityId FROM individual_form_items i JOIN activities t ON t.id=i.activity_id JOIN projects p ON p.id=t.project_id WHERE i.employee_id=? AND p.code=? AND lower(t.name)=lower(?) AND i.first_week=?").bind(e.id,code,txt(a.name),first).all<{itemUid:string;activityId:number}>();
+    if(old.results.length>1)throw Error("Flera befintliga aktiviteter matchar rad "+(i+9)+". Exportera på nytt för att få aktivitets-ID.");
+    matched=old.results[0]||null;
+    uid=matched?.itemUid||crypto.randomUUID();
+   }
    if(!safeUID(uid))throw Error("Ogiltigt aktivitets-ID på rad "+(i+9));
    const legacy=/^activity-(\d+)$/.exec(uid);
    const scoped=/^employee-(\d+)-activity-(\d+)$/.exec(uid);
    if(scoped&&Number(scoped[1])!==e.id)throw Error("Aktivitets-ID hör till en annan medarbetare.");
    const assignedId=legacy?Number(legacy[1]):scoped?Number(scoped[2]):null;
    const assigned=assignedId!==null?await d.prepare("SELECT activity_id activityId FROM assignments WHERE activity_id=? AND employee_id=?").bind(assignedId,e.id).first<{activityId:number}>():null;
-   const existing=assigned||await d.prepare("SELECT i.activity_id activityId FROM individual_form_items i WHERE i.item_uid=? AND i.employee_id=?").bind(uid,e.id).first<{activityId:number}>();
+   const existing=assigned||matched||await d.prepare("SELECT i.activity_id activityId FROM individual_form_items i WHERE i.item_uid=? AND i.employee_id=?").bind(uid,e.id).first<{activityId:number}>();
    if(a.uid&&!existing)throw Error("Aktivitets-ID "+uid+" tillhör inte denna medarbetare eller finns inte. Avbryter för att undvika dubbletter.");
    if(kind==="Projekt"){const p=await d.prepare("SELECT id FROM projects WHERE code=?").bind(code).first();if(!p)throw Error("Projektkoden "+code+" finns inte. Lägg upp projektet först.")}
    changes.push({uid,week:current,firstWeek:first,name:txt(a.name),kind,projectCode:code,hours:hrs,status,description:txt(a.comment).slice(0,500),reason:txt(a.reason).slice(0,500),activityId:existing?.activityId??null});
