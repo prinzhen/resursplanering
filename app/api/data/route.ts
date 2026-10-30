@@ -135,6 +135,16 @@ export async function POST(request:Request){try{const d=db();const b=await reque
    q.push(d.prepare("UPDATE assignments SET start_date=CASE WHEN start_date=? THEN ? ELSE start_date END,end_date=CASE WHEN end_date=? THEN ? ELSE end_date END,original_end_date=CASE WHEN original_end_date=? THEN ? ELSE original_end_date END WHERE activity_id=? AND completed_at IS NULL")
     .bind(original.startDate,start,original.endDate,end,original.endDate,end,id));
   }
+  // Only align a single resource period when it exactly mirrored the old
+  // project dates. Custom/multi-period allocation dates are never overwritten.
+  if(start!==original.startDate||end!==original.endDate){
+   q.push(d.prepare(`UPDATE assignment_periods SET start_date=?,end_date=?
+      WHERE start_date=? AND end_date=? AND assignment_id IN (
+       SELECT s.id FROM assignments s
+       WHERE s.activity_id=? AND s.completed_at IS NULL
+        AND (SELECT COUNT(*) FROM assignment_periods pp WHERE pp.assignment_id=s.id)=1
+      )`).bind(start,end,original.startDate,original.endDate,id));
+  }
   await d.batch(q);
  }
  else if(action==="assignment"){const a=await d.prepare("SELECT start_date startDate,end_date endDate FROM activities WHERE id=?").bind(Number(b.activityId)).first<{startDate:string;endDate:string}>();if(!a)return Response.json({error:"Aktiviteten saknas."},{status:404});await d.prepare("INSERT INTO assignments (activity_id,employee_id,effort_percent,start_date,end_date,work_status,original_end_date) VALUES (?,?,?,?,?,?,?) ON CONFLICT(activity_id,employee_id) DO UPDATE SET effort_percent=excluded.effort_percent,start_date=CASE WHEN assignments.completed_at IS NULL THEN excluded.start_date ELSE assignments.start_date END,end_date=CASE WHEN assignments.completed_at IS NULL THEN excluded.end_date ELSE assignments.end_date END").bind(Number(b.activityId),Number(b.employeeId),Number(b.effortPercent),text(b.startDate)||a.startDate,text(b.endDate)||a.endDate,"Planerad",text(b.endDate)||a.endDate).run()}
@@ -165,6 +175,8 @@ export async function POST(request:Request){try{const d=db();const b=await reque
   if(activity.status==="Klar"&&resources.some(x=>!prev.results.some(y=>y.employeeId===x.employeeId)))
    q.push(d.prepare("UPDATE activities SET status='Pågår' WHERE id=?").bind(activityId));
   if(q.length)await d.batch(q);
+  // Initialize a period for new assignees, preserving customized existing periods.
+  await d.prepare("INSERT INTO assignment_periods(assignment_id,start_date,end_date,effort_percent) SELECT s.id,s.start_date,COALESCE(s.original_end_date,s.end_date),s.effort_percent FROM assignments s WHERE s.activity_id=? AND NOT EXISTS (SELECT 1 FROM assignment_periods p WHERE p.assignment_id=s.id)").bind(activityId).run();
  }
  else if(action==="setProjectMemberships"){const employeeId=Number(b.employeeId),projectIds=Array.isArray(b.projectIds)?[...new Set(b.projectIds.map(Number).filter(Number.isInteger))]:[];if(!employeeId)return Response.json({error:"Medarbetare saknas."},{status:400});const q=[d.prepare("DELETE FROM project_members WHERE employee_id=?").bind(employeeId),...projectIds.map(projectId=>d.prepare("INSERT INTO project_members (project_id,employee_id) VALUES (?,?)").bind(projectId,employeeId))];await d.batch(q)}
  else if(action==="import")await importRows(d,Array.isArray(b.rows)?b.rows as Array<Record<string,string>>:[]);
