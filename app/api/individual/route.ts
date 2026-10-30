@@ -1,4 +1,6 @@
 import {env} from "cloudflare:workers";
+import {sessionIdentity,unauthorized,forbidden,sameOrigin} from "@/lib/auth";
+import {accessScope} from "@/lib/permissions";
 import type {FormValues} from "@/lib/individual-xlsx";
 export const dynamic="force-dynamic";
 const db=()=>{if(!env.DB)throw Error("Databasen saknas.");return env.DB};
@@ -24,9 +26,11 @@ const safeUID=(s:string)=>/^[a-zA-Z0-9_-]{1,100}$/.test(s);
 async function employee(d:D1Database,email:string){return d.prepare("SELECT id,name,email FROM employees WHERE lower(email)=lower(?)").bind(email).first<{id:number;name:string;email:string}>()}
 export async function GET(req:Request){
  try{
-  const d=db(),u=new URL(req.url),email=txt(u.searchParams.get("email"));
+  const d=db(),identity=await sessionIdentity(req,d);if(!identity)return unauthorized();
+  const u=new URL(req.url),email=txt(u.searchParams.get("email"));
   if(!email)return Response.json({error:"Välj en medarbetare."},{status:400});
   const e=await employee(d,email);if(!e)return Response.json({error:"Medarbetaren saknas."},{status:404});
+  const scope=await accessScope(d,identity);if(!scope.employeeIds.has(e.id))return forbidden();
   // Include existing project assignments as well as earlier spreadsheet items.
   const items=await d.prepare(`SELECT a.id activityId, COALESCE(i.item_uid,'employee-'||s.employee_id||'-activity-'||a.id) uid,
  COALESCE(i.current_week,'') savedWeek, COALESCE(i.first_week,'') firstWeek,
@@ -55,9 +59,11 @@ export async function GET(req:Request){
 }
 export async function POST(req:Request){
  try{
-  const d=db(),input=await req.json() as FormValues;
+  const d=db(),identity=await sessionIdentity(req,d);if(!identity)return unauthorized();if(!sameOrigin(req))return forbidden();
+  const input=await req.json() as FormValues;
   if(!input||!Array.isArray(input.activities)||input.activities.length>60||!Array.isArray(input.members)||input.members.length>34)return Response.json({error:"Ogiltig eller för stor import."},{status:400});
   const email=txt(input.email),e=await employee(d,email);if(!e)return Response.json({error:"E-postadressen måste motsvara en befintlig medarbetare."},{status:400});
+  if(!identity.isAdmin&&e.id!==identity.employeeId)return forbidden();
   const changes:{uid:string;week:string;firstWeek:string;name:string;kind:string;projectCode:string;hours:number;status:string;description:string;reason:string;activityId:number|null}[]=[];
   for(let i=0;i<input.activities.length;i++){
    const a=input.activities[i];const status=cleanStatus(txt(a.status));
