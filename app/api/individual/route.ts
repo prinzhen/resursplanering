@@ -96,21 +96,31 @@ export async function POST(req:Request){
     const prior=await d.prepare("SELECT item_uid itemUid,current_week currentWeek FROM individual_form_items WHERE activity_id=? AND employee_id=?").bind(a.activityId,e.id).first<{itemUid:string;currentWeek:string}>();
     const storedUid=prior?.itemUid||(a.uid.startsWith("activity-")?`employee-${e.id}-activity-${a.activityId}`:a.uid);
     const done=a.status==="Klar";
-    const originalEnd=person.originalEnd||person.endDate;
-    const from=monday(a.week),until=friday(a.week);
-    // The latest accepted import sets this person's status, including reopening a finished task.
+    const plannedEnd=person.originalEnd||person.endDate;
+    let startDate=person.startDate,plannedEndDate=plannedEnd;
+    if(prior&&prior.currentWeek!==a.week){
+      // A moved week means shifting an existing allocation, never collapsing a
+      // multi-month assignment to a Monday-Friday window.
+      const shift=(Date.parse(monday(a.week))-Date.parse(monday(prior.currentWeek)))/86400000;
+      const add=(date:string)=>{const d=new Date(date+"T00:00:00Z");d.setUTCDate(d.getUTCDate()+shift);return d.toISOString().slice(0,10)};
+      startDate=add(startDate);
+      plannedEndDate=add(plannedEndDate);
+    }
+    const endDate=done&&today>=startDate&&today<plannedEndDate?today:plannedEndDate;
+    // Existing schedule stays unchanged on a status-only import. Reopening a
+    // completed assignment restores its previous planned end date.
     const q:D1PreparedStatement[]=[
-     d.prepare("INSERT INTO individual_form_items(item_uid,employee_id,activity_id,first_week,current_week) VALUES(?,?,?,?,?) ON CONFLICT(employee_id,activity_id) DO UPDATE SET current_week=excluded.current_week,updated_at=CURRENT_TIMESTAMP").bind(storedUid,e.id,a.activityId,a.firstWeek,a.week),
-     d.prepare("UPDATE assignments SET work_status=?,status_updated_at=CURRENT_TIMESTAMP,completed_at=?,original_end_date=COALESCE(original_end_date,?),start_date=?,end_date=? WHERE activity_id=? AND employee_id=?").bind(a.status,done?today:null,originalEnd,done?person.startDate:from,done?(today<person.startDate?person.startDate:today):until,a.activityId,e.id)
+      d.prepare("INSERT INTO individual_form_items(item_uid,employee_id,activity_id,first_week,current_week) VALUES(?,?,?,?,?) ON CONFLICT(employee_id,activity_id) DO UPDATE SET current_week=excluded.current_week,updated_at=CURRENT_TIMESTAMP").bind(storedUid,e.id,a.activityId,a.firstWeek,a.week),
+      d.prepare("UPDATE assignments SET work_status=?,status_updated_at=CURRENT_TIMESTAMP,completed_at=?,original_end_date=?,start_date=?,end_date=? WHERE activity_id=? AND employee_id=?").bind(a.status,done?today:null,plannedEndDate,startDate,endDate,a.activityId,e.id)
     ];
     if(prior&&prior.currentWeek!==a.week)q.push(d.prepare("INSERT INTO individual_week_moves(item_uid,from_week,to_week,reason) VALUES(?,?,?,?)").bind(storedUid,prior.currentWeek,a.week,a.reason||null));
     await d.batch(q);
     const counts=await d.prepare("SELECT COUNT(*) total,SUM(CASE WHEN work_status='Klar' OR (work_status IS NULL AND completed_at IS NOT NULL) THEN 1 ELSE 0 END) finished FROM assignments WHERE activity_id=?").bind(a.activityId).first<{total:number;finished:number}>();
     if(counts&&counts.total>0&&counts.finished===counts.total){
-     await d.prepare("UPDATE activities SET status='Klar',end_date=MIN(end_date,?) WHERE id=?").bind(today,a.activityId).run();
+     await d.prepare("UPDATE activities SET status='Klar',end_date=CASE WHEN ?>=start_date THEN MIN(end_date,?) ELSE end_date END WHERE id=?").bind(today,today,a.activityId).run();
     }else{
      const live=await d.prepare("SELECT COUNT(*) active FROM assignments WHERE activity_id=? AND COALESCE(work_status,CASE WHEN completed_at IS NOT NULL THEN 'Klar' ELSE 'Pågår' END) IN ('Planerad','Pågående','Pågår','Pausad')").bind(a.activityId).first<{active:number}>();
-     if((live?.active||0)>0)await d.prepare("UPDATE activities SET status='Pågår',end_date=MAX(end_date,?) WHERE id=?").bind(done?originalEnd:until,a.activityId).run();
+     if((live?.active||0)>0)await d.prepare("UPDATE activities SET status='Pågår',end_date=MAX(end_date,?) WHERE id=?").bind(plannedEndDate,a.activityId).run();
     }
     updated++;
    }else{
