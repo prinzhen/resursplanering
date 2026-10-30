@@ -11,7 +11,9 @@ export async function GET(req:Request){
  db().prepare("SELECT project_id projectId,employee_id employeeId FROM project_leaders ORDER BY project_id").all<{projectId:number;employeeId:number}>(),
  db().prepare("SELECT team_id teamId,employee_id employeeId FROM team_leaders ORDER BY team_id").all<{teamId:number;employeeId:number}>(),
  ]);
- return Response.json({accounts:accounts.results,
+ const directory=(user.isAdmin||scope.projectLedIds.size>0||user.isGroupManager)?
+   await db().prepare("SELECT id,name FROM employees ORDER BY name").all<{id:number;name:string}>():{results:[]};
+ return Response.json({directoryEmployees:directory.results,accounts:accounts.results,
   projectLeaders:projects.results.filter(p=>user.isAdmin||scope.projectIds.has(p.projectId)),
   teamLeaders:teams.results.filter(t=>user.isAdmin||scope.teamIds.has(t.teamId)),
   viewer:{employeeId:user.employeeId,isAdmin:user.isAdmin}},{headers:{"cache-control":"no-store"}});
