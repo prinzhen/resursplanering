@@ -217,15 +217,15 @@ try{
  // Fallback for real-world legacy administrators: a separate login owns the
  // SAME person record, while the old administrator login keeps its privileges.
  const deniedWorkLogin=await api(ordinary,"/api/access",{action:"createPersonalLogin",employeeId:sara,
-  email:"new-staff@example.se",password:"A long temporary passphrase 2026",isGroupManager:false});
+  email:"new-staff@example.se",password:"A long temporary passphrase 2026",isGroupManager:false,projectIds:[1]});
  check("ORDINARY STAFF cannot create personal logins",()=>assert.equal(deniedWorkLogin.status,403));
  const duplicateWorker=await api(admin,"/api/access",{action:"createPersonalLogin",employeeId:sara,
-  email:"sara-second@example.se",password:"A long temporary passphrase 2026"});
+  email:"sara-second@example.se",password:"A long temporary passphrase 2026",projectIds:[1]});
  check("ADMIN cannot steal a person from an existing standard login",()=>assert.equal(duplicateWorker.status,409));
  const identityBeforeSplit=await ok(admin,"/api/access");
  const staffBeforeSplit=approved.employees.filter(e=>e.id===adminPerson.id);
  const split=await ok(admin,"/api/access",{action:"createPersonalLogin",employeeId:adminPerson.id,
-  email:"role-admin-work@example.se",password:password,isGroupManager:true});
+  email:"role-admin-work@example.se",password:password,isGroupManager:true,isProjectLeader:true,projectIds:[2,3]});
  assert.match(split.message,/Arbetskonto skapat/);
  const adminAfterSplit=await ok(admin,"/api/access");
  check("Existing ADMIN login survives splitting into separate work account",()=>{
@@ -245,9 +245,12 @@ try{
   assert.equal(workSnapshot.employees.filter(e=>e.id===adminPerson.id).length,1);
   assert.equal(staffBeforeSplit.length,1);
   assert.ok(workProjects.projects.some(p=>p.id===3));
-  assert.ok(!workProjects.projects.some(p=>p.id===2));
+  assert.ok(workProjects.projects.some(p=>p.id===2));
+  assert.ok(workSnapshot.projectLeaders.some(p=>p.projectId===2&&p.employeeId===adminPerson.id));
   assert.ok(workSnapshot.assignments.some(a=>a.activityId===adminSelf.activityId&&a.employeeId===adminPerson.id));
  });
+ const workProjectTwo=await ok(workCookie,"/api/quick-activity?projectId=2");
+ check("New work login can create tasks in newly selected project",()=>assert.equal(workProjectTwo.allowed,true));
  const workSelf=await ok(workCookie,"/api/quick-activity",{projectId:3,name:"Egen aktivitet med separerat arbetskonto",
   description:"Historiken följer samma medarbetare",startDate:"2026-11-10",endDate:"2026-11-20",effortPercent:35});
  check("New work login can create own activity immediately",()=>assert.equal(workSelf.proposal,false));
@@ -274,10 +277,10 @@ try{
   assert.equal(afterResetAccounts.accounts.find(x=>x.email==="role-admin-work@example.se")?.employeeId,adminPerson.id);
  });
  const badPassword=await api(admin,"/api/access",{action:"createPersonalLogin",employeeId:anna,
-  email:"weak@example.se",password:"short"});
+  email:"weak@example.se",password:"short",projectIds:[1]});
  check("Password shorter than 12 characters is denied for new login",()=>assert.equal(badPassword.status,400));
  const workConflict=await api(admin,"/api/access",{action:"createPersonalLogin",employeeId:adminPerson.id,
-  email:"another-personal@example.se",password:password});
+  email:"another-personal@example.se",password:password,projectIds:[1]});
  check("Admin cannot duplicate the existing personal account",()=>assert.equal(workConflict.status,409));
 
  const db=new DatabaseSync(await onlyDatabase(join(dir,"data")),{readOnly:true});
