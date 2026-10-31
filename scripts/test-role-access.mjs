@@ -214,6 +214,57 @@ try{
   assert.equal(approved.assignments.filter(a=>a.activityId===adminProposal.activityId&&a.employeeId===johan).length,1);
   assert.ok(approved.projectMembers.some(m=>m.projectId===3&&m.employeeId===johan));
  });
+ // Fallback for real-world legacy administrators: a separate login owns the
+ // SAME person record, while the old administrator login keeps its privileges.
+ const deniedWorkLogin=await api(ordinary,"/api/access",{action:"createPersonalLogin",employeeId:sara,
+  email:"new-staff@example.se",password:"A long temporary passphrase 2026",isGroupManager:false});
+ check("ORDINARY STAFF cannot create personal logins",()=>assert.equal(deniedWorkLogin.status,403));
+ const duplicateWorker=await api(admin,"/api/access",{action:"createPersonalLogin",employeeId:sara,
+  email:"sara-second@example.se",password:"A long temporary passphrase 2026"});
+ check("ADMIN cannot steal a person from an existing standard login",()=>assert.equal(duplicateWorker.status,409));
+ const identityBeforeSplit=await ok(admin,"/api/access");
+ const staffBeforeSplit=approved.employees.filter(e=>e.id===adminPerson.id);
+ const split=await ok(admin,"/api/access",{action:"createPersonalLogin",employeeId:adminPerson.id,
+  email:"role-admin-work@example.se",password:password,isGroupManager:true});
+ assert.match(split.message,/Arbetskonto skapat/);
+ const adminAfterSplit=await ok(admin,"/api/access");
+ check("Existing ADMIN login survives splitting into separate work account",()=>{
+  assert.equal(identityBeforeSplit.viewer.employeeId,adminPerson.id);
+  assert.equal(adminAfterSplit.viewer.isAdmin,true);
+  assert.equal(adminAfterSplit.viewer.employeeId,null);
+  assert.equal(adminAfterSplit.accounts.filter(x=>x.employeeId===adminPerson.id).length,1);
+  assert.equal(adminAfterSplit.accounts.find(x=>x.email==="role-admin-work@example.se")?.isAdmin,0);
+ });
+ const workCookie=await connected("role-admin-work@example.se");
+ const workSnapshot=await ok(workCookie,"/api/data");
+ const workProjects=await ok(workCookie,"/api/quick-activity");
+ check("New non-admin work login sees existing employee and projects",()=>{
+  assert.equal(workSnapshot.viewer.employeeId,adminPerson.id);
+  assert.equal(workSnapshot.viewer.isAdmin,false);
+  assert.equal(workSnapshot.viewer.isGroupManager,true);
+  assert.equal(workSnapshot.employees.filter(e=>e.id===adminPerson.id).length,1);
+  assert.equal(staffBeforeSplit.length,1);
+  assert.ok(workProjects.projects.some(p=>p.id===3));
+  assert.ok(!workProjects.projects.some(p=>p.id===2));
+  assert.ok(workSnapshot.assignments.some(a=>a.activityId===adminSelf.activityId&&a.employeeId===adminPerson.id));
+ });
+ const workSelf=await ok(workCookie,"/api/quick-activity",{projectId:3,name:"Egen aktivitet med separerat arbetskonto",
+  description:"Historiken följer samma medarbetare",startDate:"2026-11-10",endDate:"2026-11-20",effortPercent:35});
+ check("New work login can create own activity immediately",()=>assert.equal(workSelf.proposal,false));
+ const workOther=await ok(workCookie,"/api/quick-activity",{projectId:3,recipientId:johan,
+  name:"Arbetskonto föreslår aktivitet",description:"Mottagaren ska godkänna",startDate:"2026-11-10",endDate:"2026-11-20",effortPercent:30});
+ check("New work login can propose work to project member",()=>assert.equal(workOther.proposal,true));
+ const workProposalBeforeApproval=await ok(admin,"/api/data");
+ check("New work login does not bypass recipient approval",()=>{
+  assert.ok(!workProposalBeforeApproval.assignments.some(a=>a.activityId===workOther.activityId&&a.employeeId===johan));
+ });
+ const badPassword=await api(admin,"/api/access",{action:"createPersonalLogin",employeeId:anna,
+  email:"weak@example.se",password:"short"});
+ check("Password shorter than 12 characters is denied for new login",()=>assert.equal(badPassword.status,400));
+ const workConflict=await api(admin,"/api/access",{action:"createPersonalLogin",employeeId:adminPerson.id,
+  email:"another-personal@example.se",password:password});
+ check("Admin cannot duplicate the existing personal account",()=>assert.equal(workConflict.status,409));
+
  const db=new DatabaseSync(await onlyDatabase(join(dir,"data")),{readOnly:true});
  try{
   check("All role tests preserve SQLite foreign keys",()=>assert.equal(db.prepare("PRAGMA foreign_key_check").all().length,0));
