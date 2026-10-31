@@ -934,6 +934,20 @@ try{
   assert.equal(selfAdminWork.proposal,false);
   assert.equal(assignment(activeAdminWork,selfAdminWork.activityId,adminPerson.id)?.effortPercent,35);
  });
+ const legacyAdminBefore=new Set(activeAdminWork.activities.map(x=>x.id));
+ const legacyAdminAfter=await request("/api/data",{action:"activity",projectId:1,name:"Admin aktivitet från gamla formuläret",
+  description:"Måste bemannas på administratörens befintliga medarbetarpost",
+  startDate:"2026-11-04",endDate:"2026-11-21",status:"Planerad"});
+ const legacyAdminActivity=legacyAdminAfter.activities.find(x=>!legacyAdminBefore.has(x.id)&&x.name==="Admin aktivitet från gamla formuläret");
+ check("Legacy activity editor assigns new work to linked administrator",()=>{
+  assert.ok(legacyAdminActivity);
+  assert.equal(assignment(legacyAdminAfter,legacyAdminActivity.id,adminPerson.id)?.effortPercent,0);
+ });
+ const expectedRecipients=await request("/api/quick-activity?projectId=1");
+ check("Linked admin can offer activities to colleagues",()=>{
+  assert.equal(expectedRecipients.allowed,true);
+  assert.ok(expectedRecipients.eligibleRecipients.some(x=>x.id===sara));
+ });
  const blockedEmployeeDeletion=await fetch(base+"/api/data?type=employee&id="+adminPerson.id,{method:"DELETE"});
  const blockedBody=await blockedEmployeeDeletion.json();
  check("Employee linked to administrator login cannot be silently deleted",()=>{
@@ -961,6 +975,16 @@ try{
   assert.equal(reserve.isAdmin,1);
   assert.equal(reserve.employeeId,reservePerson.id);
  });
+ await request("/api/access",{action:"linkAccount",accountId:reserve.id,employeeId:null});
+ const temporarilyUnlinked=(await request("/api/access")).accounts.find(x=>x.id===reserve.id);
+ check("Admin link can be explicitly cleared before login",()=>assert.equal(temporarilyUnlinked.employeeId,null));
+ await asUser("ci-reserve-admin@example.se","BackupPassphrase123!");
+ const autoLinkedIdentity=await request("/api/access");
+ check("Administrator login automatically links a matching unclaimed employee",()=>{
+  assert.equal(autoLinkedIdentity.viewer.employeeId,reservePerson.id);
+  assert.equal(autoLinkedIdentity.accounts.find(x=>x.id===reserve.id)?.employeeId,reservePerson.id);
+ });
+ await asUser("ci-admin@example.se",adminPassword);
  const conflictingLink=await fetch(base+"/api/access",{method:"POST",headers:{"content-type":"application/json"},
   body:JSON.stringify({action:"linkAccount",accountId:reserve.id,employeeId:adminPerson.id})});
  check("One employee cannot be linked to two different login accounts",()=>assert.equal(conflictingLink.status,409));
