@@ -339,6 +339,14 @@ try{
  await ok(ordinary,"/api/time-entries",{action:"delete",id:manualTime.id});
  const afterDelete=(await ok(ordinary,"/api/time-entries")).entries;
  check("Deleted hours remain audited but disappear from personal totals",()=>assert.ok(!afterDelete.some(e=>e.id===manualTime.id)));
+ const protectedStaff=await fetch(base+"/api/data?type=employee&id="+sara,{method:"DELETE",headers:{cookie:admin}});
+ const protectedActivity=await fetch(base+"/api/data?type=activity&id=1",{method:"DELETE",headers:{cookie:admin}});
+ const protectedProject=await fetch(base+"/api/data?type=project&id=1",{method:"DELETE",headers:{cookie:admin}});
+ check("Reported time protects staff, activity and project from destructive deletion",()=>{
+  assert.equal(protectedStaff.status,409);
+  assert.equal(protectedActivity.status,409);
+  assert.equal(protectedProject.status,409);
+ });
  const csvResp=await fetch(base+"/api/time-entries?format=csv",{headers:{cookie:await connected("sara@example.se")}});
  const csvOutput=await csvResp.text();
  check("Time export includes stable entry identifiers, work dates and deletions",()=>{
