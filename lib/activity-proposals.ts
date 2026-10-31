@@ -15,6 +15,26 @@ type ContextData = {
 
 const validId=(value:unknown)=>Number.isSafeInteger(Number(value))&&Number(value)>0?Number(value):0;
 
+export type ProposalProject = {id:number;code:string;name:string};
+/**
+ * Server-authoritative project catalog for the quick-activity form.
+ * Administrators can create activities in any project; normal users only in
+ * projects where they are genuinely participating or leading work.
+ * Read-only visibility through a manager or TEAM is NOT sufficient.
+ */
+export async function availableActivityProjects(d:D1Database,user:Identity):Promise<ProposalProject[]>{
+ if(!user.employeeId&&!user.isAdmin)return [];
+ const r=await d.prepare(`SELECT p.id,p.code,p.name FROM projects p
+  WHERE ?=1 OR EXISTS(SELECT 1 FROM project_members m WHERE m.project_id=p.id AND m.employee_id=?)
+    OR EXISTS(SELECT 1 FROM assignments s JOIN activities a ON a.id=s.activity_id
+      WHERE a.project_id=p.id AND s.employee_id=?)
+    OR EXISTS(SELECT 1 FROM project_leaders l WHERE l.project_id=p.id AND l.employee_id=?)
+    OR EXISTS(SELECT 1 FROM work_package_leaders l JOIN work_packages w ON w.id=l.work_package_id
+      WHERE w.project_id=p.id AND l.employee_id=?)
+  ORDER BY p.code,p.name`).bind(user.isAdmin?1:0,user.employeeId??0,user.employeeId??0,user.employeeId??0,user.employeeId??0).all<ProposalProject>();
+ return r.results;
+}
+
 /**
  * Assignment proposals always concern a particular project.
  * Team or manager-group selection further narrows that project's members.
