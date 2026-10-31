@@ -303,6 +303,48 @@ ett vanligt medarbetarkonto som redan är kopplat till personen; API:et
 returnerar i så fall 409 utan att något ändras. En kopplad administratör
 som saknar fungerande planering behöver inte få en extra personpost.
 
+## Tidrapportering på aktiviteter
+
+Planering har en egen flik **Tidrapportering**, med:
+- Starta/stoppa tidtagning för en aktivitet. Klockan fortsätter på servern
+  även när webbläsaren stängs. En medarbetare kan bara ha en aktiv klocka.
+- Registrera tid manuellt för ett visst datum (1–1440 minuter).
+- Justera datum, antal minuter och kommentar i efterhand; varje ändring
+  får en revisionspost i `time_entry_audit`.
+- Ta bort en felregistrering utan att radera revisionshistoriken (mjuk borttagning).
+- Visa sparade poster och summering av faktisk tid, separat från planerad
+  beläggning. Samma personpost används av separat arbetsinloggning.
+- CSV-export med stabilt `entry_id`, `employee_email`, `project_code`,
+  `activity_code`, `work_date`, `duration_minutes`, `duration_hours`,
+  `updated_at_utc` och `status` (`active` eller `deleted`).
+  Pågående klockor exporteras inte. Borttagna poster exporteras med
+  status `deleted` för framtida synkronisering.
+
+**Tidrapport-integration:** Ingen verifierad Tidrapport-API-specifikation
+eller Tidrapport-kodbas är kopplad till detta repo. CSV-export är färdig
+för manuell import/mappning, men **ingen automatisk synkronisering**
+eller dataskrivning till Tidrapport är ännu aktiverad. Tidrapport behöver
+ha en verifierad import/API-mottagare, autentisering och idempotenta
+upsert/delete-regler innan den tvåvägsintegrationen kan driftsättas.
+Tidposter identifieras av (`source_system`,`entry_id`) för att
+undvika dubbelregistrering. Vid flera separata Planering-instanser
+måste instans-ID inkluderas i nyckeln.
+
+API för inloggad medarbetare: `GET /api/time-entries`,
+`POST /api/time-entries` med action `start`, `stop`, `manual`,
+`update` eller `delete`, samt `GET /api/time-entries?format=csv`.
+Administratörer kan exportera rapporterad tid för samtliga medarbetare
+med `?format=csv&scope=all`, förutsatt att kontot har en kopplad
+medarbetaridentitet. All åtkomst kräver giltig webb-session,
+och API:t tillåter inte att en användare ändrar någon annans tid.
+CSV-hämtning är **inte** ett maskin-till-maskin-API; dela inte
+sessioncookies med Tidrapport.
+
+Databasmigrering `0014_time_entries.sql` skyddar rapporterad tid genom
+FK-restriktioner och förhindrar att en medarbetare, aktivitet eller ett
+projekt raderas av misstag när rapporterad tid finns. Det är möjligt
+att ändra den planerade bemanningen oberoende av rapporterade timmar.
+
 ## Isolerat test av roller och aktivitetsbehörigheter
 
 `scripts/test-role-access.mjs` startar en **separat** lokal Wrangler/D1-instans
