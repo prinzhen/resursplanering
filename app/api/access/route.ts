@@ -138,17 +138,20 @@ export async function POST(req:Request){
     return Response.json({error:"Medarbetaren måste ha en giltig e-postadress."},{status:400});
    const email=person.email.toLowerCase().trim();
    const byEmployee=await d.prepare("SELECT id FROM user_accounts WHERE employee_id=?").bind(employeeId).first<{id:number}>();
-   const byEmail=await d.prepare("SELECT id,employee_id employeeId FROM user_accounts WHERE lower(email)=lower(?)").bind(email).first<{id:number;employeeId:number|null}>();
+   const byEmail=await d.prepare("SELECT id,employee_id employeeId,is_admin isAdmin FROM user_accounts WHERE lower(email)=lower(?)").bind(email).first<{id:number;employeeId:number|null;isAdmin:number}>();
    if(byEmail&&byEmail.employeeId!==null&&byEmail.employeeId!==employeeId)
     return Response.json({error:"E-postadressen används av en annan användare."},{status:409});
-   if(byEmployee&&byEmail&&byEmployee.id!==byEmail.id)
+   // A dedicated work login may intentionally use a different email from
+   // the employee record while the admin still owns the original address.
+   // Preserve the work login identity when resetting credentials.
+   if(byEmployee&&byEmail&&byEmployee.id!==byEmail.id&&!(byEmail.isAdmin&&byEmail.employeeId===null))
     return Response.json({error:"Medarbetarens konto och e-postadress pekar på olika konton."},{status:409});
    const salt=randomHex(16),hash=await passwordHash(password,salt);
    const existing=byEmployee||byEmail;
    if(existing?.id===user.accountId)return Response.json({error:"Byt ditt eget lösenord under Mitt konto."},{status:400});
    if(existing){
     await d.batch([
-     d.prepare("UPDATE user_accounts SET email=?,employee_id=?,password_salt=?,password_hash=?,is_disabled=0,failed_attempts=0,locked_until=NULL WHERE id=?").bind(email,employeeId,salt,hash,existing.id),
+     d.prepare("UPDATE user_accounts SET employee_id=?,password_salt=?,password_hash=?,is_disabled=0,failed_attempts=0,locked_until=NULL WHERE id=?").bind(employeeId,salt,hash,existing.id),
      d.prepare("DELETE FROM user_sessions WHERE user_id=?").bind(existing.id)
     ]);
    }else await d.prepare("INSERT INTO user_accounts(employee_id,email,password_salt,password_hash) VALUES(?,?,?,?)").bind(employeeId,email,salt,hash).run();
