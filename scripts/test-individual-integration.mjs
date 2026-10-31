@@ -964,6 +964,10 @@ try{
  const conflictingLink=await fetch(base+"/api/access",{method:"POST",headers:{"content-type":"application/json"},
   body:JSON.stringify({action:"linkAccount",accountId:reserve.id,employeeId:adminPerson.id})});
  check("One employee cannot be linked to two different login accounts",()=>assert.equal(conflictingLink.status,409));
+ // Previous test scenarios promoted Erik to admin; disable all other active
+ // administrators before exercising the strict 'last active admin' guard.
+ const otherAdmins=newAccounts.filter(x=>x.isAdmin===1&&!x.isDisabled&&x.id!==adminAccount.id&&x.id!==reserve.id);
+ for(const other of otherAdmins)await request("/api/access",{action:"setAccountDisabled",accountId:other.id,disabled:true});
  await request("/api/access",{action:"setAccountDisabled",accountId:reserve.id,disabled:true});
  const lastDemote=await fetch(base+"/api/access",{method:"POST",headers:{"content-type":"application/json"},
   body:JSON.stringify({action:"setAccountRole",accountId:adminAccount.id,isAdmin:false})});
