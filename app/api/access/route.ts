@@ -58,6 +58,31 @@ export async function POST(req:Request){
    }else{
     await d.prepare("INSERT INTO user_accounts(employee_id,email,password_salt,password_hash,is_admin,is_group_manager) VALUES(?,?,?,?,?,?)").bind(person,email,salt,hash,isAdmin,groupManager).run();
    }
+  }else if(action==="createPersonalLogin"){
+   // A separate day-to-day login for an existing staff member, while a
+   // dedicated administrator login remains intact and active.
+   if(!user.isAdmin)return forbidden();
+   const personId=Number(b.employeeId),loginEmail=String(b.email||"").trim().toLowerCase(),
+    loginPassword=String(b.password||""),manager=Number(Boolean(b.isGroupManager));
+   if(!Number.isSafeInteger(personId)||personId<=0||!loginEmail.includes("@")||
+      loginEmail.length>254||loginPassword.length<12||loginPassword.length>256)
+    return Response.json({error:"Välj befintlig medarbetare, en NY e-postadress och lösenord med minst 12 tecken."},{status:400});
+   const employee=await d.prepare("SELECT id,name FROM employees WHERE id=?").bind(personId).first<{id:number;name:string}>();
+   if(!employee)return Response.json({error:"Medarbetaren finns inte."},{status:404});
+   if(await d.prepare("SELECT id FROM user_accounts WHERE lower(email)=lower(?)").bind(loginEmail).first())
+    return Response.json({error:"Inloggningsadressen används redan. Välj en ny adress för arbetskontot."},{status:409});
+   const oldAccount=await d.prepare("SELECT id,is_admin isAdmin FROM user_accounts WHERE employee_id=?").bind(personId).first<{id:number;isAdmin:number}>();
+   if(oldAccount&&!oldAccount.isAdmin)
+    return Response.json({error:"Medarbetaren har redan ett vanligt inloggningskonto. Ändra det kontot i stället."},{status:409});
+   // Avoid creating a second staff record and guarantee the old admin remains
+   // an active admin. Both changes commit atomically.
+   const salt=randomHex(16),hash=await passwordHash(loginPassword,salt);
+   const queries:D1PreparedStatement[]=[];
+   if(oldAccount)queries.push(d.prepare("UPDATE user_accounts SET employee_id=NULL WHERE id=? AND is_admin=1").bind(oldAccount.id));
+   queries.push(d.prepare("INSERT INTO user_accounts(employee_id,email,password_salt,password_hash,is_admin,is_group_manager) VALUES(?,?,?,?,0,?)")
+    .bind(personId,loginEmail,salt,hash,manager));
+   await d.batch(queries);
+   return Response.json({message:"Arbetskonto skapat för "+employee.name+". Administratörskontot är kvar med full behörighet, och medarbetarens projekt och aktiviteter är oförändrade."});
   }else if(action==="linkAccount"){
    if(!user.isAdmin)return forbidden();
    const accountId=Number(b.accountId);
