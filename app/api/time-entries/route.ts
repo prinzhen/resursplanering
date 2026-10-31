@@ -62,7 +62,7 @@ export async function GET(req:Request){
   const from=u.searchParams.get("from"),to=u.searchParams.get("to");
   if(from&&!validDay(from)||to&&!validDay(to)||from&&to&&from>to)return bad("Ogiltigt datumintervall.");
   const filters=[all?"1=1":"t.employee_id=?",format==="csv"?"t.ended_at IS NOT NULL":"t.deleted_at IS NULL"];
-  const params:unknown[]=[];if(!all)params.push(user.employeeId);
+  const params:Array<string|number>=[];if(!all)params.push(user.employeeId);
   if(from){filters.push("t.work_date>=?");params.push(from)}
   if(to){filters.push("t.work_date<=?");params.push(to)}
   const limit=format==="csv"?20000:2000;
