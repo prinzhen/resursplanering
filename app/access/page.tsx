@@ -26,8 +26,8 @@ export default function AccessPage(){
  };
  useEffect(()=>{reload().catch(e=>setError(String(e)))},[]);
  const post=async(payload:Record<string,unknown>)=>{setBusy(true);setError("");setNotice("");try{
-  const r=await fetch("/api/access",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(payload)}),j=await r.json() as {error?:string};
-  if(!r.ok)throw Error(j.error||"Kunde inte spara");await reload();setNotice("Behörigheten sparades.");return true;
+  const r=await fetch("/api/access",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(payload)}),j=await r.json() as {error?:string;message?:string};
+  if(!r.ok)throw Error(j.error||"Kunde inte spara");await reload();setNotice(j.message||"Behörigheten sparades.");return true;
  }catch(e){setError(e instanceof Error?e.message:String(e));return false}finally{setBusy(false)}};
  const eligible=data?.employees.filter(e=>data.viewer.isAdmin||data.viewer.managedEmployeeIds.includes(e.id))||[];
  const membership=async(enabled:boolean)=>{
@@ -63,7 +63,7 @@ export default function AccessPage(){
   {a.id!==data.viewer.accountId&&<div className="flex flex-wrap gap-2">
    <button type="button" disabled={busy} className="rounded border px-3 py-1" onClick={()=>post({action:"setAccountRole",accountId:a.id,isAdmin:!a.isAdmin})}>{a.isAdmin?"Ta bort adminbehörighet":"Ge adminbehörighet"}</button>
    <button type="button" disabled={busy} className="rounded border px-3 py-1" onClick={()=>post({action:"setAccountDisabled",accountId:a.id,disabled:!a.isDisabled})}>{a.isDisabled?"Aktivera":"Inaktivera"}</button>
-   <button type="button" disabled={busy} className="rounded border border-red-300 px-3 py-1 text-red-700" onClick={()=>{if(window.confirm("Radera inloggningskontot "+a.email+"? Medarbetare, aktiviteter och planering behålls."))post({action:"deleteAccount",accountId:a.id})}}>Ta bort konto</button>
+   <button type="button" disabled={busy} className="rounded border border-red-300 px-3 py-1 text-red-700" onClick={()=>{if(window.confirm("Radera inloggningskontot "+a.email+"? Planeringen behålls. Konton med revisionshistorik arkiveras i stället."))post({action:"deleteAccount",accountId:a.id})}}>Ta bort konto</button>
   </div>}</div>
   <div className="flex flex-wrap items-end gap-2">
    <label className="min-w-48 flex-1 text-xs font-medium">Kopplad medarbetare
