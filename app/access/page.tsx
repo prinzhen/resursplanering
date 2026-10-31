@@ -17,6 +17,7 @@ export default function AccessPage(){
  const [data,setData]=useState<Planning|null>(null),[access,setAccess]=useState<Access|null>(null),[error,setError]=useState(""),[notice,setNotice]=useState(""),[busy,setBusy]=useState(false);
  const [email,setEmail]=useState(""),[password,setPassword]=useState(""),[employeeId,setEmployeeId]=useState(""),[admin,setAdmin]=useState(false),[groupManager,setGroupManager]=useState(false);
  const [accountLinks,setAccountLinks]=useState<Record<number,string>>({});
+ const [workEmployee,setWorkEmployee]=useState(""),[workEmail,setWorkEmail]=useState(""),[workPassword,setWorkPassword]=useState(""),[workManager,setWorkManager]=useState(true);
  const [leadEmployee,setLeadEmployee]=useState(""),[leadProject,setLeadProject]=useState(""),[leadTeam,setLeadTeam]=useState(""),[memberEmployee,setMemberEmployee]=useState(""),[memberProject,setMemberProject]=useState("");
  const reload=async()=>{
   const [a,b]=await Promise.all([fetch("/api/data",{cache:"no-store"}),fetch("/api/access",{cache:"no-store"})]);
@@ -45,6 +46,32 @@ export default function AccessPage(){
  <header className="flex flex-wrap items-center justify-between gap-3"><div><p className="text-xs font-bold uppercase tracking-wider text-blue-700">Resursplanering</p><h1 className="text-3xl font-semibold">Konton och behörigheter</h1><p className="mt-1 text-sm text-slate-600">Administratören hanterar konton. Gruppchefer kan utse projektledare och TEAM-leaders bland sina medarbetare.</p></div><a href="/" className="rounded-lg border bg-white px-4 py-2 text-sm">← Till planeringen</a></header>
  {error&&<p role="alert" className="rounded-lg border border-red-300 bg-red-50 p-3 text-red-700">{error}</p>}
  {notice&&<p className="rounded-lg border border-green-300 bg-green-50 p-3 text-green-800">{notice}</p>}
+ {data?.viewer.isAdmin&&<section className="rounded-xl border border-blue-200 bg-blue-50 p-5">
+  <h2 className="mb-2 text-lg font-semibold">Skapa separat arbetskonto – behåll administratören</h2>
+  <p className="mb-3 text-sm text-slate-700">Använd när du vill administrera med ett konto och utföra egna aktiviteter med ett annat. Den nya inloggningen kopplas till din <strong>befintliga medarbetarpost</strong>: inga nya medarbetare skapas och tidigare projekt, beläggning och aktiviteter behålls. Ett redan länkat administratörskonto blir ett separat admin-konto utan medarbetarkoppling.</p>
+  <form className="grid gap-3 sm:grid-cols-2" onSubmit={async e=>{
+   e.preventDefault();
+   if(!window.confirm("Skapa ett separat arbetskonto? Befintligt administratörskonto behålls, men förlorar sin personkoppling. Arbetskontot får tillgång till projekt där personen deltar eller leder."))return;
+   if(await post({action:"createPersonalLogin",employeeId:Number(workEmployee),email:workEmail,password:workPassword,isGroupManager:workManager})){
+    setWorkEmail("");setWorkPassword("");
+   }
+  }}>
+   <label className="text-sm font-medium">Befintlig medarbetare
+    <select required className="mt-1 w-full rounded-lg border px-3 py-2" value={workEmployee} onChange={e=>setWorkEmployee(e.target.value)}>
+     <option value="">Välj person</option>{data.employees.map(e=><option key={e.id} value={e.id}>{e.name} · {e.email}</option>)}
+    </select>
+   </label>
+   <label className="text-sm font-medium">Ny inloggningsadress (annan än adminkontots)
+    <input required type="email" autoComplete="off" value={workEmail} onChange={e=>setWorkEmail(e.target.value)} className="mt-1 w-full rounded-lg border px-3 py-2" placeholder="exempel+arbete@domän.se"/>
+   </label>
+   <label className="text-sm font-medium">Lösenord (minst 12 tecken)
+    <input required type="password" minLength={12} maxLength={256} autoComplete="new-password" value={workPassword} onChange={e=>setWorkPassword(e.target.value)} className="mt-1 w-full rounded-lg border px-3 py-2"/>
+   </label>
+   <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={workManager} onChange={e=>setWorkManager(e.target.checked)}/>Ge även gruppchefsbehörighet</label>
+   <div className="sm:col-span-2"><button type="submit" disabled={busy||!workEmployee||workPassword.length<12} className="rounded-lg bg-blue-700 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">Skapa arbetskonto</button></div>
+  </form>
+  <p className="mt-3 text-xs text-slate-700">Efteråt kan du tilldela personen projektmedlemskap, projektledarskap och TEAM-ledarskap längre ned på denna sida. Logga ut och in med den nya adressen för vanlig planering. Kontot får inte administratörsbehörighet.</p>
+ </section>}
  {data?.viewer.isAdmin&&<section className="rounded-xl border bg-white p-5"><h2 className="mb-3 text-lg font-semibold">Lägg upp eller återställ konto</h2><p className="mb-3 text-sm text-slate-600">E-postadress identifierar kontot. Flera administratörer stöds och varje administratör kan kopplas till en medarbetare för egen planering. Använd befintlig medarbetarpost för att behålla historik och aktiviteter. Ett nytt lösenord återkallar tidigare sessioner.</p>
  <form onSubmit={async e=>{e.preventDefault();if(await post({action:"saveAccount",email,password,employeeId:employeeId?Number(employeeId):null,isAdmin:admin,isGroupManager:groupManager})){setPassword("");setEmail("")}}} className="grid gap-3 sm:grid-cols-2">
  <label className="text-sm font-medium">E-post<input value={email} onChange={e=>setEmail(e.target.value)} className="mt-1 w-full rounded-lg border px-3 py-2" type="email" required/></label>
