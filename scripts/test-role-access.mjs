@@ -191,7 +191,12 @@ try{
   assert.equal(adminSelf.proposal,false);
   assert.ok(adminAfterSelf.assignments.some(a=>a.activityId===adminSelf.activityId&&a.employeeId===adminPerson.id));
  });
- const adminProposal=await ok(admin,"/api/quick-activity",{projectId:1,recipientId:johan,name:"Admin föreslår jobb till extern deltagare",
+ // Johan has an assignment in project 1, so project 3 is the actual outside-project case.
+ check("Outside-project recipient has no existing project 3 membership or assignment",()=>{
+  assert.ok(!adminAfterSelf.projectMembers.some(m=>m.projectId===3&&m.employeeId===johan));
+  assert.ok(!adminAfterSelf.assignments.some(a=>a.employeeId===johan&&adminAfterSelf.activities.some(t=>t.id===a.activityId&&t.projectId===3)));
+ });
+ const adminProposal=await ok(admin,"/api/quick-activity",{projectId:3,recipientId:johan,name:"Admin föreslår jobb till extern deltagare",
   description:"Mottagaren måste godkänna innan bemanning",startDate:"2026-11-10",endDate:"2026-11-20",effortPercent:35});
  const pending=await ok(admin,"/api/data");
  check("ADMIN can propose to other employee but cannot assign without consent",()=>{
@@ -207,7 +212,7 @@ try{
  const approved=await ok(admin,"/api/data");
  check("Accepted ADMIN proposal adds project membership and exactly one allocation",()=>{
   assert.equal(approved.assignments.filter(a=>a.activityId===adminProposal.activityId&&a.employeeId===johan).length,1);
-  assert.ok(approved.projectMembers.some(m=>m.projectId===1&&m.employeeId===johan));
+  assert.ok(approved.projectMembers.some(m=>m.projectId===3&&m.employeeId===johan));
  });
  const db=new DatabaseSync(await onlyDatabase(join(dir,"data")),{readOnly:true});
  try{
