@@ -355,7 +355,29 @@ export async function DELETE(request:Request){try{const d=db();const user=await 
   if(!canDelete)return forbidden();
  }
  if(type==="group")await d.batch([d.prepare("DELETE FROM employee_group_members WHERE group_id=?").bind(id),d.prepare("DELETE FROM employee_groups WHERE id=?").bind(id)]);
- else if(type==="employee")await d.batch([d.prepare("UPDATE employees SET manager_id=NULL WHERE manager_id=?").bind(id),d.prepare("DELETE FROM project_members WHERE employee_id=?").bind(id),d.prepare("DELETE FROM employee_group_members WHERE employee_id=?").bind(id),d.prepare("DELETE FROM assignments WHERE employee_id=?").bind(id),d.prepare("DELETE FROM employees WHERE id=?").bind(id)]);
+ else if(type==="employee"){
+  const linked=await d.prepare("SELECT email FROM user_accounts WHERE employee_id=?").bind(id).first<{email:string}>();
+  if(linked)return Response.json({error:"Medarbetaren är kopplad till inloggningskontot "+linked.email+". Ta först bort kontot under Konton och behörigheter, eller behåll medarbetaren och koppla administratörskontot till den befintliga personen. Ingen planering har raderats."},{status:409});
+  if(!await d.prepare("SELECT id FROM employees WHERE id=?").bind(id).first())return Response.json({error:"Medarbetaren saknas."},{status:404});
+  await d.batch([
+   d.prepare("UPDATE employees SET manager_id=NULL WHERE manager_id=?").bind(id),
+   d.prepare("UPDATE employee_groups SET owner_id=NULL WHERE owner_id=?").bind(id),
+   d.prepare("DELETE FROM assignment_requests WHERE requested_by=? OR recipient_id=?").bind(id,id),
+   d.prepare("DELETE FROM individual_week_moves WHERE item_uid IN (SELECT item_uid FROM individual_form_items WHERE employee_id=?)").bind(id),
+   d.prepare("DELETE FROM individual_form_items WHERE employee_id=?").bind(id),
+   d.prepare("DELETE FROM individual_project_state WHERE employee_id=?").bind(id),
+   d.prepare("DELETE FROM individual_import_runs WHERE employee_id=?").bind(id),
+   d.prepare("DELETE FROM employee_project_orders WHERE employee_id=?").bind(id),
+   d.prepare("DELETE FROM project_leaders WHERE employee_id=?").bind(id),
+   d.prepare("DELETE FROM team_leaders WHERE employee_id=?").bind(id),
+   d.prepare("DELETE FROM work_package_leaders WHERE employee_id=?").bind(id),
+   d.prepare("DELETE FROM project_members WHERE employee_id=?").bind(id),
+   d.prepare("DELETE FROM employee_group_members WHERE employee_id=?").bind(id),
+   d.prepare("DELETE FROM assignment_periods WHERE assignment_id IN (SELECT id FROM assignments WHERE employee_id=?)").bind(id),
+   d.prepare("DELETE FROM assignments WHERE employee_id=?").bind(id),
+   d.prepare("DELETE FROM employees WHERE id=?").bind(id)
+  ]);
+ }
  else if(type==="project")await d.batch([d.prepare("DELETE FROM project_members WHERE project_id=?").bind(id),d.prepare("DELETE FROM assignments WHERE activity_id IN (SELECT id FROM activities WHERE project_id=?)").bind(id),d.prepare("DELETE FROM activities WHERE project_id=?").bind(id),d.prepare("DELETE FROM work_packages WHERE project_id=?").bind(id),d.prepare("DELETE FROM projects WHERE id=?").bind(id)]);
  else if(type==="workPackage")await d.batch([d.prepare("DELETE FROM assignments WHERE activity_id IN (WITH RECURSIVE tree(id) AS (SELECT id FROM activities WHERE work_package_id=? UNION ALL SELECT a.id FROM activities a JOIN tree t ON a.parent_activity_id=t.id) SELECT id FROM tree)").bind(id),d.prepare("DELETE FROM activities WHERE id IN (WITH RECURSIVE tree(id) AS (SELECT id FROM activities WHERE work_package_id=? UNION ALL SELECT a.id FROM activities a JOIN tree t ON a.parent_activity_id=t.id) SELECT id FROM tree)").bind(id),d.prepare("DELETE FROM work_packages WHERE id=?").bind(id)]);
  else if(type==="activity")await d.batch([d.prepare("DELETE FROM assignments WHERE activity_id IN (WITH RECURSIVE tree(id) AS (SELECT id FROM activities WHERE id=? UNION ALL SELECT a.id FROM activities a JOIN tree t ON a.parent_activity_id=t.id) SELECT id FROM tree)").bind(id),d.prepare("DELETE FROM activities WHERE id IN (WITH RECURSIVE tree(id) AS (SELECT id FROM activities WHERE id=? UNION ALL SELECT a.id FROM activities a JOIN tree t ON a.parent_activity_id=t.id) SELECT id FROM tree)").bind(id)]);
