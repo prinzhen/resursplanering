@@ -145,7 +145,9 @@ export async function POST(request:Request){try{const d=db();const user=await se
   if(workId&&!await d.prepare("SELECT id FROM work_packages WHERE id=? AND project_id=?").bind(workId,projectId).first())return Response.json({error:"Uppdraget tillhör inte valt projekt."},{status:400});
   if(parentId&&!await d.prepare("SELECT id FROM activities WHERE id=? AND project_id=?").bind(parentId,projectId).first())return Response.json({error:"Huvudaktiviteten tillhör inte valt projekt."},{status:400});
   const result=await d.prepare("INSERT INTO activities (project_id,work_package_id,parent_activity_id,code,name,description,start_date,end_date,estimated_hours,status,created_by) VALUES (?,?,?,?,?,?,?,?,?,?,?)").bind(projectId,workId,parentId,text(b.code)||null,text(b.name),requiredActivityDescription(b.description),start,end,number(b.estimatedHours),text(b.status)||"Planerad",user.employeeId).run();
-  if(!user.isAdmin&&user.employeeId){
+  // Administrators linked to a person are resources too: assign their new
+  // activities just like a project leader's, without bypassing other approvals.
+  if(user.employeeId){
    const id=Number(result.meta.last_row_id);
    const ass=await d.prepare("INSERT INTO assignments(activity_id,employee_id,effort_percent,start_date,end_date,work_status,original_end_date) VALUES(?,?,?,?,?,?,?)").bind(id,user.employeeId,0,start,end,"Planerad",end).run();
    await d.prepare("INSERT INTO assignment_periods(assignment_id,start_date,end_date,effort_percent) VALUES(?,?,?,?)").bind(Number(ass.meta.last_row_id),start,end,0).run();
