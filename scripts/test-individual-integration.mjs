@@ -910,6 +910,83 @@ try{
  await asUser("ci-admin@example.se",adminPassword);
  const approvedSnapshot=await request();
  check("Admin view still sees all original employees",()=>assert.equal(approvedSnapshot.employees.length>=4,true));
+
+ // Administrators are organizational employees too. Link the SAME existing person
+ // to their login instead of deleting someone who owns plans and assignments.
+ await request("/api/data",{action:"employee",name:"CI Administratör",email:"ci-admin@example.se",role:"Gruppchef",capacityPercent:100});
+ let personState=await request();
+ const adminPerson=personState.employees.find(x=>x.email==="ci-admin@example.se");
+ assert.ok(adminPerson);
+ const adminAccount=(await request("/api/access")).accounts.find(x=>x.email==="ci-admin@example.se");
+ assert.ok(adminAccount);
+ await request("/api/access",{action:"linkAccount",accountId:adminAccount.id,employeeId:adminPerson.id});
+ const adminLinked=await request("/api/access");
+ check("Administrator account can be linked to a real employee",()=>{
+  assert.equal(adminLinked.viewer.employeeId,adminPerson.id);
+  assert.equal(adminLinked.accounts.find(x=>x.id===adminAccount.id)?.employeeId,adminPerson.id);
+  assert.equal(adminLinked.accounts.find(x=>x.id===adminAccount.id)?.isAdmin,1);
+ });
+ // Admin can be a normal resource on an activity, not just a global supervisor.
+ const selfAdminWork=await request("/api/quick-activity",{projectId:1,name:"Admin har eget projektarbete",
+  description:"Administratören utför själv denna arbetsuppgift",startDate:"2026-11-03",endDate:"2026-11-30",effortPercent:35});
+ const activeAdminWork=await request();
+ check("Linked administrator can receive personal assignments",()=>{
+  assert.equal(selfAdminWork.proposal,false);
+  assert.equal(assignment(activeAdminWork,selfAdminWork.activityId,adminPerson.id)?.effortPercent,35);
+ });
+ const blockedEmployeeDeletion=await fetch(base+"/api/data?type=employee&id="+adminPerson.id,{method:"DELETE"});
+ const blockedBody=await blockedEmployeeDeletion.json();
+ check("Employee linked to administrator login cannot be silently deleted",()=>{
+  assert.equal(blockedEmployeeDeletion.status,409);
+  assert.match(blockedBody.error,/kopplad till inloggningskontot/);
+ });
+ // Backup/restore must not break login FK links (including the admin employee).
+ const linkedBackup=await request();
+ await request("/api/data",{action:"restore",backup:{version:3,data:linkedBackup}});
+ const postRestoreAccess=await request("/api/access");
+ check("Planning restore preserves administrator-to-employee link",()=>{
+  assert.equal(postRestoreAccess.viewer.employeeId,adminPerson.id);
+  assert.equal(postRestoreAccess.accounts.find(x=>x.id===adminAccount.id)?.employeeId,adminPerson.id);
+ });
+ // Add another admin using the existing employee email, with automatic linking.
+ await request("/api/data",{action:"employee",name:"CI Reservadmin",email:"ci-reserve-admin@example.se",role:"Projektledare",capacityPercent:100});
+ const reservePerson=(await request()).employees.find(x=>x.email==="ci-reserve-admin@example.se");
+ assert.ok(reservePerson);
+ await request("/api/access",{action:"saveAccount",email:"ci-reserve-admin@example.se",
+  employeeId:null,password:"BackupPassphrase123!",isAdmin:true});
+ const newAccounts=(await request("/api/access")).accounts;
+ const reserve=newAccounts.find(x=>x.email==="ci-reserve-admin@example.se");
+ check("Second administrator is automatically linked by matching employee email",()=>{
+  assert.ok(reserve);
+  assert.equal(reserve.isAdmin,1);
+  assert.equal(reserve.employeeId,reservePerson.id);
+ });
+ const conflictingLink=await fetch(base+"/api/access",{method:"POST",headers:{"content-type":"application/json"},
+  body:JSON.stringify({action:"linkAccount",accountId:reserve.id,employeeId:adminPerson.id})});
+ check("One employee cannot be linked to two different login accounts",()=>assert.equal(conflictingLink.status,409));
+ await request("/api/access",{action:"setAccountDisabled",accountId:reserve.id,disabled:true});
+ const lastDemote=await fetch(base+"/api/access",{method:"POST",headers:{"content-type":"application/json"},
+  body:JSON.stringify({action:"setAccountRole",accountId:adminAccount.id,isAdmin:false})});
+ check("Last active administrator cannot be demoted",()=>assert.equal(lastDemote.status,409));
+ const saveLastDemote=await fetch(base+"/api/access",{method:"POST",headers:{"content-type":"application/json"},
+  body:JSON.stringify({action:"saveAccount",email:"ci-admin@example.se",employeeId:adminPerson.id,password:adminPassword,isAdmin:false})});
+ check("Saving credentials cannot remove final active administrator",()=>assert.equal(saveLastDemote.status,409));
+ await request("/api/access",{action:"setAccountDisabled",accountId:reserve.id,disabled:false});
+ const activeAdmins=(await request("/api/access")).accounts.filter(x=>x.isAdmin===1&&x.isDisabled===0);
+ check("More than one administrator can be active",()=>assert.ok(activeAdmins.length>=2));
+ await request("/api/access",{action:"deleteAccount",accountId:reserve.id});
+ const afterDeleteAccount=await request();
+ check("Deleting a backup login does not delete its linked employee",()=>{
+  assert.ok(afterDeleteAccount.employees.some(x=>x.id===reservePerson.id));
+ });
+ const reserveDeleted=await fetch(base+"/api/data?type=employee&id="+reservePerson.id,{method:"DELETE"});
+ check("Unlinked employee can be removed without a FK failure",()=>assert.equal(reserveDeleted.status,200));
+ const soleAdminDemote=await fetch(base+"/api/access",{method:"POST",headers:{"content-type":"application/json"},
+  body:JSON.stringify({action:"setAccountRole",accountId:adminAccount.id,isAdmin:false})});
+ check("Final admin remains protected after deleting another admin account",()=>assert.equal(soleAdminDemote.status,409));
+ const protectedSqlite=new DatabaseSync(await findSqlite(join(dir,"data")),{readOnly:true});
+ try{check("Admin identity tests leave SQLite foreign keys consistent",()=>assert.equal(protectedSqlite.prepare("PRAGMA foreign_key_check").all().length,0))}
+ finally{protectedSqlite.close()}
  console.log("\nSUCCESS: integration tests passed; only isolated temp database was modified.");
 }catch(err){
  console.error("\nFAILED:",err);
