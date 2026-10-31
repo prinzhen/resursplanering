@@ -125,3 +125,23 @@ export const activityPriorityHistory = sqliteTable("activity_priority_history", 
  source:text("source").notNull().default("excel"),
  createdAt:text("created_at").notNull()
 },t=>[uniqueIndex("idx_activity_priority_history_activity_date").on(t.activityId,t.effectiveFrom)]);
+
+/** Actual hours, distinct from forecasts and assignment loading. */
+export const timeEntries=sqliteTable("time_entries",{
+ id:integer("id").primaryKey({autoIncrement:true}),
+ employeeId:integer("employee_id").notNull().references(()=>employees.id,{onDelete:"restrict"}),
+ activityId:integer("activity_id").notNull().references(()=>activities.id,{onDelete:"restrict"}),
+ workDate:text("work_date").notNull(),
+ startedAt:integer("started_at").notNull(),endedAt:integer("ended_at"),
+ durationSeconds:integer("duration_seconds"),note:text("note").notNull().default(""),
+ source:text("source").notNull().default("timer"),
+ createdAt:integer("created_at").notNull(),updatedAt:integer("updated_at").notNull(),
+ deletedAt:integer("deleted_at"),
+});
+export const timeEntryAudit=sqliteTable("time_entry_audit",{
+ id:integer("id").primaryKey({autoIncrement:true}),
+ timeEntryId:integer("time_entry_id").notNull().references(()=>timeEntries.id,{onDelete:"restrict"}),
+ actorAccountId:integer("actor_account_id").references(()=>userAccounts.id,{onDelete:"set null"}),
+ action:text("action").notNull(),oldSeconds:integer("old_seconds"),newSeconds:integer("new_seconds"),
+ changedAt:integer("changed_at").notNull(),
+});
