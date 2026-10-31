@@ -45,7 +45,7 @@ export default function QuickActivityDialog({data,preset,close,onCreated}:Props)
   const params=new URLSearchParams({projectId,context,contextId:contextId||"0"});
   fetch("/api/quick-activity?"+params,{cache:"no-store"}).then(async response=>{
    if(response.status===401){window.location.assign("/login");return null;}
-   const payload=await response.json();
+   const payload=await response.json() as {error?:string};
    if(!response.ok)throw Error(payload.error||"Kunde inte kontrollera mottagare");
    return payload as {allowed:boolean;eligibleRecipients:Person[];teams:Choice[];groups:Choice[]};
   }).then(result=>{
