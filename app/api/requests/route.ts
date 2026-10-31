@@ -1,6 +1,7 @@
 import {env} from "cloudflare:workers";
 import {sessionIdentity,unauthorized,forbidden,sameOrigin} from "@/lib/auth";
 import {accessScope,projectOfActivity} from "@/lib/permissions";
+import {proposalRecipients} from "@/lib/activity-proposals";
 export const dynamic="force-dynamic";
 const db=()=>{if(!env.DB)throw Error("Databasen saknas");return env.DB};
 type RequestRow={id:number;activityId:number;requestedBy:number;recipientId:number;effortPercent:number;startDate:string;endDate:string;status:string;comment:string|null;projectId:number};
@@ -36,14 +37,10 @@ export async function POST(req:Request){
       recipientId===self||percentage<0||percentage>200||!/^\d{4}-\d{2}-\d{2}$/.test(start)||!/^\d{4}-\d{2}-\d{2}$/.test(end)||start>end)
     return Response.json({error:"Ogiltig aktivitet, resurs, beläggning eller period."},{status:400});
    const projectId=await projectOfActivity(d,activityId);
-   const scope=await accessScope(d,user);
-   if(!scope.selfProjectIds.has(projectId)&&!scope.projectLedIds.has(projectId))return forbidden();
-   const target=await d.prepare("SELECT id FROM employees WHERE id=?").bind(recipientId).first();
-   if(!target)return Response.json({error:"Medarbetaren saknas."},{status:404});
-   // The recipient must be enrolled in the project before accepting.
-   const member=await d.prepare(`SELECT 1 present FROM project_members WHERE project_id=? AND employee_id=?
-     UNION SELECT 1 FROM assignments s JOIN activities a ON a.id=s.activity_id WHERE a.project_id=? AND s.employee_id=? LIMIT 1`).bind(projectId,recipientId,projectId,recipientId).first();
-   if(!member)return Response.json({error:"Mottagaren måste först läggas till i projektet av gruppchef eller projektledare."},{status:400});
+   const candidates=await proposalRecipients(d,user,projectId);
+   if(!candidates.allowed)return forbidden();
+   if(!candidates.eligibleRecipients.some(person=>person.id===recipientId))
+    return Response.json({error:"Mottagaren måste vara med i projektet och kunna få förslaget."},{status:403});
    if(await d.prepare("SELECT id FROM assignments WHERE activity_id=? AND employee_id=?").bind(activityId,recipientId).first())
     return Response.json({error:"Medarbetaren är redan bemannad på aktiviteten."},{status:409});
    if(await d.prepare("SELECT id FROM assignment_requests WHERE activity_id=? AND recipient_id=? AND status='pending'").bind(activityId,recipientId).first())
@@ -55,16 +52,32 @@ export async function POST(req:Request){
        r.effort_percent effortPercent,r.start_date startDate,r.end_date endDate,r.status,a.project_id projectId
        FROM assignment_requests r JOIN activities a ON a.id=r.activity_id WHERE r.id=?`).bind(id).first<RequestRow>();
    if(!request)return Response.json({error:"Förfrågan saknas."},{status:404});
-   if(!user.isAdmin&&request.recipientId!==self)return forbidden();
+   // Only the intended recipient can accept or reject, even when the caller is an administrator.
+   if(request.recipientId!==self)return forbidden();
    if(request.status!=="pending")return Response.json({error:"Förfrågan har redan hanterats."},{status:409});
    if(status==="approved"){
+    // A proposal must still be valid when the recipient accepts it.
+    // Administrators may invite anyone, but this also enrolls that person in the project.
+    const member=await d.prepare(`SELECT 1 ok FROM project_members WHERE project_id=? AND employee_id=?
+      UNION SELECT 1 FROM assignments s JOIN activities a ON a.id=s.activity_id WHERE a.project_id=? AND s.employee_id=?
+      UNION SELECT 1 FROM project_leaders WHERE project_id=? AND employee_id=?
+      UNION SELECT 1 FROM work_package_leaders l JOIN work_packages w ON w.id=l.work_package_id WHERE w.project_id=? AND l.employee_id=? LIMIT 1`)
+      .bind(request.projectId,request.recipientId,request.projectId,request.recipientId,request.projectId,request.recipientId,request.projectId,request.recipientId).first();
+    const adminSender=await d.prepare("SELECT 1 ok FROM user_accounts WHERE employee_id=? AND is_admin=1 AND is_disabled=0 LIMIT 1")
+      .bind(request.requestedBy).first();
+    if(!member&&!adminSender)return Response.json({error:"Du har lämnat projektet. Förfrågan kan inte godkännas."},{status:409});
     if(await d.prepare("SELECT id FROM assignments WHERE activity_id=? AND employee_id=?").bind(request.activityId,request.recipientId).first())
      return Response.json({error:"Aktiviteten är redan tilldelad."},{status:409});
-    const created=await d.prepare("INSERT INTO assignments(activity_id,employee_id,effort_percent,start_date,end_date,work_status,original_end_date) VALUES(?,?,?,?,?,?,?)").bind(request.activityId,request.recipientId,request.effortPercent,request.startDate,request.endDate,"Planerad",request.endDate).run();
-    await d.batch([
-     d.prepare("INSERT INTO assignment_periods(assignment_id,start_date,end_date,effort_percent) VALUES(?,?,?,?)").bind(Number(created.meta.last_row_id),request.startDate,request.endDate,request.effortPercent),
+    const statements:D1PreparedStatement[]=[];
+    if(!member&&adminSender)statements.push(d.prepare("INSERT OR IGNORE INTO project_members(project_id,employee_id) VALUES(?,?)").bind(request.projectId,request.recipientId));
+    statements.push(
+     d.prepare("INSERT INTO assignments(activity_id,employee_id,effort_percent,start_date,end_date,work_status,original_end_date) VALUES(?,?,?,?,?,?,?)")
+      .bind(request.activityId,request.recipientId,request.effortPercent,request.startDate,request.endDate,"Planerad",request.endDate),
+     d.prepare("INSERT INTO assignment_periods(assignment_id,start_date,end_date,effort_percent) VALUES(last_insert_rowid(),?,?,?)")
+      .bind(request.startDate,request.endDate,request.effortPercent),
      d.prepare("UPDATE assignment_requests SET status=?,decided_at=CURRENT_TIMESTAMP WHERE id=? AND status='pending'").bind(status,id)
-    ]);
+    );
+    await d.batch(statements);
    }else await d.prepare("UPDATE assignment_requests SET status=?,decided_at=CURRENT_TIMESTAMP WHERE id=? AND status='pending'").bind(status,id).run();
   }else if(action==="cancel"){
    const id=Number(b.id),request=await d.prepare("SELECT requested_by requester,status FROM assignment_requests WHERE id=?").bind(id).first<{requester:number;status:string}>();

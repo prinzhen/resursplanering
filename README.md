@@ -44,6 +44,73 @@ Docker-instruktionerna längre ned finns kvar som ett alternativ för miljöer d
 - Tailscale Funnel som publik HTTPS-proxy till Nginx.
 - GitHub Actions bygger automatiskt en containerbild till GitHub Container Registry.
 
+## Administratörer och medarbetarkonton (TEAM-test på port 3200)
+
+**En administratör kan också vara medarbetare, gruppchef, projektledare och TEAM-leader.**
+Kontot i `user_accounts` innehåller inloggning och behörigheter medan posten i
+`employees` innehåller arbetstid, projektmedverkan och aktivitetsbemanning.
+Koppla kontot till **den befintliga medarbetaren** för att behålla aktiviteter,
+historik och organisatoriska relationer. Skapa inte en extra Tobias-post och
+radera inte den befintliga personposten för att få administratörsbehörighet.
+
+I **Konton och behörigheter**:
+
+1. Under **Registrerade konton**: välj befintlig medarbetare vid administratörens
+   e-postkonto och tryck **Koppla**. Kontot och personen blir en och samma
+   användaridentitet, utan att aktiviteter eller beläggning flyttas/raderas.
+2. **Ge adminbehörighet** kan användas för flera separata konton. Konton med
+   adminbehörighet kan fortfarande ha egna aktiviteter och projekt.
+3. **Ta bort adminbehörighet**, **Inaktivera** och **Ta bort konto** kan inte
+   slå ut den **sista aktiva administratören**. Det egna inloggade kontot kan
+   inte raderas eller inaktiveras via dessa knappar. **Ta bort konto** raderar
+   endast inloggningen, inte medarbetaren eller planeringen. Om kontot\n   förekommer i revisionshistorik arkiveras det i stället (inaktiveras och\n   får sina behörigheter borttagna) för att behålla referenserna.
+4. En medarbetare med kopplat konto skyddas från radering. Lossa/radera först
+   kontokopplingen om du verkligen avser att radera medarbetarposten och dess
+   historik (medarbetarradering tar bort personens bemanning).
+
+### Skapa eller återställ administratör från Linux-konsolen
+
+Det befintliga CLI-verktyget `scripts/provision-account.py` kan skapa en ny
+administratör, återaktivera en spärrad administratör, återställa lösenordet
+och koppla ett admin-konto till en befintlig medarbetare. **Det kräver inte
+att någon annan administratör fortfarande kan logga in.** För säker
+SQLite-hantering ska tjänsten vara **stoppad** och databasen
+**säkerhetskopierad** innan du använder verktyget.
+
+För isolerade TEAM-testet på port 3200 (inte produktionsinstansen på 3100):
+
+```bash
+sudo systemctl stop resursplanering-test-access
+sudo install -d -m 700 /var/backups/resursplanering-test-access
+sudo tar -C /var/lib/resursplanering-test-access -czf \
+  "/var/backups/resursplanering-test-access/before-admin-$(date +%Y%m%d-%H%M%S).tar.gz" data config
+
+# Använd en riktig, befintlig medarbetares e-postadress i båda argumenten.
+# Lösenordet frågas efter utan att visas och hamnar inte i shell-historiken.
+sudo -u prinzhen python3 /opt/resursplanering-test-access/scripts/provision-account.py \
+  --data-dir /var/lib/resursplanering-test-access/data \
+  --email "DIN_EPOST@EXEMPEL.SE" \
+  --employee-email "DIN_EPOST@EXEMPEL.SE" --admin
+
+sudo systemctl start resursplanering-test-access
+sudo systemctl status resursplanering-test-access --no-pager
+```
+
+För en **separat reservadministratör** kan du välja en ny e-postadress
+och utelämna `--employee-email` om personen ännu inte finns som medarbetare.
+Om kontots e-postadress matchar en befintlig medarbetare kopplas personen
+automatiskt. På befintliga konton bevaras medarbetarkopplingen vid en
+lösenordsåterställning. Ett annat konto som redan är kopplat till samma
+medarbetare ger ett tydligt fel i stället för att automatiskt slå ihop
+olika identiteter.
+
+För andra instanser: kontrollera **rätt tjänst, köranvändare och DATA_DIR**
+med `systemctl cat TJÄNSTNAMN`. Byt ut alla sökvägar och tjänstnamn
+ovan; kör aldrig testkommandona mot produktionsdatabasen av misstag.
+Om administratörsåterställningen misslyckas: läs felmeddelandet och starta
+tjänsten manuellt igen. Verktyget använder PBKDF2-SHA256 och lagrar
+inte lösenordet i klartext.
+
 ## Alternativ installation med Docker
 
 Följande avsnitt beskriver den äldre Docker-baserade installationen.

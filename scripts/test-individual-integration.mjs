@@ -832,8 +832,189 @@ try{
   assert.deepEqual(restoredLeadership.teamLeaders,beforeLeadershipBackup.teamLeaders);
   assert.ok(assignment(restoredLeadership,wActivity.id,sara));
  });
+ // Quick creation: authenticated, self-first, pending proposals, and isolated membership checks.
+ await asUser("erik@example.se");
+ const eligibleQuick=await request("/api/quick-activity?projectId=1");
+ check("Quick creation offers only colleagues from a shared project",()=>{
+  assert.equal(eligibleQuick.allowed,true);
+  assert.ok(eligibleQuick.eligibleRecipients.some(p=>p.id===sara));
+ });
+ const quickSelf=await request("/api/quick-activity",{
+  projectId:1,recipientId:erik,name:"CI snabbaktivitet egen",description:"Egen registrering via snabbformulär",
+  startDate:"2026-11-10",endDate:"2026-11-20",effortPercent:30,priority:2
+ });
+ const afterQuickSelf=await request();
+ check("Quick creation for self creates an assignment and preserves priority",()=>{
+  assert.equal(quickSelf.proposal,false);
+  assert.ok(assignment(afterQuickSelf,quickSelf.activityId,erik));
+  assert.equal(assignment(afterQuickSelf,quickSelf.activityId,erik).effortPercent,30);
+  assert.equal(activity(afterQuickSelf,quickSelf.activityId).priority,2);
+ });
+ const quickOther=await request("/api/quick-activity",{
+  projectId:1,recipientId:sara,name:"CI snabbaktivitet med godkännande",description:"Får inte belasta annan användare innan godkännande",
+  startDate:"2026-11-10",endDate:"2026-11-20",effortPercent:45,priority:3
+ });
+ const beforeApprove=await request();
+ check("Quick proposal creates an activity but no recipient assignment",()=>{
+  assert.equal(quickOther.proposal,true);
+  assert.ok(activity(beforeApprove,quickOther.activityId));
+  assert.equal(assignment(beforeApprove,quickOther.activityId,sara),undefined);
+ });
+ const wrongContext=await fetch(base+"/api/quick-activity",{method:"POST",headers:{"content-type":"application/json"},
+  body:JSON.stringify({projectId:teamOnlyId,recipientId:sara,name:"Forbidden team-only activity",
+   description:"Avsändaren saknar projekttillhörighet",startDate:"2026-11-10",endDate:"2026-11-20",context:"project"})});
+ check("Shared TEAM does not override missing project membership",()=>assert.equal(wrongContext.status,403));
+ const groupEligible=await request("/api/quick-activity?projectId=1&context=group&contextId=1");
+ check("Manager group is offered only inside a project both can participate in",()=>{
+  assert.equal(groupEligible.allowed,true);
+  assert.ok(groupEligible.eligibleRecipients.some(p=>p.id===sara));
+ });
+ await asUser("ci-admin@example.se",adminPassword);
+ const adminCannotAnswer=await fetch(base+"/api/requests",{method:"POST",headers:{"content-type":"application/json"},
+  body:JSON.stringify({action:"answer",id:(await request("/api/requests")).requests.find(r=>r.activityId===quickOther.activityId)?.id,approve:true})});
+ check("Administrator may not approve somebody else's pending request",()=>assert.equal(adminCannotAnswer.status,403));
+ await asUser("sara@example.se");
+ const quickInbox=await request("/api/requests");
+ const quickPending=quickInbox.requests.find(r=>r.activityId===quickOther.activityId&&r.status==="pending");
+ check("Recipient sees quick proposal in existing approval inbox",()=>assert.ok(quickPending));
+ await request("/api/requests",{action:"answer",id:quickPending.id,approve:true});
+ const afterApprove=await request();
+ check("Recipient approval creates one allocation with specified effort",()=>{
+  const res=afterApprove.assignments.filter(a=>a.activityId===quickOther.activityId&&a.employeeId===sara);
+  assert.equal(res.length,1);assert.equal(res[0].effortPercent,45);
+ });
+ // Admin privilege allows proposing to a person outside the project; acceptance
+ // enrolls that person in the project, with no unapproved assignment.
+ await asUser("ci-admin@example.se",adminPassword);
+ await request("/api/access",{action:"saveAccount",email:"erik@example.se",employeeId:erik,password:userPassword,isAdmin:true});
+ await asUser("erik@example.se");
+ const adminQuick=await request("/api/quick-activity",{
+  projectId:teamOnlyId,recipientId:johanEmployee.id,name:"CI admin inbjuder extern",
+  description:"Administration behöver ändå ett aktivt godkännande",startDate:"2026-11-10",endDate:"2026-11-20",effortPercent:20
+ });
+ const adminBefore=await request();
+ check("Administrator may propose to all employees but not assign without approval",()=>{
+  assert.equal(adminQuick.proposal,true);
+  assert.equal(assignment(adminBefore,adminQuick.activityId,johanEmployee.id),undefined);
+ });
+ await asUser(johanEmployee.email,"Qwe456");
+ const adminInbox=await request("/api/requests");
+ const adminPending=adminInbox.requests.find(r=>r.activityId===adminQuick.activityId&&r.status==="pending");
+ assert.ok(adminPending);
+ await request("/api/requests",{action:"answer",id:adminPending.id,approve:true});
+ const afterAdminApproval=await request();
+ check("Approval of administrator proposal joins recipient to project and allocates once",()=>{
+  assert.ok(afterAdminApproval.projectMembers.some(p=>p.projectId===teamOnlyId&&p.employeeId===johanEmployee.id));
+  assert.equal(afterAdminApproval.assignments.filter(a=>a.activityId===adminQuick.activityId&&a.employeeId===johanEmployee.id).length,1);
+ });
+ await asUser("ci-admin@example.se",adminPassword);
  const approvedSnapshot=await request();
  check("Admin view still sees all original employees",()=>assert.equal(approvedSnapshot.employees.length>=4,true));
+
+ // Administrators are organizational employees too. Link the SAME existing person
+ // to their login instead of deleting someone who owns plans and assignments.
+ await request("/api/data",{action:"employee",name:"CI Administratör",email:"ci-admin@example.se",role:"Gruppchef",capacityPercent:100});
+ let personState=await request();
+ const adminPerson=personState.employees.find(x=>x.email==="ci-admin@example.se");
+ assert.ok(adminPerson);
+ const adminAccount=(await request("/api/access")).accounts.find(x=>x.email==="ci-admin@example.se");
+ assert.ok(adminAccount);
+ await request("/api/access",{action:"linkAccount",accountId:adminAccount.id,employeeId:adminPerson.id});
+ const adminLinked=await request("/api/access");
+ check("Administrator account can be linked to a real employee",()=>{
+  assert.equal(adminLinked.viewer.employeeId,adminPerson.id);
+  assert.equal(adminLinked.accounts.find(x=>x.id===adminAccount.id)?.employeeId,adminPerson.id);
+  assert.equal(adminLinked.accounts.find(x=>x.id===adminAccount.id)?.isAdmin,1);
+ });
+ // Admin can be a normal resource on an activity, not just a global supervisor.
+ const selfAdminWork=await request("/api/quick-activity",{projectId:1,name:"Admin har eget projektarbete",
+  description:"Administratören utför själv denna arbetsuppgift",startDate:"2026-11-03",endDate:"2026-11-30",effortPercent:35});
+ const activeAdminWork=await request();
+ check("Linked administrator can receive personal assignments",()=>{
+  assert.equal(selfAdminWork.proposal,false);
+  assert.equal(assignment(activeAdminWork,selfAdminWork.activityId,adminPerson.id)?.effortPercent,35);
+ });
+ const legacyAdminBefore=new Set(activeAdminWork.activities.map(x=>x.id));
+ const legacyAdminAfter=await request("/api/data",{action:"activity",projectId:1,name:"Admin aktivitet från gamla formuläret",
+  description:"Måste bemannas på administratörens befintliga medarbetarpost",
+  startDate:"2026-11-04",endDate:"2026-11-21",status:"Planerad"});
+ const legacyAdminActivity=legacyAdminAfter.activities.find(x=>!legacyAdminBefore.has(x.id)&&x.name==="Admin aktivitet från gamla formuläret");
+ check("Legacy activity editor assigns new work to linked administrator",()=>{
+  assert.ok(legacyAdminActivity);
+  assert.equal(assignment(legacyAdminAfter,legacyAdminActivity.id,adminPerson.id)?.effortPercent,0);
+ });
+ const expectedRecipients=await request("/api/quick-activity?projectId=1");
+ check("Linked admin can offer activities to colleagues",()=>{
+  assert.equal(expectedRecipients.allowed,true);
+  assert.ok(expectedRecipients.eligibleRecipients.some(x=>x.id===sara));
+ });
+ const blockedEmployeeDeletion=await fetch(base+"/api/data?type=employee&id="+adminPerson.id,{method:"DELETE"});
+ const blockedBody=await blockedEmployeeDeletion.json();
+ check("Employee linked to administrator login cannot be silently deleted",()=>{
+  assert.equal(blockedEmployeeDeletion.status,409);
+  assert.match(blockedBody.error,/kopplad till inloggningskontot/);
+ });
+ // Backup/restore must not break login FK links (including the admin employee).
+ const linkedBackup=await request();
+ await request("/api/data",{action:"restore",backup:{version:3,data:linkedBackup}});
+ const postRestoreAccess=await request("/api/access");
+ check("Planning restore preserves administrator-to-employee link",()=>{
+  assert.equal(postRestoreAccess.viewer.employeeId,adminPerson.id);
+  assert.equal(postRestoreAccess.accounts.find(x=>x.id===adminAccount.id)?.employeeId,adminPerson.id);
+ });
+ // Add another admin using the existing employee email, with automatic linking.
+ await request("/api/data",{action:"employee",name:"CI Reservadmin",email:"ci-reserve-admin@example.se",role:"Projektledare",capacityPercent:100});
+ const reservePerson=(await request()).employees.find(x=>x.email==="ci-reserve-admin@example.se");
+ assert.ok(reservePerson);
+ await request("/api/access",{action:"saveAccount",email:"ci-reserve-admin@example.se",
+  employeeId:null,password:"BackupPassphrase123!",isAdmin:true});
+ const newAccounts=(await request("/api/access")).accounts;
+ const reserve=newAccounts.find(x=>x.email==="ci-reserve-admin@example.se");
+ check("Second administrator is automatically linked by matching employee email",()=>{
+  assert.ok(reserve);
+  assert.equal(reserve.isAdmin,1);
+  assert.equal(reserve.employeeId,reservePerson.id);
+ });
+ await request("/api/access",{action:"linkAccount",accountId:reserve.id,employeeId:null});
+ const temporarilyUnlinked=(await request("/api/access")).accounts.find(x=>x.id===reserve.id);
+ check("Admin link can be explicitly cleared before login",()=>assert.equal(temporarilyUnlinked.employeeId,null));
+ await asUser("ci-reserve-admin@example.se","BackupPassphrase123!");
+ const autoLinkedIdentity=await request("/api/access");
+ check("Administrator login automatically links a matching unclaimed employee",()=>{
+  assert.equal(autoLinkedIdentity.viewer.employeeId,reservePerson.id);
+  assert.equal(autoLinkedIdentity.accounts.find(x=>x.id===reserve.id)?.employeeId,reservePerson.id);
+ });
+ await asUser("ci-admin@example.se",adminPassword);
+ const conflictingLink=await fetch(base+"/api/access",{method:"POST",headers:{"content-type":"application/json"},
+  body:JSON.stringify({action:"linkAccount",accountId:reserve.id,employeeId:adminPerson.id})});
+ check("One employee cannot be linked to two different login accounts",()=>assert.equal(conflictingLink.status,409));
+ // Previous test scenarios promoted Erik to admin; disable all other active
+ // administrators before exercising the strict 'last active admin' guard.
+ const otherAdmins=newAccounts.filter(x=>x.isAdmin===1&&!x.isDisabled&&x.id!==adminAccount.id&&x.id!==reserve.id);
+ for(const other of otherAdmins)await request("/api/access",{action:"setAccountDisabled",accountId:other.id,disabled:true});
+ await request("/api/access",{action:"setAccountDisabled",accountId:reserve.id,disabled:true});
+ const lastDemote=await fetch(base+"/api/access",{method:"POST",headers:{"content-type":"application/json"},
+  body:JSON.stringify({action:"setAccountRole",accountId:adminAccount.id,isAdmin:false})});
+ check("Last active administrator cannot be demoted",()=>assert.equal(lastDemote.status,409));
+ const saveLastDemote=await fetch(base+"/api/access",{method:"POST",headers:{"content-type":"application/json"},
+  body:JSON.stringify({action:"saveAccount",email:"ci-admin@example.se",employeeId:adminPerson.id,password:adminPassword,isAdmin:false})});
+ check("Saving credentials cannot remove final active administrator",()=>assert.equal(saveLastDemote.status,409));
+ await request("/api/access",{action:"setAccountDisabled",accountId:reserve.id,disabled:false});
+ const activeAdmins=(await request("/api/access")).accounts.filter(x=>x.isAdmin===1&&x.isDisabled===0);
+ check("More than one administrator can be active",()=>assert.ok(activeAdmins.length>=2));
+ await request("/api/access",{action:"deleteAccount",accountId:reserve.id});
+ const afterDeleteAccount=await request();
+ check("Deleting a backup login does not delete its linked employee",()=>{
+  assert.ok(afterDeleteAccount.employees.some(x=>x.id===reservePerson.id));
+ });
+ const reserveDeleted=await fetch(base+"/api/data?type=employee&id="+reservePerson.id,{method:"DELETE"});
+ check("Unlinked employee can be removed without a FK failure",()=>assert.equal(reserveDeleted.status,200));
+ const soleAdminDemote=await fetch(base+"/api/access",{method:"POST",headers:{"content-type":"application/json"},
+  body:JSON.stringify({action:"setAccountRole",accountId:adminAccount.id,isAdmin:false})});
+ check("Final admin remains protected after deleting another admin account",()=>assert.equal(soleAdminDemote.status,409));
+ const protectedSqlite=new DatabaseSync(await findSqlite(join(dir,"data")),{readOnly:true});
+ try{check("Admin identity tests leave SQLite foreign keys consistent",()=>assert.equal(protectedSqlite.prepare("PRAGMA foreign_key_check").all().length,0))}
+ finally{protectedSqlite.close()}
  console.log("\nSUCCESS: integration tests passed; only isolated temp database was modified.");
 }catch(err){
  console.error("\nFAILED:",err);
