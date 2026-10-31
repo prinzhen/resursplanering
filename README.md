@@ -280,6 +280,8 @@ I **Konton och behörigheter** kan en administratör välja
 
 Välj den *befintliga* medarbetaren (exempelvis Tobias Hillbom), ange en
 **ny och unik inloggningsadress** samt ett lösenord med minst 12 tecken.
+Markera **minst ett projekt** där personen ska kunna utföra arbete.
+Du kan samtidigt utse personen till projektledare för de valda projekten.
 Välj gruppchefsbehörighet om personen ska hantera underställda.
 
 Denna funktion kör en atomär transaktion: ett äldre administratörskonto
@@ -289,10 +291,11 @@ inaktiverat och kan fortfarande användas för systemadministration.
 Inga medarbetare, projekt eller aktiviteter skapas eller tas bort.
 En medarbetare kan fortsatt bara ha **ett** kopplat konto åt gången.
 
-Logga sedan ut och in med arbetskontot. För att lägga aktiviteter i
-ett projekt måste användaren vara projektmedlem, redan ha en aktivitet
-där eller vara projektledare/uppdragsledare. Administratören kan under
-samma behörighetssida tilldela önskade projekt och ledarroller.
+Logga sedan ut och in med arbetskontot. Projektvalen gör personen
+till projektmedlem och kan samtidigt ge projektledarskap. För att lägga
+aktiviteter i andra projekt måste användaren vara projektmedlem, redan
+ha en aktivitet där eller vara projektledare/uppdragsledare. Administratören
+kan under samma behörighetssida senare ändra projekt och ledarroller.
 Mottagarens godkännande krävs fortfarande vid tilldelningsförslag.
 
 Försök inte använda en inloggningsadress som redan finns, eller separera
