@@ -258,6 +258,21 @@ try{
  check("New work login does not bypass recipient approval",()=>{
   assert.ok(!workProposalBeforeApproval.assignments.some(a=>a.activityId===workOther.activityId&&a.employeeId===johan));
  });
+ // Password reset must target the separate personal login, preserving its
+ // distinct email and leaving the administrator account untouched.
+ const changedWorkPassword="New-Dedicated-Work-Password!2026";
+ await ok(admin,"/api/access",{action:"setEmployeePassword",employeeId:adminPerson.id,password:changedWorkPassword});
+ const oldWorkSession=await api(workCookie,"/api/data");
+ check("Resetting work login password invalidates previous work sessions",()=>assert.equal(oldWorkSession.status,401));
+ const originalWorkLogin=await api("","/api/auth",{action:"login",email:"role-admin-work@example.se",password});
+ check("Old work password is revoked",()=>assert.equal(originalWorkLogin.status,401));
+ const recoveredAuth=await api("","/api/auth",{action:"login",email:"role-admin-work@example.se",password:changedWorkPassword});
+ check("Dedicated work login can reset password without claiming admin email",()=>assert.equal(recoveredAuth.status,200));
+ const afterResetAccounts=await ok(admin,"/api/access");
+ check("Admin account remains administrator after work password reset",()=>{
+  assert.equal(afterResetAccounts.accounts.find(x=>x.email==="role-admin@example.se")?.isAdmin,1);
+  assert.equal(afterResetAccounts.accounts.find(x=>x.email==="role-admin-work@example.se")?.employeeId,adminPerson.id);
+ });
  const badPassword=await api(admin,"/api/access",{action:"createPersonalLogin",employeeId:anna,
   email:"weak@example.se",password:"short"});
  check("Password shorter than 12 characters is denied for new login",()=>assert.equal(badPassword.status,400));
