@@ -13,7 +13,7 @@ type Project={id:number;code:string;name:string};
 type WorkPackage={id:number;projectId:number;code:string;name:string};
 type Activity={id:number;projectId:number;name:string;parentActivityId:number|null};
 type Props={
- data:{viewer?:{employeeId:number|null;isAdmin?:boolean;email?:string};projects:Project[];workPackages:WorkPackage[];activities:Activity[]};
+ data:{viewer?:{employeeId:number|null;isAdmin?:boolean;email?:string};projects:Project[];projectDirectory?:Project[];workPackages:WorkPackage[];activities:Activity[]};
  preset?:{projectId?:number;teamId?:number;parentActivityId?:number};
  close:()=>void;
  onCreated:(id:number,proposal:boolean)=>Promise<void>|void;
@@ -31,27 +31,36 @@ export default function QuickActivityDialog({data,preset,close,onCreated}:Props)
  const [parentActivityId,setParentActivityId]=useState(preset?.parentActivityId?String(preset.parentActivityId):"");
  const [effort,setEffort]=useState(0);
  const [eligible,setEligible]=useState<Person[]>([]);
+ // Project options come from a role-checked endpoint, not only the dashboard
+ // snapshot. Admins must see all projects even if their own membership is empty.
+ const [projects,setProjects]=useState<Project[]>(data.projectDirectory?.length?data.projectDirectory:data.projects);
+ const [resolvedEmployeeId,setResolvedEmployeeId]=useState<number|null>(data.viewer?.employeeId??null);
  const [teams,setTeams]=useState<Choice[]>([]);
  const [groups,setGroups]=useState<Choice[]>([]);
  const [allowed,setAllowed]=useState(false);
  const [loading,setLoading]=useState(false),[busy,setBusy]=useState(false),[error,setError]=useState("");
- const self=String(data.viewer?.employeeId??"");
+ const self=String(resolvedEmployeeId??"");
  const other=recipientId!==self;
  const selectClass="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm";
  useEffect(()=>{
   let alive=true;
-  if(!projectId){setEligible([]);setAllowed(false);return;}
+  if(!projectId){setEligible([]);setAllowed(false);}
   setLoading(true);
   const params=new URLSearchParams({projectId,context,contextId:contextId||"0"});
   fetch("/api/quick-activity?"+params,{cache:"no-store"}).then(async response=>{
    if(response.status===401){window.location.assign("/login");return null;}
    const payload=await response.json() as {error?:string};
    if(!response.ok)throw Error(payload.error||"Kunde inte kontrollera mottagare");
-   return payload as {allowed:boolean;eligibleRecipients:Person[];teams:Choice[];groups:Choice[]};
+   return payload as {allowed:boolean;eligibleRecipients:Person[];teams:Choice[];groups:Choice[];projects:Project[];viewer:{employeeId:number|null;isAdmin:boolean}};
   }).then(result=>{
    if(!alive||!result)return;
    setAllowed(result.allowed);setEligible(result.eligibleRecipients||[]);
    setTeams(result.teams||[]);setGroups(result.groups||[]);
+   if(Array.isArray(result.projects))setProjects(result.projects);
+   if(result.viewer?.employeeId){
+    setResolvedEmployeeId(result.viewer.employeeId);
+    setRecipientId(prior=>prior||String(result.viewer.employeeId));
+   }
   }).catch(e=>alive&&setError(String(e))).finally(()=>alive&&setLoading(false));
   return ()=>{alive=false};
  },[projectId,context,contextId]);
@@ -92,7 +101,7 @@ export default function QuickActivityDialog({data,preset,close,onCreated}:Props)
     <div className="grid gap-3 sm:grid-cols-2">
      <label className="grid gap-1 text-sm font-medium">Projekt
       <select className={selectClass} required value={projectId} onChange={e=>changeProject(e.target.value)}>
-       <option value="">Välj projekt</option>{data.projects.map(p=><option key={p.id} value={p.id}>{p.code} · {p.name}</option>)}
+       <option value="">Välj projekt</option>{projects.map(p=><option key={p.id} value={p.id}>{p.code} · {p.name}</option>)}
       </select>
      </label>
      <label className="grid gap-1 text-sm font-medium">Uppdrag
@@ -146,6 +155,7 @@ export default function QuickActivityDialog({data,preset,close,onCreated}:Props)
     </label>}
     {other?<p className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-sm text-blue-900">Aktiviteten skapas i projektet men mottagaren får ingen beläggning förrän förslaget godkänts under Aktivitetsförfrågningar.</p>
      :<p className="text-xs text-slate-600">Din aktivitet blir aktiv direkt. Beläggningen kan ändras senare.</p>}
+    {!loading&&projects.length===0&&<p role="alert" className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950">Inga valbara projekt hittades för ditt konto. Kontrollera att projekt finns och att du har projekttillhörighet. Administratörer ska kunna se samtliga projekt. Om listan fortfarande är tom efter omladdning, kontrollera serverns API /api/quick-activity.</p>}
     {!self&&<p role="alert" className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950">
      Ditt inloggningskonto{data.viewer?.email?" ("+data.viewer.email+")":""} är inte kopplat till en medarbetare.
      {data.viewer?.isAdmin?" Gå till ":" Kontakta en administratör och be om en koppling under "}
