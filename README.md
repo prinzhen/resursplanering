@@ -63,7 +63,7 @@ I **Konton och behörigheter**:
 3. **Ta bort adminbehörighet**, **Inaktivera** och **Ta bort konto** kan inte
    slå ut den **sista aktiva administratören**. Det egna inloggade kontot kan
    inte raderas eller inaktiveras via dessa knappar. **Ta bort konto** raderar
-   endast inloggningen, inte medarbetaren eller planeringen.
+   endast inloggningen, inte medarbetaren eller planeringen. Om kontot\n   förekommer i revisionshistorik arkiveras det i stället (inaktiveras och\n   får sina behörigheter borttagna) för att behålla referenserna.
 4. En medarbetare med kopplat konto skyddas från radering. Lossa/radera först
    kontokopplingen om du verkligen avser att radera medarbetarposten och dess
    historik (medarbetarradering tar bort personens bemanning).
