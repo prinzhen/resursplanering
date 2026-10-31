@@ -273,6 +273,33 @@ sudo tailscale serve status
 - Ge bara betrodda användare åtkomst via Tailscales ACL/grants.
 - Säkerhetskopiera innan uppdateringar och testa regelbundet att backupen går att återställa.
 
+## Separat arbetsinloggning när administratören inte kan skapa aktiviteter
+
+I **Konton och behörigheter** kan en administratör välja
+**Skapa separat arbetskonto – behåll administratören**.
+
+Välj den *befintliga* medarbetaren (exempelvis Tobias Hillbom), ange en
+**ny och unik inloggningsadress** samt ett lösenord med minst 12 tecken.
+Välj gruppchefsbehörighet om personen ska hantera underställda.
+
+Denna funktion kör en atomär transaktion: ett äldre administratörskonto
+som redan är kopplat till medarbetaren frikopplas, och det nya arbetskontot
+får kopplingen. Administratörskontot behåller sin behörighet, blir inte
+inaktiverat och kan fortfarande användas för systemadministration.
+Inga medarbetare, projekt eller aktiviteter skapas eller tas bort.
+En medarbetare kan fortsatt bara ha **ett** kopplat konto åt gången.
+
+Logga sedan ut och in med arbetskontot. För att lägga aktiviteter i
+ett projekt måste användaren vara projektmedlem, redan ha en aktivitet
+där eller vara projektledare/uppdragsledare. Administratören kan under
+samma behörighetssida tilldela önskade projekt och ledarroller.
+Mottagarens godkännande krävs fortfarande vid tilldelningsförslag.
+
+Försök inte använda en inloggningsadress som redan finns, eller separera
+ett vanligt medarbetarkonto som redan är kopplat till personen; API:et
+returnerar i så fall 409 utan att något ändras. En kopplad administratör
+som saknar fungerande planering behöver inte få en extra personpost.
+
 ## Isolerat test av roller och aktivitetsbehörigheter
 
 `scripts/test-role-access.mjs` startar en **separat** lokal Wrangler/D1-instans
