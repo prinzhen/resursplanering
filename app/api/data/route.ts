@@ -69,6 +69,8 @@ async function restore(d:D1Database,b:Backup){
  if(![1,2,3].includes(b.version)||!b.data||!Array.isArray(b.data.projects)||!Array.isArray(b.data.assignments))throw Error("Ogiltig säkerhetskopia");
  const accountLinks=await d.prepare("SELECT u.id,u.employee_id employeeId,e.email employeeEmail FROM user_accounts u JOIN employees e ON e.id=u.employee_id").all<{id:number;employeeId:number;employeeEmail:string}>();
  const q:D1PreparedStatement[]=[
+  // Accounts are kept during planning restore. Temporarily unlink them before deleting employees.
+  d.prepare("UPDATE user_accounts SET employee_id=NULL WHERE employee_id IS NOT NULL"),
   d.prepare("DELETE FROM individual_week_moves"),d.prepare("DELETE FROM individual_form_items"),
   d.prepare("DELETE FROM individual_project_state"),d.prepare("DELETE FROM individual_import_runs"),d.prepare("DELETE FROM project_proposals"),d.prepare("DELETE FROM activity_priority_history"),d.prepare("DELETE FROM assignment_requests"),d.prepare("DELETE FROM work_package_leaders"),d.prepare("DELETE FROM team_leaders"),d.prepare("DELETE FROM project_leaders"),d.prepare("DELETE FROM employee_group_members"),d.prepare("DELETE FROM employee_groups"),d.prepare("DELETE FROM assignment_periods"),
   d.prepare("DELETE FROM project_members"),d.prepare("DELETE FROM employee_project_orders"),d.prepare("DELETE FROM assignments"),
@@ -101,14 +103,14 @@ async function restore(d:D1Database,b:Backup){
   for(const x of b.data.assignmentRequests||[])q.push(d.prepare("INSERT INTO assignment_requests(id,activity_id,requested_by,recipient_id,effort_percent,start_date,end_date,status,comment,decided_at,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)").bind(x.id,x.activityId,x.requestedBy,x.recipientId,x.effortPercent,x.startDate,x.endDate,x.status,x.comment??null,x.decidedAt??null,x.createdAt??new Date().toISOString()));
   for(const x of b.data.projectProposals||[])q.push(d.prepare("INSERT INTO project_proposals(id,submitted_by,code,name,description,color,priority,status,reviewed_by,reviewed_at,created_project_id,comment,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)").bind(x.id,x.submittedBy,x.code,x.name,x.description??"",x.color??"#2563eb",x.priority??3,x.status,x.reviewedBy??null,x.reviewedAt??null,x.createdProjectId??null,x.comment??null,x.createdAt??new Date().toISOString()));
  }
- await d.batch(q);
- // Authentication records are not included in planning exports.
- // Re-associate active user accounts with employee records after replacement.
- const validEmployees=await d.prepare("SELECT id,email FROM employees").all<{id:number;email:string}>();
- const ids=new Map(validEmployees.results.map(e=>[e.id,e.email.toLowerCase()]));
- for(const link of accountLinks.results)if(ids.get(link.employeeId)===link.employeeEmail.toLowerCase()){
-  await d.prepare("UPDATE user_accounts SET employee_id=? WHERE id=?").bind(link.employeeId,link.id).run();
+ // Account credentials are NOT part of planning backups. Restore person links by
+ // employee email within the same database transaction, even if restored IDs differ.
+ const restoredByEmail=new Map((b.data.employees||[]).map(x=>[String(x.email||"").toLowerCase(),Number(x.id)]));
+ for(const link of accountLinks.results){
+  const restoredId=restoredByEmail.get(link.employeeEmail.toLowerCase());
+  if(restoredId!==undefined)q.push(d.prepare("UPDATE user_accounts SET employee_id=? WHERE id=?").bind(restoredId,link.id));
  }
+ await d.batch(q);
 }
 export async function POST(request:Request){try{const d=db();const user=await sessionIdentity(request,d);if(!user)return unauthorized();
  if(!sameOrigin(request))return forbidden();
