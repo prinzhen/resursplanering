@@ -13,7 +13,7 @@ type Project={id:number;code:string;name:string};
 type WorkPackage={id:number;projectId:number;code:string;name:string};
 type Activity={id:number;projectId:number;name:string;parentActivityId:number|null};
 type Props={
- data:{viewer?:{employeeId:number|null};projects:Project[];workPackages:WorkPackage[];activities:Activity[]};
+ data:{viewer?:{employeeId:number|null;isAdmin?:boolean;email?:string};projects:Project[];workPackages:WorkPackage[];activities:Activity[]};
  preset?:{projectId?:number;teamId?:number;parentActivityId?:number};
  close:()=>void;
  onCreated:(id:number,proposal:boolean)=>Promise<void>|void;
@@ -146,7 +146,13 @@ export default function QuickActivityDialog({data,preset,close,onCreated}:Props)
     </label>}
     {other?<p className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-sm text-blue-900">Aktiviteten skapas i projektet men mottagaren får ingen beläggning förrän förslaget godkänts under Aktivitetsförfrågningar.</p>
      :<p className="text-xs text-slate-600">Din aktivitet blir aktiv direkt. Beläggningen kan ändras senare.</p>}
-    {!allowed&&projectId&&!loading&&<p role="alert" className="text-sm text-amber-800">Du deltar inte i den valda kontexten, eller så behöver du välja ett TEAM/en grupp.</p>}
+    {!self&&<p role="alert" className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950">
+     Ditt inloggningskonto{data.viewer?.email?" ("+data.viewer.email+")":""} är inte kopplat till en medarbetare.
+     {data.viewer?.isAdmin?" Gå till ":" Kontakta en administratör och be om en koppling under "}
+     {data.viewer?.isAdmin?<a className="font-semibold underline" href="/access">Konton och behörigheter</a>:"Konton och behörigheter"} och välj din befintliga personpost.
+     Ladda sedan om planeringen. Ingen medarbetare eller aktivitet behöver raderas.
+    </p>}
+    {!allowed&&projectId&&!loading&&self&&<p role="alert" className="text-sm text-amber-800">Du deltar inte i den valda kontexten, eller så behöver du välja ett TEAM/en grupp.</p>}
     {error&&<p role="alert" className="text-sm text-red-700">{error}</p>}
     <DialogFooter><Button type="button" variant="outline" onClick={close}>Avbryt</Button>
      <Button type="submit" disabled={busy||loading||!projectId||!recipientId||!allowed}>{busy?"Sparar…":other?"Skicka aktivitetsförslag":"Skapa min aktivitet"}</Button>
