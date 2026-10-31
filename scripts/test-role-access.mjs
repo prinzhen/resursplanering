@@ -283,8 +283,84 @@ try{
   email:"another-personal@example.se",password:password,projectIds:[1]});
  check("Admin cannot duplicate the existing personal account",()=>assert.equal(workConflict.status,409));
 
+ // Work-time reporting regression suite, using the SAME isolated database.
+ const anonymousTime=await api("","/api/time-entries");
+ check("Anonymous staff cannot read logged work hours",()=>assert.equal(anonymousTime.status,401));
+ const unlinkedTime=await api(admin,"/api/time-entries");
+ check("Admin account without employee identity cannot report work time",()=>assert.equal(unlinkedTime.status,403));
+ const timeBefore=await ok(ordinary,"/api/time-entries");
+ check("Staff time reporting offers only authorized activities",()=>{
+  assert.ok(timeBefore.activities.some(a=>a.projectId===1));
+  assert.ok(!timeBefore.activities.some(a=>a.projectId===2));
+ });
+ await ok(ordinary,"/api/time-entries",{action:"start",activityId:1});
+ const timeRunning=await ok(ordinary,"/api/time-entries");
+ const ticking=timeRunning.entries.find(e=>e.activityId===1&&e.endedAt===null);
+ check("Start creates persistent timer for own employee",()=>{
+  assert.ok(ticking);
+  assert.equal(ticking.employeeId,sara);
+  assert.ok(Math.abs(ticking.startedAt-timeRunning.serverTime)<5);
+ });
+ const duplicateTimer=await api(ordinary,"/api/time-entries",{action:"start",activityId:1});
+ check("Only one active timer can exist per employee",()=>assert.equal(duplicateTimer.status,409));
+ const foreignStop=await api(leader,"/api/time-entries",{action:"stop",id:ticking.id});
+ check("Other employee cannot stop a colleague's timer",()=>assert.equal(foreignStop.status,409));
+ const forbiddenTimeActivity=await api(ordinary,"/api/time-entries",{action:"manual",activityId:2,workDate:"2026-11-02",durationMinutes:30});
+ check("Staff cannot log hours on unauthorized projects",()=>assert.equal(forbiddenTimeActivity.status,403));
+ await ok(ordinary,"/api/time-entries",{action:"stop",id:ticking.id});
+ const timeStopped=await ok(ordinary,"/api/time-entries");
+ check("Stopped timer stores closed interval with duration",()=>{
+  const entry=timeStopped.entries.find(e=>e.id===ticking.id);
+  assert.ok(entry.endedAt!==null);
+  assert.ok(entry.durationSeconds>=1);
+ });
+ const otherView=await ok(leader,"/api/time-entries");
+ check("Individual staff cannot read another person's tracked time",()=>assert.ok(!otherView.entries.some(e=>e.id===ticking.id)));
+ const otherChange=await api(leader,"/api/time-entries",{action:"update",id:ticking.id,workDate:"2026-11-02",durationMinutes:60});
+ check("Individual staff cannot modify another person's hours",()=>assert.equal(otherChange.status,404));
+ await ok(ordinary,"/api/time-entries",{action:"update",id:ticking.id,workDate:"2026-11-02",durationMinutes:90,note:"Korrigerade timmar"});
+ const correctedTime=await ok(ordinary,"/api/time-entries");
+ check("Recorded time may be corrected afterwards with work date and note",()=>{
+  const entry=correctedTime.entries.find(e=>e.id===ticking.id);
+  assert.equal(entry.workDate,"2026-11-02");
+  assert.equal(entry.durationSeconds,5400);
+  assert.equal(entry.note,"Korrigerade timmar");
+  assert.equal(entry.source,"adjusted");
+ });
+ await ok(ordinary,"/api/time-entries",{action:"manual",activityId:1,workDate:"2026-11-03",durationMinutes:75,note:"Manuellt projektarbete"});
+ const manualTime=(await ok(ordinary,"/api/time-entries")).entries.find(e=>e.source==="manual");
+ check("Manual reporting works alongside timer entries",()=>{
+  assert.ok(manualTime);
+  assert.equal(manualTime.durationSeconds,4500);
+  assert.equal(manualTime.workDate,"2026-11-03");
+ });
+ const anonymousDelete=await api(leader,"/api/time-entries",{action:"delete",id:manualTime.id});
+ check("Other employees cannot delete time reporting history",()=>assert.equal(anonymousDelete.status,404));
+ await ok(ordinary,"/api/time-entries",{action:"delete",id:manualTime.id});
+ const afterDelete=(await ok(ordinary,"/api/time-entries")).entries;
+ check("Deleted hours remain audited but disappear from personal totals",()=>assert.ok(!afterDelete.some(e=>e.id===manualTime.id)));
+ const csvResp=await fetch(base+"/api/time-entries?format=csv",{headers:{cookie:await connected("sara@example.se")}});
+ const csvOutput=await csvResp.text();
+ check("Time export includes stable entry identifiers, work dates and deletions",()=>{
+  assert.equal(csvResp.status,200);
+  assert.match(csvResp.headers.get("content-type"),/text\/csv/);
+  assert.match(csvOutput,/entry_id/);
+  assert.match(csvOutput,/2026-11-02/);
+  assert.match(csvOutput,/deleted/);
+  assert.match(csvOutput,/Korrigerade timmar/);
+ });
+ const workTimer=await ok(await (async()=>{const r=await api("","/api/auth",{action:"login",email:"role-admin-work@example.se",password:changedWorkPassword});assert.equal(r.status,200);return (await fetch(base+"/api/auth",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({action:"login",email:"role-admin-work@example.se",password:changedWorkPassword})})).headers.get("set-cookie")?.split(";")[0]})(),"/api/time-entries",{action:"manual",activityId:workSelf.activityId,workDate:"2026-11-04",durationMinutes:20});
+ check("Separated personal work login may time-report on its own activity",()=>assert.equal(workTimer.ok,true));
+
  const db=new DatabaseSync(await onlyDatabase(join(dir,"data")),{readOnly:true});
  try{
+  check("Time adjustments are audited, including delete",()=>{
+   const records=db.prepare("SELECT action,old_seconds,new_seconds FROM time_entry_audit WHERE time_entry_id=? ORDER BY id").all(ticking.id);
+   assert.deepEqual(records.map(r=>r.action),["start","stop","update"]);
+   assert.equal(records.at(-1).new_seconds,5400);
+   const deleted=db.prepare("SELECT deleted_at FROM time_entries WHERE id=?").get(manualTime.id);
+   assert.ok(deleted.deleted_at!==null);
+  });
   check("All role tests preserve SQLite foreign keys",()=>assert.equal(db.prepare("PRAGMA foreign_key_check").all().length,0));
   check("All role tests preserve SQLite integrity",()=>assert.equal(db.prepare("PRAGMA integrity_check").get().integrity_check,"ok"));
  }finally{db.close()}
