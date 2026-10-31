@@ -832,6 +832,82 @@ try{
   assert.deepEqual(restoredLeadership.teamLeaders,beforeLeadershipBackup.teamLeaders);
   assert.ok(assignment(restoredLeadership,wActivity.id,sara));
  });
+ // Quick creation: authenticated, self-first, pending proposals, and isolated membership checks.
+ await asUser("erik@example.se");
+ const eligibleQuick=await request("/api/quick-activity?projectId=1");
+ check("Quick creation offers only colleagues from a shared project",()=>{
+  assert.equal(eligibleQuick.allowed,true);
+  assert.ok(eligibleQuick.eligibleRecipients.some(p=>p.id===sara));
+ });
+ const quickSelf=await request("/api/quick-activity",{
+  projectId:1,recipientId:erik,name:"CI snabbaktivitet egen",description:"Egen registrering via snabbformulär",
+  startDate:"2026-11-10",endDate:"2026-11-20",effortPercent:30,priority:2
+ });
+ const afterQuickSelf=await request();
+ check("Quick creation for self creates an assignment and preserves priority",()=>{
+  assert.equal(quickSelf.proposal,false);
+  assert.ok(assignment(afterQuickSelf,quickSelf.activityId,erik));
+  assert.equal(assignment(afterQuickSelf,quickSelf.activityId,erik).effortPercent,30);
+  assert.equal(activity(afterQuickSelf,quickSelf.activityId).priority,2);
+ });
+ const quickOther=await request("/api/quick-activity",{
+  projectId:1,recipientId:sara,name:"CI snabbaktivitet med godkännande",description:"Får inte belasta annan användare innan godkännande",
+  startDate:"2026-11-10",endDate:"2026-11-20",effortPercent:45,priority:3
+ });
+ const beforeApprove=await request();
+ check("Quick proposal creates an activity but no recipient assignment",()=>{
+  assert.equal(quickOther.proposal,true);
+  assert.ok(activity(beforeApprove,quickOther.activityId));
+  assert.equal(assignment(beforeApprove,quickOther.activityId,sara),undefined);
+ });
+ const wrongContext=await fetch(base+"/api/quick-activity",{method:"POST",headers:{"content-type":"application/json"},
+  body:JSON.stringify({projectId:teamOnlyId,recipientId:sara,name:"Forbidden team-only activity",
+   description:"Avsändaren saknar projekttillhörighet",startDate:"2026-11-10",endDate:"2026-11-20",context:"project"})});
+ check("Shared TEAM does not override missing project membership",()=>assert.equal(wrongContext.status,403));
+ const groupEligible=await request("/api/quick-activity?projectId=1&context=group&contextId=1");
+ check("Manager group is offered only inside a project both can participate in",()=>{
+  assert.equal(groupEligible.allowed,true);
+  assert.ok(groupEligible.eligibleRecipients.some(p=>p.id===sara));
+ });
+ await asUser("ci-admin@example.se",adminPassword);
+ const adminCannotAnswer=await fetch(base+"/api/requests",{method:"POST",headers:{"content-type":"application/json"},
+  body:JSON.stringify({action:"answer",id:(await request("/api/requests")).requests.find(r=>r.activityId===quickOther.activityId)?.id,approve:true})});
+ check("Administrator may not approve somebody else's pending request",()=>assert.equal(adminCannotAnswer.status,403));
+ await asUser("sara@example.se");
+ const quickInbox=await request("/api/requests");
+ const quickPending=quickInbox.requests.find(r=>r.activityId===quickOther.activityId&&r.status==="pending");
+ check("Recipient sees quick proposal in existing approval inbox",()=>assert.ok(quickPending));
+ await request("/api/requests",{action:"answer",id:quickPending.id,approve:true});
+ const afterApprove=await request();
+ check("Recipient approval creates one allocation with specified effort",()=>{
+  const res=afterApprove.assignments.filter(a=>a.activityId===quickOther.activityId&&a.employeeId===sara);
+  assert.equal(res.length,1);assert.equal(res[0].effortPercent,45);
+ });
+ // Admin privilege allows proposing to a person outside the project; acceptance
+ // enrolls that person in the project, with no unapproved assignment.
+ await asUser("ci-admin@example.se",adminPassword);
+ await request("/api/access",{action:"saveAccount",email:"erik@example.se",employeeId:erik,password:userPassword,isAdmin:true});
+ await asUser("erik@example.se");
+ const adminQuick=await request("/api/quick-activity",{
+  projectId:teamOnlyId,recipientId:johanEmployee.id,name:"CI admin inbjuder extern",
+  description:"Administration behöver ändå ett aktivt godkännande",startDate:"2026-11-10",endDate:"2026-11-20",effortPercent:20
+ });
+ const adminBefore=await request();
+ check("Administrator may propose to all employees but not assign without approval",()=>{
+  assert.equal(adminQuick.proposal,true);
+  assert.equal(assignment(adminBefore,adminQuick.activityId,johanEmployee.id),undefined);
+ });
+ await asUser(johanEmployee.email,"Qwe456");
+ const adminInbox=await request("/api/requests");
+ const adminPending=adminInbox.requests.find(r=>r.activityId===adminQuick.activityId&&r.status==="pending");
+ assert.ok(adminPending);
+ await request("/api/requests",{action:"answer",id:adminPending.id,approve:true});
+ const afterAdminApproval=await request();
+ check("Approval of administrator proposal joins recipient to project and allocates once",()=>{
+  assert.ok(afterAdminApproval.projectMembers.some(p=>p.projectId===teamOnlyId&&p.employeeId===johanEmployee.id));
+  assert.equal(afterAdminApproval.assignments.filter(a=>a.activityId===adminQuick.activityId&&a.employeeId===johanEmployee.id).length,1);
+ });
+ await asUser("ci-admin@example.se",adminPassword);
  const approvedSnapshot=await request();
  check("Admin view still sees all original employees",()=>assert.equal(approvedSnapshot.employees.length>=4,true));
  console.log("\nSUCCESS: integration tests passed; only isolated temp database was modified.");
