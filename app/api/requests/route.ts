@@ -52,15 +52,17 @@ export async function POST(req:Request){
        r.effort_percent effortPercent,r.start_date startDate,r.end_date endDate,r.status,a.project_id projectId
        FROM assignment_requests r JOIN activities a ON a.id=r.activity_id WHERE r.id=?`).bind(id).first<RequestRow>();
    if(!request)return Response.json({error:"Förfrågan saknas."},{status:404});
-   if(!user.isAdmin&&request.recipientId!==self)return forbidden();
+   // Only the intended recipient can accept or reject, even when the caller is an administrator.
+   if(request.recipientId!==self)return forbidden();
    if(request.status!=="pending")return Response.json({error:"Förfrågan har redan hanterats."},{status:409});
    if(status==="approved"){
     // A proposal must still be valid when the recipient accepts it.
     // Administrators may invite anyone, but this also enrolls that person in the project.
     const member=await d.prepare(`SELECT 1 ok FROM project_members WHERE project_id=? AND employee_id=?
       UNION SELECT 1 FROM assignments s JOIN activities a ON a.id=s.activity_id WHERE a.project_id=? AND s.employee_id=?
-      UNION SELECT 1 FROM project_leaders WHERE project_id=? AND employee_id=? LIMIT 1`)
-      .bind(request.projectId,request.recipientId,request.projectId,request.recipientId,request.projectId,request.recipientId).first();
+      UNION SELECT 1 FROM project_leaders WHERE project_id=? AND employee_id=?
+      UNION SELECT 1 FROM work_package_leaders l JOIN work_packages w ON w.id=l.work_package_id WHERE w.project_id=? AND l.employee_id=? LIMIT 1`)
+      .bind(request.projectId,request.recipientId,request.projectId,request.recipientId,request.projectId,request.recipientId,request.projectId,request.recipientId).first();
     const adminSender=await d.prepare("SELECT 1 ok FROM user_accounts WHERE employee_id=? AND is_admin=1 AND is_disabled=0 LIMIT 1")
       .bind(request.requestedBy).first();
     if(!member&&!adminSender)return Response.json({error:"Du har lämnat projektet. Förfrågan kan inte godkännas."},{status:409});
