@@ -1,6 +1,6 @@
 import {env} from "cloudflare:workers";
 import {sessionIdentity,unauthorized,forbidden,sameOrigin} from "@/lib/auth";
-import {proposalRecipients,type ProposalContext} from "@/lib/activity-proposals";
+import {availableActivityProjects,proposalRecipients,type ProposalContext} from "@/lib/activity-proposals";
 
 export const dynamic="force-dynamic";
 const db=()=>{if(!env.DB)throw new Error("Databasen saknas");return env.DB};
@@ -22,8 +22,13 @@ export async function GET(req:Request){
  const raw=url.searchParams.get("context")||"project";
  if(!["project","team","group"].includes(raw))return Response.json({error:"Ogiltig tillhörighet."},{status:400});
  const context=raw as ProposalContext,contextId=numericId(url.searchParams.get("contextId"));
- const result=await proposalRecipients(d,user,projectId,context,contextId);
- return Response.json(result,{headers:{"cache-control":"no-store"}});
+ // Fetch project options independently of an already selected project.
+ // This also handles an administrator whose dashboard snapshot has stale data.
+ const projects=await availableActivityProjects(d,user);
+ const result=projectId?await proposalRecipients(d,user,projectId,context,contextId):
+  {allowed:false,eligibleRecipients:[],teams:[],groups:[]};
+ return Response.json({...result,projects,viewer:{employeeId:user.employeeId,isAdmin:user.isAdmin},
+  needsEmployeeLink:user.employeeId===null},{headers:{"cache-control":"no-store"}});
 }
 
 export async function POST(req:Request){
