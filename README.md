@@ -273,6 +273,33 @@ sudo tailscale serve status
 - Ge bara betrodda användare åtkomst via Tailscales ACL/grants.
 - Säkerhetskopiera innan uppdateringar och testa regelbundet att backupen går att återställa.
 
+## Isolerat test av roller och aktivitetsbehörigheter
+
+`scripts/test-role-access.mjs` startar en **separat** lokal Wrangler/D1-instans
+med en temporär SQLite-databas under `/tmp/resursplanering-roles-*`.
+Den använder testkonton och testprojekt, **inte** de verkliga kontona
+eller databasen under `/var/lib/resursplanering*`. Databasen tas bort efter
+testet, även vid testfel.
+
+Testet kontrollerar administratör (även utan medarbetarkoppling), gruppchef,
+projektledare, TEAM-leader och vanlig medarbetare. Det verifierar valbara
+projekt, att andra projekt inte går att använda genom direkta API-anrop,
+egna aktiviteter, erbjudanden till andra, mottagarens godkännande samt
+SQLite-integritet. Det körs automatiskt i Docker/CI efter integrationstesterna.
+
+```bash
+# Från applikationens källkodskatalog efter pnpm install:
+node scripts/test-role-access.mjs
+```
+
+Även `node scripts/test-individual-integration.mjs` körs mot en isolerad
+testdatabas. **Godkänd CI verifierar koden, inte din befintliga databas
+eller de projekt som just nu visas i din Proxmox-container.**
+Om inga projekt syns vid inloggning: kontrollera att rätt testversion
+körs och att `GET /api/data` innehåller projekt. Snabbformuläret
+hämtar nu också valbara projekt oberoende via `GET /api/quick-activity`
+och visar ett separat meddelande om kontot saknar medarbetarkoppling.
+
 ## Lokal utveckling
 
 Kräver Node.js 22.13 eller senare och pnpm.
