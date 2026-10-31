@@ -71,6 +71,15 @@ export async function POST(req:Request){
    if(!employee)return Response.json({error:"Medarbetaren finns inte."},{status:404});
    if(await d.prepare("SELECT id FROM user_accounts WHERE lower(email)=lower(?)").bind(loginEmail).first())
     return Response.json({error:"Inloggningsadressen används redan. Välj en ny adress för arbetskontot."},{status:409});
+   const projectIds=b.projectIds;
+   if(!Array.isArray(projectIds)||!projectIds.length||projectIds.length>250||
+      projectIds.some(v=>!Number.isSafeInteger(v)||v<=0)||
+      new Set(projectIds).size!==projectIds.length)
+    return Response.json({error:"Välj 1–250 giltiga projekt för arbetskontot."},{status:400});
+   const selected=await d.prepare("SELECT id FROM projects WHERE id IN ("+projectIds.map(()=>"?").join(",")+")").bind(...projectIds).all<{id:number}>();
+   if(selected.results.length!==projectIds.length)
+    return Response.json({error:"Ett eller flera valda projekt saknas."},{status:400});
+   const projectLead=Boolean(b.isProjectLeader);
    const oldAccount=await d.prepare("SELECT id,is_admin isAdmin FROM user_accounts WHERE employee_id=?").bind(personId).first<{id:number;isAdmin:number}>();
    if(oldAccount&&!oldAccount.isAdmin)
     return Response.json({error:"Medarbetaren har redan ett vanligt inloggningskonto. Ändra det kontot i stället."},{status:409});
@@ -81,8 +90,12 @@ export async function POST(req:Request){
    if(oldAccount)queries.push(d.prepare("UPDATE user_accounts SET employee_id=NULL WHERE id=? AND is_admin=1").bind(oldAccount.id));
    queries.push(d.prepare("INSERT INTO user_accounts(employee_id,email,password_salt,password_hash,is_admin,is_group_manager) VALUES(?,?,?,?,0,?)")
     .bind(personId,loginEmail,salt,hash,manager));
+   for(const pid of projectIds){
+    queries.push(d.prepare("INSERT OR IGNORE INTO project_members(project_id,employee_id) VALUES(?,?)").bind(pid,personId));
+    if(projectLead)queries.push(d.prepare("INSERT OR IGNORE INTO project_leaders(project_id,employee_id) VALUES(?,?)").bind(pid,personId));
+   }
    await d.batch(queries);
-   return Response.json({message:"Arbetskonto skapat för "+employee.name+". Administratörskontot är kvar med full behörighet, och medarbetarens projekt och aktiviteter är oförändrade."});
+   return Response.json({message:"Arbetskonto skapat för "+employee.name+" med behörighet i "+projectIds.length+" valda projekt. Administratörskontot är kvar med full behörighet. Befintliga projekt och aktiviteter har behållits."});
   }else if(action==="linkAccount"){
    if(!user.isAdmin)return forbidden();
    const accountId=Number(b.accountId);
