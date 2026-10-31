@@ -12,6 +12,7 @@ RUN bash -n scripts/install-team-test-3200.sh
 RUN pnpm build
 RUN pnpm exec tsc --noEmit
 RUN node scripts/test-individual-integration.mjs
+RUN node scripts/test-role-access.mjs
 
 FROM node:24-bookworm-slim AS runtime
 
