@@ -363,6 +363,7 @@ export async function DELETE(request:Request){try{const d=db();const user=await 
   const linked=await d.prepare("SELECT email FROM user_accounts WHERE employee_id=?").bind(id).first<{email:string}>();
   if(linked)return Response.json({error:"Medarbetaren är kopplad till inloggningskontot "+linked.email+". Ta först bort kontot under Konton och behörigheter, eller behåll medarbetaren och koppla administratörskontot till den befintliga personen. Ingen planering har raderats."},{status:409});
   if(!await d.prepare("SELECT id FROM employees WHERE id=?").bind(id).first())return Response.json({error:"Medarbetaren saknas."},{status:404});
+  if(await d.prepare("SELECT id FROM time_entries WHERE employee_id=? LIMIT 1").bind(id).first())return Response.json({error:"Medarbetaren har rapporterad tid. Radera inte historiken; inaktivera eller ändra personens konto i stället."},{status:409});
   await d.batch([
    d.prepare("UPDATE employees SET manager_id=NULL WHERE manager_id=?").bind(id),
    d.prepare("UPDATE employee_groups SET owner_id=NULL WHERE owner_id=?").bind(id),
@@ -382,8 +383,19 @@ export async function DELETE(request:Request){try{const d=db();const user=await 
    d.prepare("DELETE FROM employees WHERE id=?").bind(id)
   ]);
  }
- else if(type==="project")await d.batch([d.prepare("DELETE FROM project_members WHERE project_id=?").bind(id),d.prepare("DELETE FROM assignments WHERE activity_id IN (SELECT id FROM activities WHERE project_id=?)").bind(id),d.prepare("DELETE FROM activities WHERE project_id=?").bind(id),d.prepare("DELETE FROM work_packages WHERE project_id=?").bind(id),d.prepare("DELETE FROM projects WHERE id=?").bind(id)]);
- else if(type==="workPackage")await d.batch([d.prepare("DELETE FROM assignments WHERE activity_id IN (WITH RECURSIVE tree(id) AS (SELECT id FROM activities WHERE work_package_id=? UNION ALL SELECT a.id FROM activities a JOIN tree t ON a.parent_activity_id=t.id) SELECT id FROM tree)").bind(id),d.prepare("DELETE FROM activities WHERE id IN (WITH RECURSIVE tree(id) AS (SELECT id FROM activities WHERE work_package_id=? UNION ALL SELECT a.id FROM activities a JOIN tree t ON a.parent_activity_id=t.id) SELECT id FROM tree)").bind(id),d.prepare("DELETE FROM work_packages WHERE id=?").bind(id)]);
- else if(type==="activity")await d.batch([d.prepare("DELETE FROM assignments WHERE activity_id IN (WITH RECURSIVE tree(id) AS (SELECT id FROM activities WHERE id=? UNION ALL SELECT a.id FROM activities a JOIN tree t ON a.parent_activity_id=t.id) SELECT id FROM tree)").bind(id),d.prepare("DELETE FROM activities WHERE id IN (WITH RECURSIVE tree(id) AS (SELECT id FROM activities WHERE id=? UNION ALL SELECT a.id FROM activities a JOIN tree t ON a.parent_activity_id=t.id) SELECT id FROM tree)").bind(id)]);
+ else if(type==="project"){
+  const used=await d.prepare("SELECT t.id FROM time_entries t JOIN activities a ON a.id=t.activity_id WHERE a.project_id=? LIMIT 1").bind(id).first();
+  if(used)return Response.json({error:"Projektet innehåller rapporterad tid och kan inte raderas utan att historiken först hanteras."},{status:409});
+  await d.batch([d.prepare("DELETE FROM project_members WHERE project_id=?").bind(id),d.prepare("DELETE FROM assignments WHERE activity_id IN (SELECT id FROM activities WHERE project_id=?)").bind(id),d.prepare("DELETE FROM activities WHERE project_id=?").bind(id),d.prepare("DELETE FROM work_packages WHERE project_id=?").bind(id),d.prepare("DELETE FROM projects WHERE id=?").bind(id)  ]);\n }
+ else if(type==="workPackage"){
+  const used=await d.prepare("SELECT t.id FROM time_entries t JOIN activities a ON a.id=t.activity_id WHERE a.work_package_id=? LIMIT 1").bind(id).first();
+  if(used)return Response.json({error:"Uppdraget innehåller rapporterad tid och kan inte raderas."},{status:409});
+  await d.batch([d.prepare("DELETE FROM assignments WHERE activity_id IN (WITH RECURSIVE tree(id) AS (SELECT id FROM activities WHERE work_package_id=? UNION ALL SELECT a.id FROM activities a JOIN tree t ON a.parent_activity_id=t.id) SELECT id FROM tree)").bind(id),d.prepare("DELETE FROM activities WHERE id IN (WITH RECURSIVE tree(id) AS (SELECT id FROM activities WHERE work_package_id=? UNION ALL SELECT a.id FROM activities a JOIN tree t ON a.parent_activity_id=t.id) SELECT id FROM tree)").bind(id),d.prepare("DELETE FROM work_packages WHERE id=?").bind(id)  ]);\n }
+ else if(type==="activity"){
+  const used=await d.prepare(`WITH RECURSIVE tree(id) AS (SELECT id FROM activities WHERE id=? UNION ALL
+   SELECT a.id FROM activities a JOIN tree t ON a.parent_activity_id=t.id)
+   SELECT t.id FROM time_entries t WHERE t.activity_id IN (SELECT id FROM tree) LIMIT 1`).bind(id).first();
+  if(used)return Response.json({error:"Aktiviteten innehåller rapporterad tid och kan inte raderas."},{status:409});
+  await d.batch([d.prepare("DELETE FROM assignments WHERE activity_id IN (WITH RECURSIVE tree(id) AS (SELECT id FROM activities WHERE id=? UNION ALL SELECT a.id FROM activities a JOIN tree t ON a.parent_activity_id=t.id) SELECT id FROM tree)").bind(id),d.prepare("DELETE FROM activities WHERE id IN (WITH RECURSIVE tree(id) AS (SELECT id FROM activities WHERE id=? UNION ALL SELECT a.id FROM activities a JOIN tree t ON a.parent_activity_id=t.id) SELECT id FROM tree)").bind(id)  ]);\n }
  else return Response.json({error:"Okänd typ."},{status:400});return Response.json(await visibleSnapshot(d,user));
  }catch(e){console.error(e);return Response.json({error:"Kunde inte ta bort posten."},{status:500})}}
