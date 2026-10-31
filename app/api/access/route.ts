@@ -90,6 +90,17 @@ export async function POST(req:Request){
    const current=await d.prepare("SELECT id,is_admin isAdmin,is_disabled isDisabled FROM user_accounts WHERE id=?").bind(target).first<{id:number;isAdmin:number;isDisabled:number}>();
    if(!current)return Response.json({error:"Kontot finns inte."},{status:404});
    if(current.isAdmin&&!current.isDisabled&&!await activeOtherAdmins(d,target))return adminRequired();
+   // Preserve audit trails: project proposals and priority changes refer to login IDs.
+   // Deleting such an account would break foreign keys or falsify old history.
+   const proposalRef=await d.prepare("SELECT id FROM project_proposals WHERE submitted_by=? OR reviewed_by=? LIMIT 1").bind(target,target).first();
+   const priorityRef=await d.prepare("SELECT id FROM activity_priority_history WHERE changed_by=? LIMIT 1").bind(target).first();
+   if(proposalRef||priorityRef){
+    await d.batch([
+     d.prepare("UPDATE user_accounts SET is_admin=0,is_group_manager=0,is_disabled=1,failed_attempts=0,locked_until=NULL WHERE id=?").bind(target),
+     d.prepare("DELETE FROM user_sessions WHERE user_id=?").bind(target)
+    ]);
+    return Response.json({archived:true,message:"Kontot har inaktiverats och fått sina behörigheter borttagna. Det ligger kvar i databasen för att bevara revisionshistoriken."});
+   }
    await d.batch([d.prepare("DELETE FROM user_sessions WHERE user_id=?").bind(target),
     d.prepare("DELETE FROM user_accounts WHERE id=?").bind(target)]);
   }else if(action==="setEmployeePassword"){
