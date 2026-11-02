@@ -13,6 +13,7 @@ RUN pnpm build
 RUN pnpm exec tsc --noEmit
 RUN node scripts/test-individual-integration.mjs
 RUN node scripts/test-role-access.mjs
+RUN node scripts/test-tidrapport-sync.mjs
 
 FROM node:24-bookworm-slim AS runtime
 
