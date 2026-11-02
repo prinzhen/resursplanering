@@ -1,0 +1,12 @@
+[Unit]
+Description=Attempt Planering -> Tidrapport synchronization once per minute
+
+[Timer]
+OnBootSec=90s
+OnUnitInactiveSec=60s
+AccuracySec=10s
+Persistent=true
+Unit=tidrapport-sync.service
+
+[Install]
+WantedBy=timers.target
