@@ -124,19 +124,21 @@ try{
  INSERT INTO time_entry_audit VALUES(5,23,'stop',1793781000);`);
  forceFailure=true;
  const failed=await run();
+ const checkpointAfterFailure=JSON.parse(await readFile(state,"utf8"));
  check("HTTP 503 keeps the last successful checkpoint, never drops hours",()=>{
   assert.notEqual(failed.code,0);
   assert.match(failed.stderr,/HTTP 503/);
-  assert.equal(JSON.parse((await readFile(state,"utf8")).trim()).lastEventId,3);
+  assert.equal(checkpointAfterFailure.lastEventId,3);
  });
  forceFailure=false;
  const recovered=await run();
+ const checkpointAfterRetry=JSON.parse(await readFile(state,"utf8"));
  check("A later run retries pending entry and skips start-only audit event",()=>{
   assert.equal(recovered.code,0,recovered.stderr);
   assert.equal(received.length,4);
   assert.equal(received[3].body.sourceEntryId,"23");
   assert.equal(received[3].body.sourceVersion,5);
-  assert.equal(JSON.parse((await readFile(state,"utf8")).trim()).lastEventId,5);
+  assert.equal(checkpointAfterRetry.lastEventId,5);
  });
  // Crash between 2xx and checkpoint can lead to a replay. The same key is
  // deliberately reused so a conforming Tidrapport receiver deduplicates it.
