@@ -320,15 +320,108 @@ Planering har en egen flik **Tidrapportering**, med:
   Pågående klockor exporteras inte. Borttagna poster exporteras med
   status `deleted` för framtida synkronisering.
 
-**Tidrapport-integration:** Ingen verifierad Tidrapport-API-specifikation
-eller Tidrapport-kodbas är kopplad till detta repo. CSV-export är färdig
-för manuell import/mappning, men **ingen automatisk synkronisering**
-eller dataskrivning till Tidrapport är ännu aktiverad. Tidrapport behöver
-ha en verifierad import/API-mottagare, autentisering och idempotenta
-upsert/delete-regler innan den tvåvägsintegrationen kan driftsättas.
-Tidposter identifieras av (`source_system`,`entry_id`) för att
-undvika dubbelregistrering. Vid flera separata Planering-instanser
-måste instans-ID inkluderas i nyckeln.
+**Tidrapport-integration:** Nu ingår ett förberett utgående API-adapter-skript,
+`scripts/sync-tidrapport.mjs`. Det läser bara den lokala
+SQLite/D1-databasens `time_entry_audit` (migrering 0014) och skickar
+nya, justerade och mjukt borttagna tidposter som JSON-POST till
+**ett verifierat mottagar-API** på Tidrapport-servern.
+
+**Viktigt:** Tidrapports faktiska API/källkod har ännu inte kunnat verifieras.
+Anslutningen är därför som standard **AVSTÄNGD**. Ingen automation eller
+överföring till Tidrapport har driftsatts. Skriptet fungerar mot en
+testmottagare, men ett riktigt mottagar-API måste stödja nedanstående
+kontrakt innan `TIDRAPPORT_SYNC_ENABLED=yes` används.
+
+### Utgående integrationskontrakt (Planering -> Tidrapport)
+
+Planering använder ett *stabilt käll-ID* per tidpost och ett monotont
+*versions-ID* från dess revisionshistorik.
+
+Exempel på JSON-body (en POST per ändring):
+
+```json
+{
+  "schemaVersion": 1,
+  "sourceSystem": "planering",
+  "sourceInstance": "planering-test-3200",
+  "sourceEntryId": "22",
+  "sourceEventId": "85",
+  "sourceVersion": 85,
+  "operation": "upsert",
+  "employee": {
+    "sourceId": 7,
+    "email": "employee@example.se",
+    "name": "Exempelperson"
+  },
+  "project": {"sourceId": 11, "code": "P-1042", "name": "Exempelprojekt"},
+  "activity": {"sourceId": 12, "code": "A-42", "name": "Exempelaktivitet"},
+  "workDate": "2026-11-03",
+  "durationSeconds": 3600,
+  "note": "Projektarbete",
+  "origin": "manual",
+  "startedAtUtc": "2026-11-03T08:00:00.000Z",
+  "endedAtUtc": "2026-11-03T09:00:00.000Z",
+  "updatedAtUtc": "2026-11-03T09:00:00.000Z",
+  "eventTimeUtc": "2026-11-03T09:00:00.000Z"
+}
+```
+
+Headers: `Authorization: Bearer <TIDRAPPORT_SYNC_TOKEN>`,
+`Content-Type: application/json`,
+`Idempotency-Key: planering:<instance>:<entryId>:<eventId>`.
+En borttagen tidpost skickas med `operation=delete` och
+`durationSeconds=null` men med oförändrat käll-ID.
+Mottagaren ska lagra `(sourceSystem,sourceInstance,sourceEntryId)`
+som unik nyckel, **uppdatera bara om `sourceVersion` är högre** och
+besvara även redan behandlade meddelanden med HTTP 2xx. Den måste
+registrera tidposten varaktigt *innan* den returnerar 2xx.
+Kompatibilitet och projekt-/personmappning måste godkännas
+i Tidrapport innan riktiga data skickas. Adaptern skickar ingen
+information från pågående, ännu inte stoppad klocka.
+
+Vid HTTP-fel eller nätverksfel avslutas körningen utan att avancera
+checkpoint. Nästa körning skickar om den första ej bekräftade
+ändringen med samma idempotensnyckel. Checkpoint lagras som en separat
+atomiskt uppdaterad JSON-fil utanför databasmappen.
+Körning med `TIDRAPPORT_SYNC_DRY_RUN=yes` visar planerade
+händelser utan att skicka något eller spara checkpoint.
+Databasen öppnas read-only.
+
+### Installation och test mot riktig Tidrapport (enbart testport 3200)
+
+Använd detta först **efter** att Tidrapport-applikationens kod/API har
+granskats och mottagaren har ett verifierat idempotent REST-gränssnitt.
+Exempelfiler finns i `deploy/`; de installeras **inte automatiskt**.
+
+```bash
+# Kör med ditt konto som har sudo:
+sudo install -d -m 700 /etc/planering
+sudo install -m 600 deploy/tidrapport-sync.test.env.example /etc/planering/tidrapport-sync.env
+sudo install -d -o prinzhen -g prinzhen -m 700 /var/lib/resursplanering-test-access/tidrapport-sync
+sudoedit /etc/planering/tidrapport-sync.env
+# Sätt korrekt mottagar-URL, bearer-token, instans-ID. Låt ENABLED=no först.
+
+# Test mot den lokala D1-databasen, INGEN nätverksöverföring:
+sudo -u prinzhen env -i PATH=/usr/bin:/bin \
+  PLANERING_DATA_DIR=/var/lib/resursplanering-test-access/data \
+  TIDRAPPORT_SYNC_INSTANCE=planering-test-3200 \
+  TIDRAPPORT_SYNC_STATE=/var/lib/resursplanering-test-access/tidrapport-sync/state.json \
+  TIDRAPPORT_SYNC_DRY_RUN=yes \
+  node /opt/resursplanering-test-access/scripts/sync-tidrapport.mjs
+
+# Aktivera ENDAST efter verifierad mottagare och lyckat test:
+sudo install -m 644 deploy/tidrapport-sync.service /etc/systemd/system/
+sudo install -m 644 deploy/tidrapport-sync.timer /etc/systemd/system/
+sudo systemctl daemon-reload
+# Ändra till TIDRAPPORT_SYNC_ENABLED=yes när mottagaren finns och har testats.
+# sudo systemctl enable --now tidrapport-sync.timer
+```
+
+Kör `node scripts/test-tidrapport-sync.mjs` för isolerade integrationstester
+mot en lokal HTTP-mottagare. Testen provar idempotens, manuell tid,
+korrigeringar, radering, omförsök efter 503, atomisk checkpoint,
+fel instans och skydd mot okrypterad extern HTTP.
+Detta verifierar inte kompatibilitet med den verkliga Tidrapport-servern.
 
 API för inloggad medarbetare: `GET /api/time-entries`,
 `POST /api/time-entries` med action `start`, `stop`, `manual`,
