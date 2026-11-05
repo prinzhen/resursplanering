@@ -100,6 +100,12 @@ try{
   assert.deepEqual(noLinkCatalog.projects.map(p=>p.id).sort((a,b)=>a-b),[...projectIds].sort((a,b)=>a-b));
   assert.equal(noLinkCatalog.needsEmployeeLink,true);
  });
+ const adminUnlinkedTime=await ok(admin,"/api/time-entries");
+ check("Unlinked admin may open time reporting to select all employees",()=>{
+  assert.equal(adminUnlinkedTime.viewer.isAdmin,true);
+  assert.equal(adminUnlinkedTime.viewer.employeeId,null);
+  assert.equal(adminUnlinkedTime.entryCount,0);
+ });
  const invalidBeforeLink=await api(admin,"/api/quick-activity",{projectId:1,name:"Nekad utan person",description:"Spårbarhet",startDate:"2026-11-10",endDate:"2026-11-20"});
  check("Unlinked admin cannot create untraceable activity",()=>assert.equal(invalidBeforeLink.status,403));
  await ok(admin,"/api/data",{action:"employee",name:"Rolltest Admin",email:"role-admin@example.se",role:"Administratör",capacityPercent:100});
