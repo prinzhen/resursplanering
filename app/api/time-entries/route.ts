@@ -79,9 +79,16 @@ export async function GET(req:Request){
   filters.push(format==="csv"?"t.ended_at IS NOT NULL":"t.deleted_at IS NULL");
   if(from){filters.push("t.work_date>=?");params.push(from)}
   if(to){filters.push("t.work_date<=?");params.push(to)}
-  const limit=format==="csv"?20000:2000;
-  const entries=await d.prepare(details+" WHERE "+filters.join(" AND ")+" ORDER BY t.work_date DESC,t.started_at DESC,t.id DESC LIMIT "+limit)
-   .bind(...params).all<TimeRow>();
+  const offsetRaw=u.searchParams.get("offset")||"0",offset=Number(offsetRaw);
+  if(!Number.isSafeInteger(offset)||offset<0||offset>10000000)return bad("Ogiltig sidstart.");
+  const pageSize=250,limit=format==="csv"?20001:pageSize+1;
+  const entries=await d.prepare(details+" WHERE "+filters.join(" AND ")+" ORDER BY t.work_date DESC,t.started_at DESC,t.id DESC LIMIT ? OFFSET ?")
+   .bind(...params,limit,format==="csv"?0:offset).all<TimeRow>();
+  const aggregate=await d.prepare(`SELECT COUNT(*) entryCount,
+    COALESCE(SUM(CASE WHEN t.ended_at IS NOT NULL AND t.deleted_at IS NULL THEN t.duration_seconds ELSE 0 END),0) totalSeconds
+    FROM time_entries t JOIN activities a ON a.id=t.activity_id
+    WHERE ${filters.join(" AND ")}`).bind(...params).first<{entryCount:number;totalSeconds:number}>();
+  if(format==="csv"&&entries.results.length>20000)return bad("Exporten innehåller över 20 000 tidposter. Filtrera på datumintervall och exportera i delar.",413);
   if(format==="csv")return new Response(renderCsv(entries.results),{
    headers:{"content-type":"text/csv; charset=utf-8","content-disposition":'attachment; filename="planering-tidrapport.csv"',
     "cache-control":"no-store","x-content-type-options":"nosniff"}});
@@ -93,8 +100,9 @@ export async function GET(req:Request){
   const groupOwner=user.employeeId&&user.isGroupManager?await d.prepare("SELECT id FROM employee_groups WHERE owner_id=? LIMIT 1").bind(user.employeeId).first():null;
   const projectLead=user.employeeId?await d.prepare("SELECT project_id FROM project_leaders WHERE employee_id=? LIMIT 1").bind(user.employeeId).first():null;
   return Response.json({viewer:{employeeId:user.employeeId,isAdmin:user.isAdmin,canViewGroupHistory:user.isAdmin||!!groupOwner||!!projectLead},
-   entries:entries.results,projects,activities:acts.results,serverTime:now(),
-   today:svDay(),hasMore:entries.results.length===limit},{headers:{"cache-control":"no-store"}});
+   entries:entries.results.slice(0,pageSize),projects,activities:acts.results,serverTime:now(),
+   today:svDay(),hasMore:entries.results.length>pageSize,offset,
+   entryCount:aggregate?.entryCount??0,totalSeconds:aggregate?.totalSeconds??0},{headers:{"cache-control":"no-store"}});
  }catch(error){console.error("time-entries GET",error);return bad("Kunde inte läsa tidrapporter.",500)}
 }
 export async function POST(req:Request){
