@@ -1,6 +1,7 @@
 import {setAssignmentStatus,setWholeActivityStatus,reconcileActivityStatus,normalizeStatus,validStatuses} from "@/lib/assignment-status";
 import {activityIdsInScope,deletionImpact,type DeletableKind} from "@/lib/delete-time-impact";
 import {timeResolutionStatements} from "@/lib/admin-time-resolution";
+import {employeeTimeImpact,employeeGroupRetention,employeeTimePurge} from "@/lib/employee-time-ledger";
 import { env } from "cloudflare:workers";
 import {sessionIdentity,unauthorized,forbidden,sameOrigin,type Identity} from "@/lib/auth";
 import {accessScope,authorizePlanningAction,filteredSnapshot,projectOfActivity} from "@/lib/permissions";
@@ -20,7 +21,7 @@ async function seedIfEmpty(d:D1Database){const c=await d.prepare("SELECT COUNT(*
   d.prepare("INSERT INTO assignments (activity_id,employee_id,effort_percent,start_date,end_date) VALUES (?,?,?,?,?)").bind(1,2,50,"2026-09-01","2026-12-18"),d.prepare("INSERT INTO assignments (activity_id,employee_id,effort_percent,start_date,end_date) VALUES (?,?,?,?,?)").bind(1,3,40,"2026-09-01","2026-12-18"),d.prepare("INSERT INTO assignments (activity_id,employee_id,effort_percent,start_date,end_date) VALUES (?,?,?,?,?)").bind(2,2,35,"2026-10-01","2027-01-29"),d.prepare("INSERT INTO assignments (activity_id,employee_id,effort_percent,start_date,end_date) VALUES (?,?,?,?,?)").bind(2,4,60,"2026-10-01","2027-01-29"),d.prepare("INSERT INTO assignments (activity_id,employee_id,effort_percent,start_date,end_date) VALUES (?,?,?,?,?)").bind(3,3,70,"2026-11-02","2027-02-26"),d.prepare("INSERT INTO assignments (activity_id,employee_id,effort_percent,start_date,end_date) VALUES (?,?,?,?,?)").bind(4,2,40,"2027-01-11","2027-03-31"),d.prepare("INSERT INTO assignments (activity_id,employee_id,effort_percent,start_date,end_date) VALUES (?,?,?,?,?)").bind(4,4,50,"2027-01-11","2027-03-31")]);}
 
 async function snapshot(d:D1Database){const [e,p,w,a,s,m,periods,formItems,weekMoves,projectStates,importRuns,orders,groups,groupMembers,projectLeaders,teamLeaders,workPackageLeaders,assignmentRequests,projectProposals,activityPriorityHistory]=await Promise.all([
- d.prepare("SELECT id,name,email,role,manager_id managerId,capacity_percent capacityPercent FROM employees ORDER BY name").all<Row>(),
+ d.prepare("SELECT id,name,email,role,manager_id managerId,capacity_percent capacityPercent FROM employees WHERE is_group_ledger=0 ORDER BY name").all<Row>(),
  d.prepare("SELECT id,code,name,color,description,status,priority FROM projects ORDER BY code").all<Row>(),
  d.prepare("SELECT id,project_id projectId,code,name,description FROM work_packages ORDER BY project_id,code").all<Row>(),
  d.prepare("SELECT id,project_id projectId,work_package_id workPackageId,parent_activity_id parentActivityId,code,name,description,start_date startDate,end_date endDate,estimated_hours estimatedHours,status,priority FROM activities ORDER BY start_date,name").all<Row>(),
@@ -416,6 +417,8 @@ export async function DELETE(request:Request){
    }
   }
   if(type==="group"){
+   const groupTime=await d.prepare("SELECT id FROM time_entries WHERE reporting_group_id=? LIMIT 1").bind(id).first();
+   if(groupTime)return Response.json({error:"Gruppen har historiskt bokförda timmar. Flytta eller radera dessa tidposter innan gruppen kan tas bort."},{status:409});
    await d.batch([
     d.prepare("DELETE FROM employee_group_members WHERE group_id=?").bind(id),
     d.prepare("DELETE FROM team_leaders WHERE team_id=?").bind(id),
@@ -424,9 +427,31 @@ export async function DELETE(request:Request){
   }else if(type==="employee"){
    const linked=await d.prepare("SELECT email FROM user_accounts WHERE employee_id=?").bind(id).first<{email:string}>();
    if(linked)return Response.json({error:"Medarbetaren är kopplad till inloggningskontot "+linked.email+". Ta först bort kontot under Konton och behörigheter, eller behåll medarbetaren och koppla administratörskontot till den befintliga personen. Ingen planering har raderats."},{status:409});
-   if(!await d.prepare("SELECT id FROM employees WHERE id=?").bind(id).first())return Response.json({error:"Medarbetaren saknas."},{status:404});
-   if(await d.prepare("SELECT id FROM time_entries WHERE employee_id=? LIMIT 1").bind(id).first())return Response.json({error:"Medarbetaren har rapporterad tid. Radera inte historiken; inaktivera eller ändra personens konto i stället."},{status:409});
+   if(!await d.prepare("SELECT id FROM employees WHERE id=? AND is_group_ledger=0").bind(id).first())return Response.json({error:"Medarbetaren saknas."},{status:404});
+   const employeeImpact=await employeeTimeImpact(d,id);
+   let employeeTimeResolution:D1PreparedStatement[]=[];
+   if(employeeImpact.entryCount){
+    if(!user.isAdmin)return Response.json({error:"En administratör måste välja hur rapporterad tid ska hanteras innan medarbetaren tas bort."},{status:409});
+    if(employeeImpact.runningEntryCount)return Response.json({error:"Medarbetaren har en pågående tidtagning. Stoppa den innan kontot tas bort."},{status:409});
+    if(u.searchParams.get("expectedFingerprint")!==employeeImpact.fingerprint)
+     return Response.json({error:"Tidposterna har ändrats. Kontrollera och bekräfta uppgifterna på nytt.",impact:employeeImpact},{status:409});
+    const employeeMode=u.searchParams.get("employeeTimeMode");
+    const at=Math.floor(Date.now()/1000);
+    if(employeeMode==="group"){
+     const groupId=Number(u.searchParams.get("groupId"));
+     if(!Number.isSafeInteger(groupId)||groupId<=0||!await d.prepare("SELECT id FROM employee_groups WHERE id=?").bind(groupId).first())
+      return Response.json({error:"Välj en befintlig grupp som ska överta timmarna."},{status:400});
+     employeeTimeResolution=employeeGroupRetention(d,id,groupId,user.accountId,at);
+    }else if(employeeMode==="purge"){
+     if(u.searchParams.get("confirm")!=="RADERA TID")
+      return Response.json({error:"Skriv RADERA TID för att bekräfta borttagningen av alla rapporterade timmar."},{status:400});
+     employeeTimeResolution=employeeTimePurge(d,id,user.accountId,at);
+    }else{
+     return Response.json({error:"Välj att spara tiden på grupp eller radera timmarna.",needsEmployeeTimeResolution:true,impact:employeeImpact},{status:409});
+    }
+   }
    await d.batch([
+    ...employeeTimeResolution,
     d.prepare("UPDATE employees SET manager_id=NULL WHERE manager_id=?").bind(id),
     d.prepare("UPDATE employee_groups SET owner_id=NULL WHERE owner_id=?").bind(id),
     d.prepare("DELETE FROM assignment_requests WHERE requested_by=? OR recipient_id=?").bind(id,id),
