@@ -56,6 +56,13 @@ try{
  CREATE TABLE time_entries(id INTEGER PRIMARY KEY,employee_id INTEGER,activity_id INTEGER,work_date TEXT,started_at INTEGER,
   ended_at INTEGER,duration_seconds INTEGER,note TEXT,source TEXT,updated_at INTEGER,deleted_at INTEGER);
  CREATE TABLE time_entry_audit(id INTEGER PRIMARY KEY,time_entry_id INTEGER,action TEXT,changed_at INTEGER);
+ CREATE TABLE time_entry_removal_archive(
+  source_event_id INTEGER PRIMARY KEY, original_entry_id INTEGER,employee_id INTEGER,
+  employee_email TEXT,employee_name TEXT,original_project_id INTEGER,original_project_code TEXT,
+  original_project_name TEXT,original_activity_id INTEGER,original_activity_code TEXT,
+  original_activity_name TEXT,work_date TEXT,started_at INTEGER,ended_at INTEGER,
+  duration_seconds INTEGER,note TEXT,source TEXT,updated_at INTEGER,removed_at INTEGER
+ );
  INSERT INTO employees VALUES(7,'CI Medarbetare','role-ci@example.se');
  INSERT INTO projects VALUES(11,'P-1042','Controller modernisering');
  INSERT INTO activities VALUES(12,11,'A-42','Integrationstest aktivitet');
@@ -149,6 +156,22 @@ try{
   assert.equal(received.length,5);
   assert.equal(received[4].key,received[3].key);
   assert.equal(seen.size,4);
+ });
+ // A hard-removed entry is absent from both time_entries and time_entry_audit,
+ // but an immutable tombstone MUST still reach the external receiver.
+ db.exec(`DELETE FROM time_entry_audit WHERE time_entry_id=23;
+ DELETE FROM time_entries WHERE id=23;
+ INSERT INTO time_entry_removal_archive VALUES(6,23,7,'role-ci@example.se','CI Medarbetare',11,'P-1042',
+  'Controller modernisering',12,'A-42','Integrationstest aktivitet',
+  '2026-11-04',1793779200,1793781000,1800,'Ny post','timer',1793782000,1793782000);`);
+ await writeFile(state,JSON.stringify({schemaVersion:1,sourceInstance:"planering-ci",lastEventId:5}));
+ const erased=await run();
+ check("Hard-deleted source time sends durable tombstone from independent archive",()=>{
+  assert.equal(erased.code,0,erased.stderr);
+  assert.equal(received.at(-1).body.operation,"delete");
+  assert.equal(received.at(-1).body.sourceEntryId,"23");
+  assert.equal(received.at(-1).body.sourceVersion,6);
+  assert.equal(JSON.parse(await readFile(state,"utf8")).lastEventId,6);
  });
  const mismatched=await run({TIDRAPPORT_SYNC_INSTANCE:"wrong-instance"});
  check("Checkpoint cannot be accidentally reused for another Planering instance",()=>{
