@@ -51,6 +51,22 @@ Använd `scripts/update-production-group-ledger.sh` i utvecklingsgrenen
 när GitHub Actions har passerat. Skriptet installerar en versionslåst
 release, testar helt isolerat och tar kall backup av skarpa databasen innan
 den byter kod på port 3000. Nginx på port 3001 och Tailscale ändras inte.
+Skriptet kontrollerar ledigt utrymme på `/opt` för att minska risken för
+det tidigare felet `ERR_PNPM` och bekräftar uttryckligen migrering `0016`
+i den faktiska applikationsdatabasen (inte Wranglers metadatabas).
+
+```bash
+curl -fsSLo /tmp/update-production-group-ledger.sh \
+  https://raw.githubusercontent.com/prinzhen/resursplanering/16e6ad174890706babe5402cfb87750769f6df61/scripts/update-production-group-ledger.sh
+bash -n /tmp/update-production-group-ledger.sh
+sudo bash /tmp/update-production-group-ledger.sh
+# Bekräfta med JA GRUPPTID
+```
+
+Produktionens version efter lyckad installation:
+`acb0dada80ae635e76264ab2123bec343f775977`.
+Tidigare kod och kall databasbackup bevaras för återställning.
+**Kör först efter att den angivna releaseversionen fått gröna CI-tester.**
 
 ## Administratör: flytta eller radera tid vid projektradering
 
