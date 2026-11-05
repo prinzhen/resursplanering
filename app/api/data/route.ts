@@ -1,4 +1,7 @@
 import {setAssignmentStatus,setWholeActivityStatus,reconcileActivityStatus,normalizeStatus,validStatuses} from "@/lib/assignment-status";
+import {activityIdsInScope,deletionImpact,type DeletableKind} from "@/lib/delete-time-impact";
+import {timeResolutionStatements} from "@/lib/admin-time-resolution";
+import {employeeTimeImpact,employeeGroupRetention,employeeTimePurge} from "@/lib/employee-time-ledger";
 import { env } from "cloudflare:workers";
 import {sessionIdentity,unauthorized,forbidden,sameOrigin,type Identity} from "@/lib/auth";
 import {accessScope,authorizePlanningAction,filteredSnapshot,projectOfActivity} from "@/lib/permissions";
@@ -18,7 +21,7 @@ async function seedIfEmpty(d:D1Database){const c=await d.prepare("SELECT COUNT(*
   d.prepare("INSERT INTO assignments (activity_id,employee_id,effort_percent,start_date,end_date) VALUES (?,?,?,?,?)").bind(1,2,50,"2026-09-01","2026-12-18"),d.prepare("INSERT INTO assignments (activity_id,employee_id,effort_percent,start_date,end_date) VALUES (?,?,?,?,?)").bind(1,3,40,"2026-09-01","2026-12-18"),d.prepare("INSERT INTO assignments (activity_id,employee_id,effort_percent,start_date,end_date) VALUES (?,?,?,?,?)").bind(2,2,35,"2026-10-01","2027-01-29"),d.prepare("INSERT INTO assignments (activity_id,employee_id,effort_percent,start_date,end_date) VALUES (?,?,?,?,?)").bind(2,4,60,"2026-10-01","2027-01-29"),d.prepare("INSERT INTO assignments (activity_id,employee_id,effort_percent,start_date,end_date) VALUES (?,?,?,?,?)").bind(3,3,70,"2026-11-02","2027-02-26"),d.prepare("INSERT INTO assignments (activity_id,employee_id,effort_percent,start_date,end_date) VALUES (?,?,?,?,?)").bind(4,2,40,"2027-01-11","2027-03-31"),d.prepare("INSERT INTO assignments (activity_id,employee_id,effort_percent,start_date,end_date) VALUES (?,?,?,?,?)").bind(4,4,50,"2027-01-11","2027-03-31")]);}
 
 async function snapshot(d:D1Database){const [e,p,w,a,s,m,periods,formItems,weekMoves,projectStates,importRuns,orders,groups,groupMembers,projectLeaders,teamLeaders,workPackageLeaders,assignmentRequests,projectProposals,activityPriorityHistory]=await Promise.all([
- d.prepare("SELECT id,name,email,role,manager_id managerId,capacity_percent capacityPercent FROM employees ORDER BY name").all<Row>(),
+ d.prepare("SELECT id,name,email,role,manager_id managerId,capacity_percent capacityPercent FROM employees WHERE is_group_ledger=0 ORDER BY name").all<Row>(),
  d.prepare("SELECT id,code,name,color,description,status,priority FROM projects ORDER BY code").all<Row>(),
  d.prepare("SELECT id,project_id projectId,code,name,description FROM work_packages ORDER BY project_id,code").all<Row>(),
  d.prepare("SELECT id,project_id projectId,work_package_id workPackageId,parent_activity_id parentActivityId,code,name,description,start_date startDate,end_date endDate,estimated_hours estimatedHours,status,priority FROM activities ORDER BY start_date,name").all<Row>(),
@@ -69,6 +72,8 @@ async function restore(d:D1Database,b:Backup){
  if(![1,2,3].includes(b.version)||!b.data||!Array.isArray(b.data.projects)||!Array.isArray(b.data.assignments))throw Error("Ogiltig säkerhetskopia");
  const accountLinks=await d.prepare("SELECT u.id,u.employee_id employeeId,e.email employeeEmail FROM user_accounts u JOIN employees e ON e.id=u.employee_id").all<{id:number;employeeId:number;employeeEmail:string}>();
  const q:D1PreparedStatement[]=[
+  // Accounts are kept during planning restore. Temporarily unlink them before deleting employees.
+  d.prepare("UPDATE user_accounts SET employee_id=NULL WHERE employee_id IS NOT NULL"),
   d.prepare("DELETE FROM individual_week_moves"),d.prepare("DELETE FROM individual_form_items"),
   d.prepare("DELETE FROM individual_project_state"),d.prepare("DELETE FROM individual_import_runs"),d.prepare("DELETE FROM project_proposals"),d.prepare("DELETE FROM activity_priority_history"),d.prepare("DELETE FROM assignment_requests"),d.prepare("DELETE FROM work_package_leaders"),d.prepare("DELETE FROM team_leaders"),d.prepare("DELETE FROM project_leaders"),d.prepare("DELETE FROM employee_group_members"),d.prepare("DELETE FROM employee_groups"),d.prepare("DELETE FROM assignment_periods"),
   d.prepare("DELETE FROM project_members"),d.prepare("DELETE FROM employee_project_orders"),d.prepare("DELETE FROM assignments"),
@@ -101,14 +106,14 @@ async function restore(d:D1Database,b:Backup){
   for(const x of b.data.assignmentRequests||[])q.push(d.prepare("INSERT INTO assignment_requests(id,activity_id,requested_by,recipient_id,effort_percent,start_date,end_date,status,comment,decided_at,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)").bind(x.id,x.activityId,x.requestedBy,x.recipientId,x.effortPercent,x.startDate,x.endDate,x.status,x.comment??null,x.decidedAt??null,x.createdAt??new Date().toISOString()));
   for(const x of b.data.projectProposals||[])q.push(d.prepare("INSERT INTO project_proposals(id,submitted_by,code,name,description,color,priority,status,reviewed_by,reviewed_at,created_project_id,comment,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)").bind(x.id,x.submittedBy,x.code,x.name,x.description??"",x.color??"#2563eb",x.priority??3,x.status,x.reviewedBy??null,x.reviewedAt??null,x.createdProjectId??null,x.comment??null,x.createdAt??new Date().toISOString()));
  }
- await d.batch(q);
- // Authentication records are not included in planning exports.
- // Re-associate active user accounts with employee records after replacement.
- const validEmployees=await d.prepare("SELECT id,email FROM employees").all<{id:number;email:string}>();
- const ids=new Map(validEmployees.results.map(e=>[e.id,e.email.toLowerCase()]));
- for(const link of accountLinks.results)if(ids.get(link.employeeId)===link.employeeEmail.toLowerCase()){
-  await d.prepare("UPDATE user_accounts SET employee_id=? WHERE id=?").bind(link.employeeId,link.id).run();
+ // Account credentials are NOT part of planning backups. Restore person links by
+ // employee email within the same database transaction, even if restored IDs differ.
+ const restoredByEmail=new Map((b.data.employees||[]).map(x=>[String(x.email||"").toLowerCase(),Number(x.id)]));
+ for(const link of accountLinks.results){
+  const restoredId=restoredByEmail.get(link.employeeEmail.toLowerCase());
+  if(restoredId!==undefined)q.push(d.prepare("UPDATE user_accounts SET employee_id=? WHERE id=?").bind(restoredId,link.id));
  }
+ await d.batch(q);
 }
 export async function POST(request:Request){try{const d=db();const user=await sessionIdentity(request,d);if(!user)return unauthorized();
  if(!sameOrigin(request))return forbidden();
@@ -143,7 +148,9 @@ export async function POST(request:Request){try{const d=db();const user=await se
   if(workId&&!await d.prepare("SELECT id FROM work_packages WHERE id=? AND project_id=?").bind(workId,projectId).first())return Response.json({error:"Uppdraget tillhör inte valt projekt."},{status:400});
   if(parentId&&!await d.prepare("SELECT id FROM activities WHERE id=? AND project_id=?").bind(parentId,projectId).first())return Response.json({error:"Huvudaktiviteten tillhör inte valt projekt."},{status:400});
   const result=await d.prepare("INSERT INTO activities (project_id,work_package_id,parent_activity_id,code,name,description,start_date,end_date,estimated_hours,status,created_by) VALUES (?,?,?,?,?,?,?,?,?,?,?)").bind(projectId,workId,parentId,text(b.code)||null,text(b.name),requiredActivityDescription(b.description),start,end,number(b.estimatedHours),text(b.status)||"Planerad",user.employeeId).run();
-  if(!user.isAdmin&&user.employeeId){
+  // Administrators linked to a person are resources too: assign their new
+  // activities just like a project leader's, without bypassing other approvals.
+  if(user.employeeId){
    const id=Number(result.meta.last_row_id);
    const ass=await d.prepare("INSERT INTO assignments(activity_id,employee_id,effort_percent,start_date,end_date,work_status,original_end_date) VALUES(?,?,?,?,?,?,?)").bind(id,user.employeeId,0,start,end,"Planerad",end).run();
    await d.prepare("INSERT INTO assignment_periods(assignment_id,start_date,end_date,effort_percent) VALUES(?,?,?,?)").bind(Number(ass.meta.last_row_id),start,end,0).run();
@@ -201,7 +208,7 @@ export async function POST(request:Request){try{const d=db();const user=await se
   if(employeeIds.some(x=>!Number.isSafeInteger(x)||x<=0)||new Set(employeeIds).size!==employeeIds.length)return Response.json({error:"Medlemslistan innehåller dubbletter eller ogiltiga ID."},{status:400});
   if(id!==null&&(!Number.isSafeInteger(id)||id<=0||!await d.prepare("SELECT id FROM employee_groups WHERE id=?").bind(id).first()))return Response.json({error:"Gruppen finns inte."},{status:404});
   if(employeeIds.length){
-   const all=await d.prepare("SELECT id FROM employees").all<{id:number}>();
+   const all=await d.prepare("SELECT id FROM employees WHERE is_group_ledger=0").all<{id:number}>();
    const valid=new Set(all.results.map(e=>e.id));
    if(employeeIds.some(x=>!valid.has(x)))return Response.json({error:"En vald medarbetare saknas."},{status:400});
   }
@@ -221,7 +228,7 @@ export async function POST(request:Request){try{const d=db();const user=await se
  else if(action==="setEmployeeProjectOrder"||action==="resetEmployeeProjectOrder"){
   const employeeId=Number(b.employeeId);
   if(!Number.isSafeInteger(employeeId)||employeeId<=0)return Response.json({error:"Ogiltig medarbetare."},{status:400});
-  if(!await d.prepare("SELECT id FROM employees WHERE id=?").bind(employeeId).first())return Response.json({error:"Medarbetaren finns inte."},{status:404});
+  if(!await d.prepare("SELECT id FROM employees WHERE id=? AND is_group_ledger=0").bind(employeeId).first())return Response.json({error:"Medarbetaren finns inte."},{status:404});
   const choices=action==="resetEmployeeProjectOrder"?[]:b.projectIds;
   if(!Array.isArray(choices)||choices.length>250)return Response.json({error:"Ogiltig projektordning."},{status:400});
   const ordered=choices.map(x=>Number(x));
@@ -310,7 +317,7 @@ export async function POST(request:Request){try{const d=db();const user=await se
   const existingPeriods=await d.prepare("SELECT s.employee_id employeeId,s.effort_percent effortPercent,COUNT(p.id) periodCount FROM assignments s LEFT JOIN assignment_periods p ON p.assignment_id=s.id WHERE s.activity_id=? GROUP BY s.id").bind(activityId).all<{employeeId:number;effortPercent:number;periodCount:number}>();
   if(resources.some(x=>existingPeriods.results.some(old=>old.employeeId===x.employeeId&&old.periodCount>1&&old.effortPercent!==x.effortPercent)))
    return Response.json({error:"Resursen har flera bemanningsperioder. Ändra procent för varje period via Ändra perioder."},{status:400});
-  const valid=await d.prepare("SELECT id FROM employees").all<{id:number}>();
+  const valid=await d.prepare("SELECT id FROM employees WHERE is_group_ledger=0").all<{id:number}>();
   const ids=new Set(valid.results.map(x=>x.id));
   if(resources.some(x=>!ids.has(x.employeeId)))return Response.json({error:"Någon medarbetare saknas."},{status:400});
   const prev=await d.prepare("SELECT employee_id employeeId FROM assignments WHERE activity_id=?").bind(activityId).all<{employeeId:number}>();
@@ -335,7 +342,7 @@ export async function POST(request:Request){try{const d=db();const user=await se
  else if(action==="setSingleProjectMember"){
    const projectId=Number(b.projectId),employeeId=Number(b.employeeId);
    if(!Number.isSafeInteger(projectId)||!Number.isSafeInteger(employeeId)||projectId<=0||employeeId<=0)return Response.json({error:"Ogiltigt projekt eller medarbetare"},{status:400});
-   if(!await d.prepare("SELECT id FROM projects WHERE id=?").bind(projectId).first()||!await d.prepare("SELECT id FROM employees WHERE id=?").bind(employeeId).first())return Response.json({error:"Projektet eller medarbetaren saknas"},{status:404});
+   if(!await d.prepare("SELECT id FROM projects WHERE id=?").bind(projectId).first()||!await d.prepare("SELECT id FROM employees WHERE id=? AND is_group_ledger=0").bind(employeeId).first())return Response.json({error:"Projektet eller medarbetaren saknas"},{status:404});
    if(Boolean(b.enabled))await d.prepare("INSERT OR IGNORE INTO project_members(project_id,employee_id) VALUES(?,?)").bind(projectId,employeeId).run();
    else await d.prepare("DELETE FROM project_members WHERE project_id=? AND employee_id=?").bind(projectId,employeeId).run();
  }
@@ -345,19 +352,181 @@ export async function POST(request:Request){try{const d=db();const user=await se
  else return Response.json({error:"Okänd åtgärd."},{status:400});return Response.json(await visibleSnapshot(d,user));
  }catch(e){console.error(e);return Response.json({error:e instanceof Error?e.message:"Kunde inte spara ändringen."},{status:500})}}
 
-export async function DELETE(request:Request){try{const d=db();const user=await sessionIdentity(request,d);if(!user)return unauthorized();if(!sameOrigin(request))return forbidden();const u=new URL(request.url);const type=u.searchParams.get("type");const id=Number(u.searchParams.get("id"));if(!Number.isSafeInteger(id)||id<=0)return Response.json({error:"ID saknas."},{status:400});
- if(!user.isAdmin){
-  const access=await accessScope(d,user);
-  const canDelete=type==="employee"?access.managedIds.has(id):
-   type==="group"?!!await d.prepare("SELECT id FROM employee_groups WHERE id=? AND owner_id=?").bind(id,user.employeeId).first():
-   type==="activity"?access.projectLedIds.has(await projectOfActivity(d,id)):
-   type==="workPackage"?access.projectLedIds.size>0&&!!await d.prepare("SELECT id FROM work_packages WHERE id=? AND project_id IN ("+[...access.projectLedIds].map(()=>"?").join(",")+")").bind(id,...access.projectLedIds).first():false;
-  if(!canDelete)return forbidden();
+// Delete a project's/activity's dependent planning rows BEFORE their parents.
+// D1.batch is atomic, so a failed FK check cannot leave half-deleted planning.
+// The SQL subquery contains only fixed, server-controlled statements; id is bound.
+function activityDeletionStatements(d:D1Database,selectIds:string,id:number):D1PreparedStatement[]{
+ const sql=(template:string)=>d.prepare(template.replaceAll("__ACTIVITY_IDS__",`(${selectIds})`)).bind(id);
+ return [
+  sql("DELETE FROM individual_week_moves WHERE item_uid IN (SELECT item_uid FROM individual_form_items WHERE activity_id IN __ACTIVITY_IDS__)"),
+  sql("DELETE FROM individual_form_items WHERE activity_id IN __ACTIVITY_IDS__"),
+  sql("DELETE FROM assignment_requests WHERE activity_id IN __ACTIVITY_IDS__"),
+  sql("DELETE FROM activity_priority_history WHERE activity_id IN __ACTIVITY_IDS__"),
+  sql("DELETE FROM assignment_periods WHERE assignment_id IN (SELECT id FROM assignments WHERE activity_id IN __ACTIVITY_IDS__)"),
+  sql("DELETE FROM assignments WHERE activity_id IN __ACTIVITY_IDS__"),
+  sql("DELETE FROM activities WHERE id IN __ACTIVITY_IDS__")
+ ];
+}
+const activitySubtree=(filter:string)=>`WITH RECURSIVE tree(id) AS (SELECT id FROM activities WHERE ${filter} UNION SELECT a.id FROM activities a JOIN tree t ON a.parent_activity_id=t.id) SELECT id FROM tree`;
+
+export async function DELETE(request:Request){
+ try{
+  const d=db();
+  const user=await sessionIdentity(request,d);
+  if(!user)return unauthorized();
+  if(!sameOrigin(request))return forbidden();
+  const u=new URL(request.url),type=u.searchParams.get("type"),id=Number(u.searchParams.get("id"));
+  if(!Number.isSafeInteger(id)||id<=0)return Response.json({error:"ID saknas."},{status:400});
+  if(!user.isAdmin){
+   const access=await accessScope(d,user);
+   const canDelete=type==="employee"?access.managedIds.has(id):
+    type==="group"?!!await d.prepare("SELECT id FROM employee_groups WHERE id=? AND owner_id=?").bind(id,user.employeeId).first():
+    type==="activity"?access.projectLedIds.has(await projectOfActivity(d,id)):
+    type==="workPackage"?access.projectLedIds.size>0&&!!await d.prepare("SELECT id FROM work_packages WHERE id=? AND project_id IN ("+[...access.projectLedIds].map(()=>"?").join(",")+")").bind(id,...access.projectLedIds).first():false;
+   if(!canDelete)return forbidden();
+  }
+  const kind=(type==="project"||type==="workPackage"||type==="activity")?type as DeletableKind:null;
+  let reconciliation:D1PreparedStatement[]=[];
+  if(kind){
+   const scope=activityIdsInScope(kind);
+   const current=await deletionImpact(d,kind,id);
+   if(current.entryCount){
+    if(!user.isAdmin)return Response.json({error:"Rapporterad tid måste hanteras av en administratör innan denna post kan tas bort."},{status:409});
+    const mode=u.searchParams.get("timeMode");
+    if(mode!=="transfer"&&mode!=="purge")
+     return Response.json({error:"Posten har rapporterad tid. Välj att flytta eller ta bort tidposterna innan du raderar.",needsTimeResolution:true,impact:current},{status:409});
+    if(current.runningEntryCount)
+     return Response.json({error:"En eller flera tidtagningar pågår. Stoppa dem innan du flyttar eller tar bort tid."},{status:409});
+    if(u.searchParams.get("expectedFingerprint")!==current.fingerprint)
+     return Response.json({error:"Tidrapporterna har förändrats efter att dialogen öppnades. Läs in uppgifterna igen innan du fortsätter.",needsTimeResolution:true,impact:current},{status:409});
+    const reason=(u.searchParams.get("reason")||"Administrativ korrigering i samband med radering").trim().slice(0,500);
+    const targetId=Number(u.searchParams.get("targetActivityId"));
+    if(mode==="transfer"){
+     if(!Number.isSafeInteger(targetId)||targetId<=0)
+      return Response.json({error:"Välj en giltig mottagande aktivitet."},{status:400});
+     const target=await d.prepare("SELECT id FROM activities WHERE id=?").bind(targetId).first();
+     if(!target)return Response.json({error:"Mottagande aktivitet finns inte."},{status:404});
+     const inScope=await d.prepare(`SELECT id FROM activities WHERE id=? AND id IN (${scope})`).bind(targetId,id).first();
+     if(inScope)return Response.json({error:"Mottagande aktivitet kommer också att raderas. Välj en aktivitet utanför det som tas bort."},{status:409});
+    }else{
+     if(u.searchParams.get("confirm")!=="RADERA TID")
+      return Response.json({error:"Skriv RADERA TID för att bekräfta permanent borttagning och arkivering av tidposter."},{status:400});
+    }
+    reconciliation=timeResolutionStatements(d,kind,id,mode,user.accountId,Math.floor(Date.now()/1000),
+      mode==="transfer"?targetId:null,reason);
+   }
+  }
+  if(type==="group"){
+   const groupTime=await d.prepare("SELECT id FROM time_entries WHERE reporting_group_id=? LIMIT 1").bind(id).first();
+   const ledger=await d.prepare("SELECT id FROM employees WHERE is_group_ledger=1 AND ledger_group_id=? LIMIT 1").bind(id).first();
+   if(ledger)return Response.json({error:"Gruppen har en bokföringsidentitet för historisk tid och kan inte raderas medan den finns."},{status:409});
+   if(groupTime)return Response.json({error:"Gruppen har historiskt bokförda timmar. Flytta eller radera dessa tidposter innan gruppen kan tas bort."},{status:409});
+   await d.batch([
+    d.prepare("DELETE FROM employee_group_members WHERE group_id=?").bind(id),
+    d.prepare("DELETE FROM team_leaders WHERE team_id=?").bind(id),
+    d.prepare("DELETE FROM employee_groups WHERE id=?").bind(id)
+   ]);
+  }else if(type==="employee"){
+   const linked=await d.prepare("SELECT id,email,is_admin isAdmin,is_disabled isDisabled FROM user_accounts WHERE employee_id=?").bind(id)
+    .first<{id:number;email:string;isAdmin:number;isDisabled:number}>();
+   const disableLogin:D1PreparedStatement[]=[];
+   if(linked){
+    if(!user.isAdmin||u.searchParams.get("deactivateLinkedAccount")!=="yes")
+     return Response.json({error:"Medarbetaren är kopplad till inloggningskontot "+linked.email+". Bekräfta att kontot också ska inaktiveras och kopplas bort."},{status:409});
+    if(linked.id===user.accountId)
+     return Response.json({error:"Du kan inte ta bort den medarbetare som ditt eget aktiva administratörskonto är kopplat till."},{status:409});
+    if(linked.isAdmin&&!linked.isDisabled){
+     const active=await d.prepare("SELECT COUNT(*) n FROM user_accounts WHERE is_admin=1 AND is_disabled=0 AND id<>?")
+      .bind(linked.id).first<{n:number}>();
+     if(!(active?.n??0))return Response.json({error:"Minst en annan aktiv administratör måste finnas kvar."},{status:409});
+    }
+    disableLogin.push(
+     d.prepare("UPDATE user_accounts SET employee_id=NULL,is_admin=0,is_group_manager=0,is_disabled=1,failed_attempts=0,locked_until=NULL WHERE id=?").bind(linked.id),
+     d.prepare("DELETE FROM user_sessions WHERE user_id=?").bind(linked.id)
+    );
+   }
+   if(!await d.prepare("SELECT id FROM employees WHERE id=? AND is_group_ledger=0").bind(id).first())return Response.json({error:"Medarbetaren saknas."},{status:404});
+   const employeeImpact=await employeeTimeImpact(d,id);
+   let employeeTimeResolution:D1PreparedStatement[]=[];
+   if(employeeImpact.entryCount){
+    if(!user.isAdmin)return Response.json({error:"En administratör måste välja hur rapporterad tid ska hanteras innan medarbetaren tas bort."},{status:409});
+    if(employeeImpact.runningEntryCount)return Response.json({error:"Medarbetaren har en pågående tidtagning. Stoppa den innan kontot tas bort."},{status:409});
+    if(u.searchParams.get("expectedFingerprint")!==employeeImpact.fingerprint)
+     return Response.json({error:"Tidposterna har ändrats. Kontrollera och bekräfta uppgifterna på nytt.",impact:employeeImpact},{status:409});
+    const employeeMode=u.searchParams.get("employeeTimeMode");
+    const at=Math.floor(Date.now()/1000);
+    if(employeeMode==="group"){
+     const groupId=Number(u.searchParams.get("groupId"));
+     const targetGroup=Number.isSafeInteger(groupId)&&groupId>0?
+      await d.prepare("SELECT id,owner_id ownerId FROM employee_groups WHERE id=?").bind(groupId).first<{id:number;ownerId:number|null}>():null;
+     if(!targetGroup)return Response.json({error:"Välj en befintlig grupp som ska överta timmarna."},{status:400});
+     if(targetGroup.ownerId===id)
+      return Response.json({error:"Den borttagna medarbetaren är själv gruppchef för vald grupp. Tilldela en annan gruppchef först."},{status:409});
+     employeeTimeResolution=employeeGroupRetention(d,id,groupId,user.accountId,at);
+    }else if(employeeMode==="purge"){
+     if(u.searchParams.get("confirm")!=="RADERA TID")
+      return Response.json({error:"Skriv RADERA TID för att bekräfta borttagningen av alla rapporterade timmar."},{status:400});
+     employeeTimeResolution=employeeTimePurge(d,id,user.accountId,at);
+    }else{
+     return Response.json({error:"Välj att spara tiden på grupp eller radera timmarna.",needsEmployeeTimeResolution:true,impact:employeeImpact},{status:409});
+    }
+   }
+   await d.batch([
+    ...employeeTimeResolution,
+    ...disableLogin,
+    d.prepare("UPDATE employees SET manager_id=NULL WHERE manager_id=?").bind(id),
+    d.prepare("UPDATE employee_groups SET owner_id=NULL WHERE owner_id=?").bind(id),
+    d.prepare("DELETE FROM assignment_requests WHERE requested_by=? OR recipient_id=?").bind(id,id),
+    d.prepare("DELETE FROM individual_week_moves WHERE item_uid IN (SELECT item_uid FROM individual_form_items WHERE employee_id=?)").bind(id),
+    d.prepare("DELETE FROM individual_form_items WHERE employee_id=?").bind(id),
+    d.prepare("DELETE FROM individual_project_state WHERE employee_id=?").bind(id),
+    d.prepare("DELETE FROM individual_import_runs WHERE employee_id=?").bind(id),
+    d.prepare("DELETE FROM employee_project_orders WHERE employee_id=?").bind(id),
+    d.prepare("DELETE FROM project_leaders WHERE employee_id=?").bind(id),
+    d.prepare("DELETE FROM team_leaders WHERE employee_id=?").bind(id),
+    d.prepare("DELETE FROM work_package_leaders WHERE employee_id=?").bind(id),
+    d.prepare("DELETE FROM project_members WHERE employee_id=?").bind(id),
+    d.prepare("DELETE FROM employee_group_members WHERE employee_id=?").bind(id),
+    d.prepare("DELETE FROM assignment_periods WHERE assignment_id IN (SELECT id FROM assignments WHERE employee_id=?)").bind(id),
+    d.prepare("DELETE FROM assignments WHERE employee_id=?").bind(id),
+    d.prepare("DELETE FROM employees WHERE id=?").bind(id)
+   ]);
+  }else if(type==="project"){
+   if(!await d.prepare("SELECT id FROM projects WHERE id=?").bind(id).first())
+    return Response.json({error:"Projektet finns inte."},{status:404});
+   const selectIds="SELECT id FROM activities WHERE project_id=?";
+
+   await d.batch([
+    ...reconciliation,
+    ...activityDeletionStatements(d,selectIds,id),
+    d.prepare("DELETE FROM individual_project_state WHERE project_id=?").bind(id),
+    d.prepare("DELETE FROM employee_project_orders WHERE project_id=?").bind(id),
+    d.prepare("DELETE FROM project_members WHERE project_id=?").bind(id),
+    d.prepare("DELETE FROM project_leaders WHERE project_id=?").bind(id),
+    d.prepare("DELETE FROM work_package_leaders WHERE work_package_id IN (SELECT id FROM work_packages WHERE project_id=?)").bind(id),
+    d.prepare("DELETE FROM work_packages WHERE project_id=?").bind(id),
+    d.prepare("UPDATE project_proposals SET created_project_id=NULL WHERE created_project_id=?").bind(id),
+    d.prepare("DELETE FROM projects WHERE id=?").bind(id)
+   ]);
+  }else if(type==="workPackage"||type==="activity"){
+   const table=type==="workPackage"?"work_packages":"activities";
+   if(!await d.prepare(`SELECT id FROM ${table} WHERE id=?`).bind(id).first())
+    return Response.json({error:type==="workPackage"?"Uppdraget finns inte.":"Aktiviteten finns inte."},{status:404});
+   const selectIds=activitySubtree(type==="workPackage"?"work_package_id=?":"id=?");
+
+   const q=[...reconciliation,...activityDeletionStatements(d,selectIds,id)];
+   if(type==="workPackage")q.push(
+    d.prepare("DELETE FROM work_package_leaders WHERE work_package_id=?").bind(id),
+    d.prepare("DELETE FROM work_packages WHERE id=?").bind(id)
+   );
+   await d.batch(q);
+  }else return Response.json({error:"Okänd typ."},{status:400});
+  return Response.json(await visibleSnapshot(d,user));
+ }catch(e){
+  console.error("Fel vid radering i /api/data",e);
+  const detail=e instanceof Error?e.message:"";
+  if(/FOREIGN KEY constraint failed|constraint violation/i.test(detail))
+   return Response.json({error:"Posten har fortfarande kopplade uppgifter och kunde inte raderas. Ingen information har tagits bort. Kontrollera relaterade aktiviteter och tidrapporter."},{status:409});
+  return Response.json({error:"Raderingen misslyckades. Kontrollera serverloggen för detaljer."},{status:500});
  }
- if(type==="group")await d.batch([d.prepare("DELETE FROM employee_group_members WHERE group_id=?").bind(id),d.prepare("DELETE FROM employee_groups WHERE id=?").bind(id)]);
- else if(type==="employee")await d.batch([d.prepare("UPDATE employees SET manager_id=NULL WHERE manager_id=?").bind(id),d.prepare("DELETE FROM project_members WHERE employee_id=?").bind(id),d.prepare("DELETE FROM employee_group_members WHERE employee_id=?").bind(id),d.prepare("DELETE FROM assignments WHERE employee_id=?").bind(id),d.prepare("DELETE FROM employees WHERE id=?").bind(id)]);
- else if(type==="project")await d.batch([d.prepare("DELETE FROM project_members WHERE project_id=?").bind(id),d.prepare("DELETE FROM assignments WHERE activity_id IN (SELECT id FROM activities WHERE project_id=?)").bind(id),d.prepare("DELETE FROM activities WHERE project_id=?").bind(id),d.prepare("DELETE FROM work_packages WHERE project_id=?").bind(id),d.prepare("DELETE FROM projects WHERE id=?").bind(id)]);
- else if(type==="workPackage")await d.batch([d.prepare("DELETE FROM assignments WHERE activity_id IN (WITH RECURSIVE tree(id) AS (SELECT id FROM activities WHERE work_package_id=? UNION ALL SELECT a.id FROM activities a JOIN tree t ON a.parent_activity_id=t.id) SELECT id FROM tree)").bind(id),d.prepare("DELETE FROM activities WHERE id IN (WITH RECURSIVE tree(id) AS (SELECT id FROM activities WHERE work_package_id=? UNION ALL SELECT a.id FROM activities a JOIN tree t ON a.parent_activity_id=t.id) SELECT id FROM tree)").bind(id),d.prepare("DELETE FROM work_packages WHERE id=?").bind(id)]);
- else if(type==="activity")await d.batch([d.prepare("DELETE FROM assignments WHERE activity_id IN (WITH RECURSIVE tree(id) AS (SELECT id FROM activities WHERE id=? UNION ALL SELECT a.id FROM activities a JOIN tree t ON a.parent_activity_id=t.id) SELECT id FROM tree)").bind(id),d.prepare("DELETE FROM activities WHERE id IN (WITH RECURSIVE tree(id) AS (SELECT id FROM activities WHERE id=? UNION ALL SELECT a.id FROM activities a JOIN tree t ON a.parent_activity_id=t.id) SELECT id FROM tree)").bind(id)]);
- else return Response.json({error:"Okänd typ."},{status:400});return Response.json(await visibleSnapshot(d,user));
- }catch(e){console.error(e);return Response.json({error:"Kunde inte ta bort posten."},{status:500})}}
+}

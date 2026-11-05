@@ -27,7 +27,23 @@ export async function sessionIdentity(req:Request,d:D1Database):Promise<Identity
  const row=await d.prepare(`SELECT u.id accountId,u.email,u.employee_id employeeId,u.is_admin isAdmin,u.is_group_manager isGroupManager
  FROM user_sessions s JOIN user_accounts u ON u.id=s.user_id
  WHERE s.token_hash=? AND s.expires_at>? AND u.is_disabled=0`).bind(await tokenDigest(raw),Math.floor(Date.now()/1000)).first<{accountId:number;email:string;employeeId:number|null;isAdmin:number;isGroupManager:number}>();
- return row?{accountId:row.accountId,email:row.email,employeeId:row.employeeId,isAdmin:!!row.isAdmin,isGroupManager:!!row.isGroupManager}:null;
+ if(!row)return null;
+ // Legacy administrator logins sometimes existed as a separate account with
+ // the SAME email address as an existing employee. Link them automatically,
+ // but never steal a person already owned by another login and never replace
+ // an explicit link. This makes administrators usable as ordinary resources.
+ if(row.isAdmin&&row.employeeId===null){
+  const matching=await d.prepare("SELECT id FROM employees WHERE lower(trim(email))=lower(trim(?)) LIMIT 2").bind(row.email).all<{id:number}>();
+  // Do not silently pick a person when legacy records contain duplicate emails.
+  const person=matching.results.length===1?matching.results[0]:null;
+  if(person){
+   await d.prepare(`UPDATE user_accounts SET employee_id=? WHERE id=? AND employee_id IS NULL
+     AND NOT EXISTS(SELECT 1 FROM user_accounts WHERE employee_id=? AND id<>?)`).bind(person.id,row.accountId,person.id,row.accountId).run();
+   const linked=await d.prepare("SELECT employee_id employeeId FROM user_accounts WHERE id=?").bind(row.accountId).first<{employeeId:number|null}>();
+   row.employeeId=linked?.employeeId??null;
+  }
+ }
+ return {accountId:row.accountId,email:row.email,employeeId:row.employeeId,isAdmin:!!row.isAdmin,isGroupManager:!!row.isGroupManager};
 }
 export function unauthorized(){return Response.json({error:"Du måste logga in.",loginRequired:true},{status:401,headers:{"cache-control":"no-store"}})}
 export function forbidden(){return Response.json({error:"Du saknar behörighet för åtgärden."},{status:403,headers:{"cache-control":"no-store"}})}

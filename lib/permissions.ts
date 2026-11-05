@@ -8,7 +8,7 @@ export async function accessScope(d:D1Database,user:Identity):Promise<AccessScop
  const result:AccessScope={employeeIds:new Set(),projectIds:new Set(),selfProjectIds:new Set(),projectLedIds:new Set(),workPackageIds:new Set(),workPackageLedIds:new Set(),managedIds:new Set(),teamLedIds:new Set(),teamIds:new Set(),workPackageOnlyEmployeeIds:new Set()};
  if(user.isAdmin){
   const [employees,projects,teams,workPackages]=await Promise.all([
-   d.prepare("SELECT id FROM employees").all<{id:number}>(),
+   d.prepare("SELECT id FROM employees WHERE is_group_ledger=0").all<{id:number}>(),
    d.prepare("SELECT id FROM projects").all<{id:number}>(),
    d.prepare("SELECT id FROM employee_groups").all<{id:number}>(),
    d.prepare("SELECT id FROM work_packages").all<{id:number}>()]);

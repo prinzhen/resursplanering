@@ -3,6 +3,11 @@ import {sessionIdentity,unauthorized,forbidden,sameOrigin,passwordHash,randomHex
 import {accessScope} from "@/lib/permissions";
 export const dynamic="force-dynamic";
 const db=()=>{if(!env.DB)throw Error("Databasen saknas");return env.DB};
+async function activeOtherAdmins(d:D1Database,exceptId:number){
+ const row=await d.prepare("SELECT COUNT(*) n FROM user_accounts WHERE is_admin=1 AND is_disabled=0 AND id<>?").bind(exceptId).first<{n:number}>();
+ return Number(row?.n||0);
+}
+const adminRequired=()=>Response.json({error:"Minst en aktiv administratör måste finnas kvar."},{status:409});
 export async function GET(req:Request){
  const user=await sessionIdentity(req,db());if(!user)return unauthorized();
  const scope=await accessScope(db(),user);
@@ -13,7 +18,7 @@ export async function GET(req:Request){
  db().prepare("SELECT work_package_id workPackageId,employee_id employeeId FROM work_package_leaders ORDER BY work_package_id").all<{workPackageId:number;employeeId:number}>(),
  ]);
  const directory=(user.isAdmin||scope.projectLedIds.size>0||user.isGroupManager)?
-   await db().prepare("SELECT id,name FROM employees ORDER BY name").all<{id:number;name:string}>():{results:[]};
+   await db().prepare("SELECT id,name FROM employees WHERE is_group_ledger=0 ORDER BY name").all<{id:number;name:string}>():{results:[]};
  return Response.json({directoryEmployees:directory.results,accounts:accounts.results,
   projectLeaders:projects.results.filter(p=>user.isAdmin||scope.projectIds.has(p.projectId)),
   teamLeaders:teams.results.filter(t=>user.isAdmin||scope.teamIds.has(t.teamId)),
@@ -29,44 +34,142 @@ export async function POST(req:Request){
   const action=String(b.action||"");
   const employeeId=Number(b.employeeId),projectId=Number(b.projectId),teamId=Number(b.teamId);
   const scope=await accessScope(d,user);
+  // Synthetic ledgers represent historical group hours, not people. Never
+  // allow a caller to forge an ordinary employee-linked action using one.
+  if(Number.isSafeInteger(employeeId)&&employeeId>0&&await d.prepare("SELECT id FROM employees WHERE id=? AND is_group_ledger=0 AND is_group_ledger=1").bind(employeeId).first())
+   return Response.json({error:"Gruppbokföring är inte ett personkonto och kan inte tilldelas behörigheter."},{status:400});
+
   if(action==="saveAccount"){
    if(!user.isAdmin)return forbidden();
    const email=String(b.email||"").toLowerCase().trim();
    const password=String(b.password||"");
    if(!email.includes("@")||email.length>254||password.length<6||password.length>256)
     return Response.json({error:"E-post och lösenord (minst 6 tecken) krävs."},{status:400});
-   const person=b.employeeId===null||b.employeeId===undefined||b.employeeId===""?null:employeeId;
-   if(person!==null&&!await d.prepare("SELECT id FROM employees WHERE id=?").bind(person).first())
+   const existing=await d.prepare("SELECT id,employee_id employeeId,is_admin isAdmin,is_disabled isDisabled FROM user_accounts WHERE lower(email)=lower(?)").bind(email).first<{id:number;employeeId:number|null;isAdmin:number;isDisabled:number}>();
+   const explicitPerson=b.employeeId!==null&&b.employeeId!==undefined&&b.employeeId!=="";
+   const match=explicitPerson?null:await d.prepare("SELECT id FROM employees WHERE lower(email)=lower(?)").bind(email).first<{id:number}>();
+   const person=explicitPerson?employeeId:(match?.id??existing?.employeeId??null);
+   if(person!==null&&(!Number.isSafeInteger(person)||person<=0||!await d.prepare("SELECT id FROM employees WHERE id=? AND is_group_ledger=0").bind(person).first()))
     return Response.json({error:"Medarbetaren saknas."},{status:400});
+   if(person!==null){
+    const owner=await d.prepare("SELECT id FROM user_accounts WHERE employee_id=?").bind(person).first<{id:number}>();
+    if(owner&&owner.id!==existing?.id)return Response.json({error:"Medarbetaren är redan kopplad till ett annat konto. Kontakta administratören innan konton sammanförs."},{status:409});
+   }
    const salt=randomHex(16),hash=await passwordHash(password,salt),isAdmin=Number(Boolean(b.isAdmin)),groupManager=Number(Boolean(b.isGroupManager));
-   const existing=await d.prepare("SELECT id FROM user_accounts WHERE lower(email)=lower(?)").bind(email).first<{id:number}>();
+   if(existing?.isAdmin&&!isAdmin&&!existing.isDisabled&&!await activeOtherAdmins(d,existing.id))return adminRequired();
    if(existing){
     await d.prepare("UPDATE user_accounts SET employee_id=?,password_salt=?,password_hash=?,is_admin=?,is_group_manager=?,is_disabled=0,failed_attempts=0,locked_until=NULL WHERE id=?").bind(person,salt,hash,isAdmin,groupManager,existing.id).run();
     await d.prepare("DELETE FROM user_sessions WHERE user_id=?").bind(existing.id).run();
    }else{
     await d.prepare("INSERT INTO user_accounts(employee_id,email,password_salt,password_hash,is_admin,is_group_manager) VALUES(?,?,?,?,?,?)").bind(person,email,salt,hash,isAdmin,groupManager).run();
    }
+  }else if(action==="createPersonalLogin"){
+   // A separate day-to-day login for an existing staff member, while a
+   // dedicated administrator login remains intact and active.
+   if(!user.isAdmin)return forbidden();
+   const personId=Number(b.employeeId),loginEmail=String(b.email||"").trim().toLowerCase(),
+    loginPassword=String(b.password||""),manager=Number(Boolean(b.isGroupManager));
+   if(!Number.isSafeInteger(personId)||personId<=0||!loginEmail.includes("@")||
+      loginEmail.length>254||loginPassword.length<12||loginPassword.length>256)
+    return Response.json({error:"Välj befintlig medarbetare, en NY e-postadress och lösenord med minst 12 tecken."},{status:400});
+   const employee=await d.prepare("SELECT id,name FROM employees WHERE id=? AND is_group_ledger=0").bind(personId).first<{id:number;name:string}>();
+   if(!employee)return Response.json({error:"Medarbetaren finns inte."},{status:404});
+   if(await d.prepare("SELECT id FROM user_accounts WHERE lower(email)=lower(?)").bind(loginEmail).first())
+    return Response.json({error:"Inloggningsadressen används redan. Välj en ny adress för arbetskontot."},{status:409});
+   const projectIds=b.projectIds;
+   if(!Array.isArray(projectIds)||!projectIds.length||projectIds.length>250||
+      projectIds.some(v=>!Number.isSafeInteger(v)||v<=0)||
+      new Set(projectIds).size!==projectIds.length)
+    return Response.json({error:"Välj 1–250 giltiga projekt för arbetskontot."},{status:400});
+   const selected=await d.prepare("SELECT id FROM projects WHERE id IN ("+projectIds.map(()=>"?").join(",")+")").bind(...projectIds).all<{id:number}>();
+   if(selected.results.length!==projectIds.length)
+    return Response.json({error:"Ett eller flera valda projekt saknas."},{status:400});
+   const projectLead=Boolean(b.isProjectLeader);
+   const oldAccount=await d.prepare("SELECT id,is_admin isAdmin FROM user_accounts WHERE employee_id=?").bind(personId).first<{id:number;isAdmin:number}>();
+   if(oldAccount&&!oldAccount.isAdmin)
+    return Response.json({error:"Medarbetaren har redan ett vanligt inloggningskonto. Ändra det kontot i stället."},{status:409});
+   // Avoid creating a second staff record and guarantee the old admin remains
+   // an active admin. Both changes commit atomically.
+   const salt=randomHex(16),hash=await passwordHash(loginPassword,salt);
+   const queries:D1PreparedStatement[]=[];
+   if(oldAccount)queries.push(d.prepare("UPDATE user_accounts SET employee_id=NULL WHERE id=? AND is_admin=1").bind(oldAccount.id));
+   queries.push(d.prepare("INSERT INTO user_accounts(employee_id,email,password_salt,password_hash,is_admin,is_group_manager) VALUES(?,?,?,?,0,?)")
+    .bind(personId,loginEmail,salt,hash,manager));
+   for(const pid of projectIds){
+    queries.push(d.prepare("INSERT OR IGNORE INTO project_members(project_id,employee_id) VALUES(?,?)").bind(pid,personId));
+    if(projectLead)queries.push(d.prepare("INSERT OR IGNORE INTO project_leaders(project_id,employee_id) VALUES(?,?)").bind(pid,personId));
+   }
+   await d.batch(queries);
+   return Response.json({message:"Arbetskonto skapat för "+employee.name+" med behörighet i "+projectIds.length+" valda projekt. Administratörskontot är kvar med full behörighet. Befintliga projekt och aktiviteter har behållits."});
+  }else if(action==="linkAccount"){
+   if(!user.isAdmin)return forbidden();
+   const accountId=Number(b.accountId);
+   const linkedEmployee=b.employeeId===null?null:Number(b.employeeId);
+   if(!Number.isSafeInteger(accountId)||accountId<=0||linkedEmployee!==null&&(!Number.isSafeInteger(linkedEmployee)||linkedEmployee<=0))
+    return Response.json({error:"Ogiltigt konto eller medarbetare."},{status:400});
+   if(!await d.prepare("SELECT id FROM user_accounts WHERE id=?").bind(accountId).first())
+    return Response.json({error:"Kontot finns inte."},{status:404});
+   if(linkedEmployee!==null){
+    if(!await d.prepare("SELECT id FROM employees WHERE id=? AND is_group_ledger=0").bind(linkedEmployee).first())
+     return Response.json({error:"Medarbetaren finns inte."},{status:404});
+    const other=await d.prepare("SELECT id,email FROM user_accounts WHERE employee_id=? AND id<>?").bind(linkedEmployee,accountId).first<{id:number;email:string}>();
+    if(other)return Response.json({error:"Medarbetaren är redan kopplad till "+other.email+". Lös kontokonflikten innan du länkar."},{status:409});
+   }
+   await d.prepare("UPDATE user_accounts SET employee_id=? WHERE id=?").bind(linkedEmployee,accountId).run();
+  }else if(action==="setAccountRole"){
+   if(!user.isAdmin)return forbidden();
+   const target=Number(b.accountId),isAdmin=Number(Boolean(b.isAdmin));
+   if(!Number.isSafeInteger(target)||target<=0)return Response.json({error:"Ogiltigt konto."},{status:400});
+   const current=await d.prepare("SELECT id,is_admin isAdmin,is_disabled isDisabled FROM user_accounts WHERE id=?").bind(target).first<{id:number;isAdmin:number;isDisabled:number}>();
+   if(!current)return Response.json({error:"Kontot finns inte."},{status:404});
+   if(current.isAdmin&&!isAdmin&&!current.isDisabled&&!await activeOtherAdmins(d,target))return adminRequired();
+   await d.prepare("UPDATE user_accounts SET is_admin=? WHERE id=?").bind(isAdmin,target).run();
+   if(current.isAdmin!==isAdmin)await d.prepare("DELETE FROM user_sessions WHERE user_id=?").bind(target).run();
+  }else if(action==="deleteAccount"){
+   if(!user.isAdmin)return forbidden();
+   const target=Number(b.accountId);
+   if(!Number.isSafeInteger(target)||target<=0)return Response.json({error:"Ogiltigt konto."},{status:400});
+   if(target===user.accountId)return Response.json({error:"Du kan inte radera kontot du är inloggad med."},{status:409});
+   const current=await d.prepare("SELECT id,is_admin isAdmin,is_disabled isDisabled FROM user_accounts WHERE id=?").bind(target).first<{id:number;isAdmin:number;isDisabled:number}>();
+   if(!current)return Response.json({error:"Kontot finns inte."},{status:404});
+   if(current.isAdmin&&!current.isDisabled&&!await activeOtherAdmins(d,target))return adminRequired();
+   // Preserve audit trails: project proposals and priority changes refer to login IDs.
+   // Deleting such an account would break foreign keys or falsify old history.
+   const proposalRef=await d.prepare("SELECT id FROM project_proposals WHERE submitted_by=? OR reviewed_by=? LIMIT 1").bind(target,target).first();
+   const priorityRef=await d.prepare("SELECT id FROM activity_priority_history WHERE changed_by=? LIMIT 1").bind(target).first();
+   if(proposalRef||priorityRef){
+    await d.batch([
+     d.prepare("UPDATE user_accounts SET is_admin=0,is_group_manager=0,is_disabled=1,failed_attempts=0,locked_until=NULL WHERE id=?").bind(target),
+     d.prepare("DELETE FROM user_sessions WHERE user_id=?").bind(target)
+    ]);
+    return Response.json({archived:true,message:"Kontot har inaktiverats och fått sina behörigheter borttagna. Det ligger kvar i databasen för att bevara revisionshistoriken."});
+   }
+   await d.batch([d.prepare("DELETE FROM user_sessions WHERE user_id=?").bind(target),
+    d.prepare("DELETE FROM user_accounts WHERE id=?").bind(target)]);
   }else if(action==="setEmployeePassword"){
    if(!user.isAdmin)return forbidden();
    const employeeId=Number(b.employeeId),password=String(b.password||"");
    if(!Number.isSafeInteger(employeeId)||employeeId<=0||password.length<6||password.length>256)
     return Response.json({error:"Välj medarbetare och ange ett lösenord med minst 6 tecken."},{status:400});
-   const person=await d.prepare("SELECT id,email FROM employees WHERE id=?").bind(employeeId).first<{id:number;email:string|null}>();
+   const person=await d.prepare("SELECT id,email FROM employees WHERE id=? AND is_group_ledger=0").bind(employeeId).first<{id:number;email:string|null}>();
    if(!person||!person.email||!person.email.includes("@"))
     return Response.json({error:"Medarbetaren måste ha en giltig e-postadress."},{status:400});
    const email=person.email.toLowerCase().trim();
    const byEmployee=await d.prepare("SELECT id FROM user_accounts WHERE employee_id=?").bind(employeeId).first<{id:number}>();
-   const byEmail=await d.prepare("SELECT id,employee_id employeeId FROM user_accounts WHERE lower(email)=lower(?)").bind(email).first<{id:number;employeeId:number|null}>();
+   const byEmail=await d.prepare("SELECT id,employee_id employeeId,is_admin isAdmin FROM user_accounts WHERE lower(email)=lower(?)").bind(email).first<{id:number;employeeId:number|null;isAdmin:number}>();
    if(byEmail&&byEmail.employeeId!==null&&byEmail.employeeId!==employeeId)
     return Response.json({error:"E-postadressen används av en annan användare."},{status:409});
-   if(byEmployee&&byEmail&&byEmployee.id!==byEmail.id)
+   // A dedicated work login may intentionally use a different email from
+   // the employee record while the admin still owns the original address.
+   // Preserve the work login identity when resetting credentials.
+   if(byEmployee&&byEmail&&byEmployee.id!==byEmail.id&&!(byEmail.isAdmin&&byEmail.employeeId===null))
     return Response.json({error:"Medarbetarens konto och e-postadress pekar på olika konton."},{status:409});
    const salt=randomHex(16),hash=await passwordHash(password,salt);
    const existing=byEmployee||byEmail;
    if(existing?.id===user.accountId)return Response.json({error:"Byt ditt eget lösenord under Mitt konto."},{status:400});
    if(existing){
     await d.batch([
-     d.prepare("UPDATE user_accounts SET email=?,employee_id=?,password_salt=?,password_hash=?,is_disabled=0,failed_attempts=0,locked_until=NULL WHERE id=?").bind(email,employeeId,salt,hash,existing.id),
+     d.prepare("UPDATE user_accounts SET employee_id=?,password_salt=?,password_hash=?,is_disabled=0,failed_attempts=0,locked_until=NULL WHERE id=?").bind(employeeId,salt,hash,existing.id),
      d.prepare("DELETE FROM user_sessions WHERE user_id=?").bind(existing.id)
     ]);
    }else await d.prepare("INSERT INTO user_accounts(employee_id,email,password_salt,password_hash) VALUES(?,?,?,?)").bind(employeeId,email,salt,hash).run();
@@ -74,7 +177,11 @@ export async function POST(req:Request){
    if(!user.isAdmin)return forbidden();
    const target=Number(b.accountId);
    if(target===user.accountId)return Response.json({error:"Du kan inte inaktivera ditt eget administratörskonto."},{status:400});
-   await d.prepare("UPDATE user_accounts SET is_disabled=? WHERE id=?").bind(Number(Boolean(b.disabled)),target).run();
+   const disabled=Number(Boolean(b.disabled));
+   const current=await d.prepare("SELECT id,is_admin isAdmin,is_disabled isDisabled FROM user_accounts WHERE id=?").bind(target).first<{id:number;isAdmin:number;isDisabled:number}>();
+   if(!current)return Response.json({error:"Kontot finns inte."},{status:404});
+   if(disabled&&current.isAdmin&&!current.isDisabled&&!await activeOtherAdmins(d,target))return adminRequired();
+   await d.prepare("UPDATE user_accounts SET is_disabled=? WHERE id=?").bind(disabled,target).run();
    await d.prepare("DELETE FROM user_sessions WHERE user_id=?").bind(target).run();
   }else if(action==="replaceLeader"||action==="setWorkPackageLeader"){
    const kind=action==="setWorkPackageLeader"?"workPackage":String(b.kind||"");
@@ -87,7 +194,7 @@ export async function POST(req:Request){
    if(newId===null&&oldId===null&&!deleteOnly)return Response.json({error:"Välj en person att tillsätta eller ersätta."},{status:400});
    if([oldId,newId].some(x=>x!==null&&(!Number.isSafeInteger(x)||x<=0)))return Response.json({error:"Ogiltigt medarbetar-ID."},{status:400});
    const toCheck=action==="setWorkPackageLeader"?employeeId:newId;
-   if(toCheck!==null&&!await d.prepare("SELECT id FROM employees WHERE id=?").bind(toCheck).first())
+   if(toCheck!==null&&!await d.prepare("SELECT id FROM employees WHERE id=? AND is_group_ledger=0").bind(toCheck).first())
     return Response.json({error:"Medarbetaren saknas."},{status:404});
    const targetInfo:{id:number;ownerId?:number|null;projectId?:number}|null=kind==="team"?
      await d.prepare("SELECT id,owner_id ownerId FROM employee_groups WHERE id=?").bind(target).first<{id:number;ownerId:number|null}>():
@@ -125,7 +232,7 @@ export async function POST(req:Request){
     return Response.json({error:"Ogiltigt TEAM eller gruppchef."},{status:400});
    await d.prepare("UPDATE employee_groups SET owner_id=? WHERE id=?").bind(managerId,teamId).run();
  }else if(action==="setProjectLeader"||action==="setTeamLeader"){
-   if(!Number.isSafeInteger(employeeId)||employeeId<=0||!await d.prepare("SELECT id FROM employees WHERE id=?").bind(employeeId).first())
+   if(!Number.isSafeInteger(employeeId)||employeeId<=0||!await d.prepare("SELECT id FROM employees WHERE id=? AND is_group_ledger=0").bind(employeeId).first())
     return Response.json({error:"Välj en befintlig medarbetare."},{status:400});
    if(!user.isAdmin&&!user.isGroupManager)return forbidden();
    const enabled=Boolean(b.enabled);

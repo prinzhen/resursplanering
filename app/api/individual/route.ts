@@ -24,7 +24,7 @@ function friday(raw:string):string{const d=new Date(monday(raw)+"T00:00:00Z");d.
 const validStates=new Set(["Planerad","Pågående","Pausad","Klar","Fryst"]);
 const cleanStatus=(s:string)=>s==="Pågår"?"Pågående":s||"Planerad";
 const safeUID=(s:string)=>/^[a-zA-Z0-9_-]{1,100}$/.test(s);
-async function employee(d:D1Database,email:string){return d.prepare("SELECT id,name,email,manager_id managerId FROM employees WHERE lower(email)=lower(?)").bind(email).first<{id:number;name:string;email:string;managerId:number|null}>()}
+async function employee(d:D1Database,email:string){return d.prepare("SELECT id,name,email,manager_id managerId FROM employees WHERE is_group_ledger=0 AND lower(email)=lower(?)").bind(email).first<{id:number;name:string;email:string;managerId:number|null}>()}
 const validEmail=(value:string)=>/^[^\s@]{1,80}@[^\s@]{1,150}\.[^\s@]{2,40}$/.test(value)&&value.length<=254;
 const validProjectCode=(code:string)=>/^[A-Z0-9][A-Z0-9._-]{0,39}$/.test(code)&&!code.startsWith("INTERNAL-");
 async function updateActivityPriority(d:D1Database,activityId:number,newPriority:number,effectiveDate:string,accountId:number){

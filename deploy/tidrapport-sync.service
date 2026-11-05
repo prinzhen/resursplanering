@@ -1,0 +1,19 @@
+[Unit]
+Description=Planering -> Tidrapport audited time sync (test port 3200)
+Wants=network-online.target
+After=network-online.target
+ConditionPathExists=/etc/planering/tidrapport-sync.env
+
+[Service]
+Type=oneshot
+User=prinzhen
+WorkingDirectory=/opt/resursplanering-test-access
+EnvironmentFile=/etc/planering/tidrapport-sync.env
+# flock prevents overlapping sync executions.
+ExecStart=/usr/bin/flock -n /run/lock/planering-tidrapport-sync-test.lock /usr/bin/node /opt/resursplanering-test-access/scripts/sync-tidrapport.mjs
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target
