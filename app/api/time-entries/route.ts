@@ -60,7 +60,7 @@ export async function GET(req:Request){
   const u=new URL(req.url),scope=u.searchParams.get("scope")||"mine",
    all=scope==="all"&&user.isAdmin,historical=scope==="history",
    format=u.searchParams.get("format")||"json";
-  if(!user.employeeId&&!all&&!historical)return bad("Kontot är inte kopplat till en medarbetare.",403);
+  if(!user.employeeId&&!all&&!historical&&!user.isAdmin)return bad("Kontot är inte kopplat till en medarbetare.",403);
   if(!["json","csv"].includes(format))return bad("Ogiltigt exportformat.");
   const from=u.searchParams.get("from"),to=u.searchParams.get("to");
   if(from&&!validDay(from)||to&&!validDay(to)||from&&to&&from>to)return bad("Ogiltigt datumintervall.");
