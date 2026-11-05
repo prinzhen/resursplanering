@@ -36,7 +36,7 @@ export async function POST(req:Request){
   const scope=await accessScope(d,user);
   // Synthetic ledgers represent historical group hours, not people. Never
   // allow a caller to forge an ordinary employee-linked action using one.
-  if(Number.isSafeInteger(employeeId)&&employeeId>0&&await d.prepare("SELECT id FROM employees WHERE id=? AND is_group_ledger=1").bind(employeeId).first())
+  if(Number.isSafeInteger(employeeId)&&employeeId>0&&await d.prepare("SELECT id FROM employees WHERE id=? AND is_group_ledger=0 AND is_group_ledger=1").bind(employeeId).first())
    return Response.json({error:"Gruppbokföring är inte ett personkonto och kan inte tilldelas behörigheter."},{status:400});
 
   if(action==="saveAccount"){
@@ -72,7 +72,7 @@ export async function POST(req:Request){
    if(!Number.isSafeInteger(personId)||personId<=0||!loginEmail.includes("@")||
       loginEmail.length>254||loginPassword.length<12||loginPassword.length>256)
     return Response.json({error:"Välj befintlig medarbetare, en NY e-postadress och lösenord med minst 12 tecken."},{status:400});
-   const employee=await d.prepare("SELECT id,name FROM employees WHERE id=?").bind(personId).first<{id:number;name:string}>();
+   const employee=await d.prepare("SELECT id,name FROM employees WHERE id=? AND is_group_ledger=0").bind(personId).first<{id:number;name:string}>();
    if(!employee)return Response.json({error:"Medarbetaren finns inte."},{status:404});
    if(await d.prepare("SELECT id FROM user_accounts WHERE lower(email)=lower(?)").bind(loginEmail).first())
     return Response.json({error:"Inloggningsadressen används redan. Välj en ny adress för arbetskontot."},{status:409});
@@ -110,7 +110,7 @@ export async function POST(req:Request){
    if(!await d.prepare("SELECT id FROM user_accounts WHERE id=?").bind(accountId).first())
     return Response.json({error:"Kontot finns inte."},{status:404});
    if(linkedEmployee!==null){
-    if(!await d.prepare("SELECT id FROM employees WHERE id=?").bind(linkedEmployee).first())
+    if(!await d.prepare("SELECT id FROM employees WHERE id=? AND is_group_ledger=0").bind(linkedEmployee).first())
      return Response.json({error:"Medarbetaren finns inte."},{status:404});
     const other=await d.prepare("SELECT id,email FROM user_accounts WHERE employee_id=? AND id<>?").bind(linkedEmployee,accountId).first<{id:number;email:string}>();
     if(other)return Response.json({error:"Medarbetaren är redan kopplad till "+other.email+". Lös kontokonflikten innan du länkar."},{status:409});
@@ -151,7 +151,7 @@ export async function POST(req:Request){
    const employeeId=Number(b.employeeId),password=String(b.password||"");
    if(!Number.isSafeInteger(employeeId)||employeeId<=0||password.length<6||password.length>256)
     return Response.json({error:"Välj medarbetare och ange ett lösenord med minst 6 tecken."},{status:400});
-   const person=await d.prepare("SELECT id,email FROM employees WHERE id=?").bind(employeeId).first<{id:number;email:string|null}>();
+   const person=await d.prepare("SELECT id,email FROM employees WHERE id=? AND is_group_ledger=0").bind(employeeId).first<{id:number;email:string|null}>();
    if(!person||!person.email||!person.email.includes("@"))
     return Response.json({error:"Medarbetaren måste ha en giltig e-postadress."},{status:400});
    const email=person.email.toLowerCase().trim();
@@ -194,7 +194,7 @@ export async function POST(req:Request){
    if(newId===null&&oldId===null&&!deleteOnly)return Response.json({error:"Välj en person att tillsätta eller ersätta."},{status:400});
    if([oldId,newId].some(x=>x!==null&&(!Number.isSafeInteger(x)||x<=0)))return Response.json({error:"Ogiltigt medarbetar-ID."},{status:400});
    const toCheck=action==="setWorkPackageLeader"?employeeId:newId;
-   if(toCheck!==null&&!await d.prepare("SELECT id FROM employees WHERE id=?").bind(toCheck).first())
+   if(toCheck!==null&&!await d.prepare("SELECT id FROM employees WHERE id=? AND is_group_ledger=0").bind(toCheck).first())
     return Response.json({error:"Medarbetaren saknas."},{status:404});
    const targetInfo:{id:number;ownerId?:number|null;projectId?:number}|null=kind==="team"?
      await d.prepare("SELECT id,owner_id ownerId FROM employee_groups WHERE id=?").bind(target).first<{id:number;ownerId:number|null}>():
@@ -232,7 +232,7 @@ export async function POST(req:Request){
     return Response.json({error:"Ogiltigt TEAM eller gruppchef."},{status:400});
    await d.prepare("UPDATE employee_groups SET owner_id=? WHERE id=?").bind(managerId,teamId).run();
  }else if(action==="setProjectLeader"||action==="setTeamLeader"){
-   if(!Number.isSafeInteger(employeeId)||employeeId<=0||!await d.prepare("SELECT id FROM employees WHERE id=?").bind(employeeId).first())
+   if(!Number.isSafeInteger(employeeId)||employeeId<=0||!await d.prepare("SELECT id FROM employees WHERE id=? AND is_group_ledger=0").bind(employeeId).first())
     return Response.json({error:"Välj en befintlig medarbetare."},{status:400});
    if(!user.isAdmin&&!user.isGroupManager)return forbidden();
    const enabled=Boolean(b.enabled);
