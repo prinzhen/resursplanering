@@ -97,6 +97,7 @@ export default function TimeTrackingPanel(){
       </select>
       <span className="mt-1 block text-xs font-normal text-slate-500">Grupptimmar visas för ansvarig gruppchef, berörd projektledare och administratör. Timmarna saknar personlig koppling.</span>
     </label>}
+    {!data.viewer.employeeId&&<p className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-800">Administratörskontot är inte kopplat till en medarbetare. Du kan granska och justera rapporterad tid men inte starta en egen tidtagning förrän kontot kopplas till en person.</p>}
     <div className="grid gap-4 rounded-xl border border-slate-200 bg-slate-50 p-4 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-end">
      <label className="block text-sm font-semibold">Aktivitet
       <select className={classes+" mt-2"} value={activityId} onChange={e=>setActivityId(e.target.value)}>
@@ -115,7 +116,7 @@ export default function TimeTrackingPanel(){
        <Button type="button" onClick={stop} disabled={busy}><Pause/>Stoppa klocka</Button>
       </>:<>
        <div className="text-sm text-slate-600">Ingen klocka igång</div>
-       <Button type="button" onClick={start} disabled={busy||!selectedActivity}><Play/>Starta klocka</Button>
+       <Button type="button" onClick={start} disabled={busy||!selectedActivity||!data.viewer.employeeId}><Play/>Starta klocka</Button>
       </>}
      </div>
     </div>
@@ -125,7 +126,7 @@ export default function TimeTrackingPanel(){
       <label className="text-sm">Datum<input className={classes+" mt-1"} type="date" required value={manualDate} onChange={e=>setManualDate(e.target.value)}/></label>
       <label className="text-sm">Nedlagd tid (minuter)<input className={classes+" mt-1"} type="number" min={1} max={1440} step={1} required value={manualMinutes} onChange={e=>setManualMinutes(e.target.value)}/></label>
       <label className="text-sm sm:col-span-2">Kommentar (valfritt)<input className={classes+" mt-1"} maxLength={500} value={manualNote} onChange={e=>setManualNote(e.target.value)} placeholder="Vad arbetade du med?"/></label>
-      <div className="sm:col-span-2"><Button type="submit" variant="outline" disabled={busy||!selectedActivity}><Plus/>Registrera tid</Button></div>
+      <div className="sm:col-span-2"><Button type="submit" variant="outline" disabled={busy||!selectedActivity||!data.viewer.employeeId}><Plus/>Registrera tid</Button></div>
      </form>
      <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
       <p className="text-sm font-semibold text-slate-700">Summa registrerad tid</p>
