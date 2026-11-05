@@ -18,7 +18,7 @@ export async function GET(req:Request){
  db().prepare("SELECT work_package_id workPackageId,employee_id employeeId FROM work_package_leaders ORDER BY work_package_id").all<{workPackageId:number;employeeId:number}>(),
  ]);
  const directory=(user.isAdmin||scope.projectLedIds.size>0||user.isGroupManager)?
-   await db().prepare("SELECT id,name FROM employees ORDER BY name").all<{id:number;name:string}>():{results:[]};
+   await db().prepare("SELECT id,name FROM employees WHERE is_group_ledger=0 ORDER BY name").all<{id:number;name:string}>():{results:[]};
  return Response.json({directoryEmployees:directory.results,accounts:accounts.results,
   projectLeaders:projects.results.filter(p=>user.isAdmin||scope.projectIds.has(p.projectId)),
   teamLeaders:teams.results.filter(t=>user.isAdmin||scope.teamIds.has(t.teamId)),
@@ -34,6 +34,11 @@ export async function POST(req:Request){
   const action=String(b.action||"");
   const employeeId=Number(b.employeeId),projectId=Number(b.projectId),teamId=Number(b.teamId);
   const scope=await accessScope(d,user);
+  // Synthetic ledgers represent historical group hours, not people. Never
+  // allow a caller to forge an ordinary employee-linked action using one.
+  if(Number.isSafeInteger(employeeId)&&employeeId>0&&await d.prepare("SELECT id FROM employees WHERE id=? AND is_group_ledger=1").bind(employeeId).first())
+   return Response.json({error:"Gruppbokföring är inte ett personkonto och kan inte tilldelas behörigheter."},{status:400});
+
   if(action==="saveAccount"){
    if(!user.isAdmin)return forbidden();
    const email=String(b.email||"").toLowerCase().trim();
@@ -44,7 +49,7 @@ export async function POST(req:Request){
    const explicitPerson=b.employeeId!==null&&b.employeeId!==undefined&&b.employeeId!=="";
    const match=explicitPerson?null:await d.prepare("SELECT id FROM employees WHERE lower(email)=lower(?)").bind(email).first<{id:number}>();
    const person=explicitPerson?employeeId:(match?.id??existing?.employeeId??null);
-   if(person!==null&&(!Number.isSafeInteger(person)||person<=0||!await d.prepare("SELECT id FROM employees WHERE id=?").bind(person).first()))
+   if(person!==null&&(!Number.isSafeInteger(person)||person<=0||!await d.prepare("SELECT id FROM employees WHERE id=? AND is_group_ledger=0").bind(person).first()))
     return Response.json({error:"Medarbetaren saknas."},{status:400});
    if(person!==null){
     const owner=await d.prepare("SELECT id FROM user_accounts WHERE employee_id=?").bind(person).first<{id:number}>();
