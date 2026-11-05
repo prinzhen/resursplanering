@@ -360,6 +360,76 @@ try{
  const workTimer=await ok(await (async()=>{const r=await api("","/api/auth",{action:"login",email:"role-admin-work@example.se",password:changedWorkPassword});assert.equal(r.status,200);return (await fetch(base+"/api/auth",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({action:"login",email:"role-admin-work@example.se",password:changedWorkPassword})})).headers.get("set-cookie")?.split(";")[0]})(),"/api/time-entries",{action:"manual",activityId:workSelf.activityId,workDate:"2026-11-04",durationMinutes:20});
  check("Separated personal work login may time-report on its own activity",()=>assert.equal(workTimer.ok,true));
 
+
+ // Regression: deletion must clean *every* dependent planning relation, not
+ // just assignments. This previously caused HTTP 500 / "Kunde inte ta bort posten".
+ const deleteProjectCode="DEL-REFS-TEST";
+ const deleteProjectState=await ok(admin,"/api/data",{action:"project",code:deleteProjectCode,name:"Isolerat raderingstest",description:"Endast automatisk test",priority:3});
+ const deleteProject=deleteProjectState.projects.find(p=>p.code===deleteProjectCode);
+ assert.ok(deleteProject?.id);
+ const withWork=await ok(admin,"/api/data",{action:"workPackage",projectId:deleteProject.id,code:"UP-DEL",name:"Uppdrag raderingstest"});
+ const deleteWork=withWork.workPackages.find(w=>w.projectId===deleteProject.id&&w.code==="UP-DEL");
+ assert.ok(deleteWork?.id);
+ await ok(admin,"/api/data",{action:"setSingleProjectMember",projectId:deleteProject.id,employeeId:sara,enabled:true});
+ await ok(admin,"/api/access",{action:"setProjectLeader",projectId:deleteProject.id,employeeId:erik,enabled:true});
+ const newActivity=async(name,parentActivityId=null,workPackageId=deleteWork.id)=>{
+  const current=await ok(admin,"/api/data",{action:"activity",projectId:deleteProject.id,workPackageId,parentActivityId,name,description:"Kontrollerar säker borttagning av relaterad planering",startDate:"2026-11-06",endDate:"2026-11-30",estimatedHours:20,status:"Planerad"});
+  const found=current.activities.find(a=>a.name===name&&a.projectId===deleteProject.id);
+  assert.ok(found?.id,"New activity missing: "+name);
+  return found.id;
+ };
+ const parentToRemove=await newActivity("DEL-TEST parent");
+ const childToRemove=await newActivity("DEL-TEST child",parentToRemove);
+ await ok(admin,"/api/data",{action:"setActivityAssignments",activityId:childToRemove,resources:[{employeeId:sara,effortPercent:40}]});
+ await ok(admin,"/api/data",{action:"setAssignmentPeriods",activityId:childToRemove,employeeId:sara,periods:[
+  {startDate:"2026-11-06",endDate:"2026-11-12",effortPercent:40},
+  {startDate:"2026-11-13",endDate:"2026-11-30",effortPercent:60}
+ ]});
+ const productionEquivalentDB=await onlyDatabase(join(dir,"data"));
+ const addRelations=(activityId,token)=>{
+  const rw=new DatabaseSync(productionEquivalentDB);
+  try{
+   rw.exec("PRAGMA busy_timeout=5000");
+   rw.prepare("INSERT INTO individual_form_items(item_uid,employee_id,activity_id,first_week,current_week) VALUES(?,?,?,?,?)").run(token,sara,activityId,"2026-W45","2026-W45");
+   rw.prepare("INSERT INTO individual_week_moves(item_uid,from_week,to_week,reason) VALUES(?,?,?,?)").run(token,"2026-W45","2026-W46","CI-raderingstest");
+   rw.prepare("INSERT OR REPLACE INTO individual_project_state(employee_id,project_id,state) VALUES(?,?,?)").run(sara,deleteProject.id,"Aktiv");
+   rw.prepare("INSERT OR REPLACE INTO employee_project_orders(employee_id,project_id,sort_order) VALUES(?,?,?)").run(sara,deleteProject.id,0);
+   rw.prepare("INSERT INTO activity_priority_history(activity_id,effective_from,priority,source) VALUES(?,?,?,?)").run(activityId,"2026-11-06",2,"excel");
+   rw.prepare("INSERT INTO assignment_requests(activity_id,requested_by,recipient_id,effort_percent,start_date,end_date,status) VALUES(?,?,?,?,?,?,?)").run(activityId,erik,sara,30,"2026-11-06","2026-11-30","pending");
+  }finally{rw.close()}
+ };
+ addRelations(childToRemove,"CI-DEL-CHILD-"+childToRemove);
+ const delParentResponse=await fetch(base+"/api/data?type=activity&id="+parentToRemove,{method:"DELETE",headers:{cookie:admin}});
+ const delParentRaw=await delParentResponse.text();
+ check("Removing parent activity clears descendant assignments, periods, forms, moves, requests and priority history",()=>{
+  assert.equal(delParentResponse.status,200,delParentRaw.slice(0,600));
+ });
+ // Create an unrelated activity with its own relations to exercise project delete.
+ const remainingActivity=await newActivity("DEL-TEST project childless");
+ await ok(admin,"/api/data",{action:"setActivityAssignments",activityId:remainingActivity,resources:[{employeeId:sara,effortPercent:25}]});
+ addRelations(remainingActivity,"CI-DEL-PROJECT-"+remainingActivity);
+ const deleteProjectResponse=await fetch(base+"/api/data?type=project&id="+deleteProject.id,{method:"DELETE",headers:{cookie:admin}});
+ const deleteProjectRaw=await deleteProjectResponse.text();
+ check("Removing a project clears planning relations, members, leaders and work package",()=>{
+  assert.equal(deleteProjectResponse.status,200,deleteProjectRaw.slice(0,600));
+ });
+ const deletedDb=new DatabaseSync(productionEquivalentDB,{readOnly:true});
+ try{
+  check("Deletion leaves no orphaned refs in the actual D1 SQLite test database",()=>{
+   for(const activityId of [parentToRemove,childToRemove,remainingActivity]){
+    assert.equal(deletedDb.prepare("SELECT COUNT(*) n FROM activities WHERE id=?").get(activityId).n,0);
+    assert.equal(deletedDb.prepare("SELECT COUNT(*) n FROM individual_form_items WHERE activity_id=?").get(activityId).n,0);
+    assert.equal(deletedDb.prepare("SELECT COUNT(*) n FROM assignment_requests WHERE activity_id=?").get(activityId).n,0);
+    assert.equal(deletedDb.prepare("SELECT COUNT(*) n FROM activity_priority_history WHERE activity_id=?").get(activityId).n,0);
+   }
+   assert.equal(deletedDb.prepare("SELECT COUNT(*) n FROM project_members WHERE project_id=?").get(deleteProject.id).n,0);
+   assert.equal(deletedDb.prepare("SELECT COUNT(*) n FROM employee_project_orders WHERE project_id=?").get(deleteProject.id).n,0);
+   assert.equal(deletedDb.prepare("SELECT COUNT(*) n FROM individual_project_state WHERE project_id=?").get(deleteProject.id).n,0);
+   assert.equal(deletedDb.prepare("SELECT COUNT(*) n FROM work_packages WHERE project_id=?").get(deleteProject.id).n,0);
+   assert.equal(deletedDb.prepare("PRAGMA foreign_key_check").all().length,0);
+  });
+ }finally{deletedDb.close()}
+
  const db=new DatabaseSync(await onlyDatabase(join(dir,"data")),{readOnly:true});
  try{
   check("Time adjustments are audited, including delete",()=>{
