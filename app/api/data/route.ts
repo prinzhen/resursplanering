@@ -432,7 +432,7 @@ export async function DELETE(request:Request){
    const disableLogin:D1PreparedStatement[]=[];
    if(linked){
     if(!user.isAdmin||u.searchParams.get("deactivateLinkedAccount")!=="yes")
-     return Response.json({error:"Medarbetaren har inloggningskontot "+linked.email+". Bekräfta att kontot också ska inaktiveras och kopplas bort."},{status:409});
+     return Response.json({error:"Medarbetaren är kopplad till inloggningskontot "+linked.email+". Bekräfta att kontot också ska inaktiveras och kopplas bort."},{status:409});
     if(linked.id===user.accountId)
      return Response.json({error:"Du kan inte ta bort den medarbetare som ditt eget aktiva administratörskonto är kopplat till."},{status:409});
     if(linked.isAdmin&&!linked.isDisabled){
