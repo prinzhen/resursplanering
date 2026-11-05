@@ -31,10 +31,11 @@ på grupp*. De får **läsa men inte ändra** grupptimmarna. Vanliga medarbetare
 får inte läsa andra personers tid eller gruppens historik.
 
 **Viktiga begränsningar:** En pågående tidtagning måste stoppas innan
-medarbetaren tas bort. Ett aktivt inloggningskonto som är kopplat till
-medarbetaren ska först hanteras under *Konton och behörigheter*; det
-raderas inte tyst med personposten. För att gruppchef ska se grupptimmarna
-måste gruppen ha en tilldelad chef/ägare. Fritextkommentarer kan själva
+medarbetaren tas bort. Om medarbetaren har ett eget inloggningskonto visas
+ett **separat obligatoriskt val** för att inaktivera och koppla bort kontot,
+samt återkalla alla sessioner. Kontot behålls i inaktiverat tillstånd för
+administrativ revisionshistorik, aldrig som aktivt personkonto.
+För att gruppchef ska se grupptimmarna måste gruppen ha en tilldelad chef/ägare. Fritextkommentarer kan själva
 innehålla personnamn och behöver i så fall granskas separat. En grupp
 med kvarvarande historiska bokföringsrader kan inte raderas utan att
 historiens destination först hanteras.
