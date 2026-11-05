@@ -553,6 +553,124 @@ try{
    assert.equal(afterActivityMove.prepare("PRAGMA foreign_key_check").all().length,0);
   });
  }finally{afterActivityMove.close()}
+
+ // Deleted employee with historical hours: keep the real work on a non-person
+ // group ledger. Group owner/project leader may read only anonymous group time.
+ const nisseEmail="nisse-departure-ci@example.se";
+ const personData=await ok(admin,"/api/data",{action:"employee",name:"Nisse CI",email:nisseEmail,role:"Medarbetare",managerId:anna,capacityPercent:100});
+ const nisse=personData.employees.find(x=>x.email===nisseEmail)?.id;
+ assert.ok(nisse,"Employee Nisse not created");
+ await ok(admin,"/api/data",{action:"setSingleProjectMember",projectId:1,employeeId:nisse,enabled:true});
+ const groupState=await ok(manager,"/api/data",{action:"saveEmployeeGroup",name:"Nisses historikgrupp CI",employeeIds:[sara,nisse]});
+ const historyGroup=groupState.employeeGroups.find(x=>x.name==="Nisses historikgrupp CI");
+ assert.ok(historyGroup?.id);
+ await ok(admin,"/api/access",{action:"saveAccount",email:nisseEmail,employeeId:nisse,password,isAdmin:false,isGroupManager:false});
+ const nisseSession=await connected(nisseEmail);
+ await ok(nisseSession,"/api/time-entries",{action:"manual",activityId:1,workDate:"2026-11-08",durationMinutes:42,note:"ci-nisse-anonymous-transfer"});
+ const nisseTime=(await ok(nisseSession,"/api/time-entries")).entries.find(x=>x.note==="ci-nisse-anonymous-transfer");
+ assert.ok(nisseTime?.id);
+ const editDenied=await api(ordinary,"/api/time-entries",{action:"adminUpdate",id:nisseTime.id,activityId:1,
+  workDate:"2026-11-09",durationMinutes:66,note:"Forbidden"});
+ check("Regular employees cannot adjust another person's time with the admin API",()=>assert.equal(editDenied.status,403));
+ await ok(admin,"/api/time-entries",{action:"adminUpdate",id:nisseTime.id,activityId:1,
+  workDate:"2026-11-09",durationMinutes:66,note:"ci-admin-corrected"});
+ const editedNisse=(await ok(nisseSession,"/api/time-entries")).entries.find(x=>x.id===nisseTime.id);
+ check("ADMIN may correct any employee's date, duration and note with audit",()=>{
+  assert.equal(editedNisse.durationSeconds,3960);
+  assert.equal(editedNisse.workDate,"2026-11-09");
+  assert.equal(editedNisse.note,"ci-admin-corrected");
+ });
+ const previewDenied=await fetch(base+`/api/employee-delete-impact?id=${nisse}`,{headers:{cookie:ordinary}});
+ check("Employee removal impact is available only to administrator",()=>assert.equal(previewDenied.status,403));
+ const employeePreview=await ok(admin,`/api/employee-delete-impact?id=${nisse}`);
+ check("Employee removal dialog knows reported hours and suggested manager's group",()=>{
+  assert.equal(employeePreview.impact.entryCount,1);
+  assert.equal(employeePreview.impact.totalSeconds,3960);
+  assert.equal(employeePreview.suggestedGroupId,historyGroup.id);
+ });
+ const noEmployeeResolution=await fetch(base+`/api/data?type=employee&id=${nisse}`,{method:"DELETE",headers:{cookie:admin}});
+ check("Recorded employee hours require an explicit administrator resolution",()=>assert.equal(noEmployeeResolution.status,409));
+ const accountInfo=await ok(admin,"/api/access");
+ const nisseAccount=accountInfo.accounts.find(x=>x.email===nisseEmail);
+ assert.ok(nisseAccount?.id);
+ await ok(admin,"/api/access",{action:"deleteAccount",accountId:nisseAccount.id});
+ const staleEmployeeFingerprint=await fetch(base+"/api/data?"+new URLSearchParams({
+  type:"employee",id:String(nisse),employeeTimeMode:"group",groupId:String(historyGroup.id),expectedFingerprint:"stale"
+ }),{method:"DELETE",headers:{cookie:admin}});
+ check("Employee deletion refuses stale preview/fingerprint",()=>assert.equal(staleEmployeeFingerprint.status,409));
+ const groupDeleteParams=new URLSearchParams({type:"employee",id:String(nisse),employeeTimeMode:"group",
+  groupId:String(historyGroup.id),expectedFingerprint:employeePreview.impact.fingerprint});
+ const transferredResponse=await fetch(base+"/api/data?"+groupDeleteParams,{method:"DELETE",headers:{cookie:admin}});
+ const transferredRaw=await transferredResponse.text();
+ check("Admin can delete Nisse while retaining all time anonymously on group",()=>{
+  assert.equal(transferredResponse.status,200,transferredRaw.slice(0,850));
+ });
+ const asAdmin=(await ok(admin,"/api/time-entries?scope=history")).entries.find(x=>x.id===nisseTime.id);
+ const asManager=(await ok(manager,"/api/time-entries?scope=history")).entries.find(x=>x.id===nisseTime.id);
+ const asLeader=(await ok(leader,"/api/time-entries?scope=history")).entries.find(x=>x.id===nisseTime.id);
+ const asOther=(await ok(nonmember,"/api/time-entries?scope=history")).entries.find(x=>x.id===nisseTime.id);
+ check("Admins, owning group managers and project leaders see only anonymous group time",()=>{
+  for(const row of [asAdmin,asManager,asLeader]){
+   assert.ok(row);
+   assert.equal(row.reportingGroupId,historyGroup.id);
+   assert.equal(row.reportingGroupName,"Nisses historikgrupp CI");
+   assert.equal(row.employeeEmail,null);
+   assert.equal(row.employeeName,"Borttagen medarbetare");
+   assert.equal(row.durationSeconds,3960);
+  }
+  assert.equal(asOther,undefined);
+ });
+ const hiddenNisse=(await ok(admin,"/api/data"));
+ check("Deleted staff and synthetic group ledger are not exposed as active staff",()=>{
+  assert.ok(!hiddenNisse.employees.some(x=>x.id===nisse));
+  assert.ok(!hiddenNisse.employees.some(x=>x.role==="Gruppbokföring"));
+ });
+ const dbAfterNisse=new DatabaseSync(await onlyDatabase(join(dir,"data")),{readOnly:true});
+ try{
+  check("Group time has zero foreign-key references to the deleted person's identity",()=>{
+   const ledger=dbAfterNisse.prepare("SELECT employee_id employeeId,reporting_group_id groupId FROM time_entries WHERE id=?").get(nisseTime.id);
+   assert.ok(ledger);
+   assert.notEqual(ledger.employeeId,nisse);
+   assert.equal(ledger.groupId,historyGroup.id);
+   assert.equal(dbAfterNisse.prepare("SELECT COUNT(*) n FROM employees WHERE id=?").get(nisse).n,0);
+   assert.equal(dbAfterNisse.prepare("SELECT is_group_ledger ledger FROM employees WHERE id=?").get(ledger.employeeId).ledger,1);
+   assert.equal(dbAfterNisse.prepare("PRAGMA foreign_key_check").all().length,0);
+  });
+ }finally{dbAfterNisse.close()}
+ // Separate destructive mode: remove a departure's hours, preserve a sync
+ // tombstone and prevent the former employee from being part of active staff.
+ const erasedEmail="deleted-purge-ci@example.se";
+ const purgePersonData=await ok(admin,"/api/data",{action:"employee",name:"Tid bort CI",email:erasedEmail,role:"Medarbetare",managerId:anna,capacityPercent:100});
+ const erasePerson=purgePersonData.employees.find(x=>x.email===erasedEmail)?.id;
+ assert.ok(erasePerson);
+ await ok(admin,"/api/data",{action:"setSingleProjectMember",projectId:1,employeeId:erasePerson,enabled:true});
+ await ok(admin,"/api/access",{action:"saveAccount",email:erasedEmail,employeeId:erasePerson,password,isAdmin:false,isGroupManager:false});
+ const eraseCookie=await connected(erasedEmail);
+ await ok(eraseCookie,"/api/time-entries",{action:"manual",activityId:1,workDate:"2026-11-10",durationMinutes:19,note:"ci-remove-staff-time"});
+ const eraseEntry=(await ok(eraseCookie,"/api/time-entries")).entries.find(x=>x.note==="ci-remove-staff-time");
+ assert.ok(eraseEntry?.id);
+ const eraseAccount=(await ok(admin,"/api/access")).accounts.find(x=>x.email===erasedEmail);
+ assert.ok(eraseAccount?.id);
+ await ok(admin,"/api/access",{action:"deleteAccount",accountId:eraseAccount.id});
+ const erasePreview=await ok(admin,`/api/employee-delete-impact?id=${erasePerson}`);
+ const purgeEmployeeParams=new URLSearchParams({type:"employee",id:String(erasePerson),
+  employeeTimeMode:"purge",expectedFingerprint:erasePreview.impact.fingerprint,confirm:"RADERA TID"});
+ const purgeEmployeeResponse=await fetch(base+"/api/data?"+purgeEmployeeParams,{method:"DELETE",headers:{cookie:admin}});
+ const purgeEmployeeBody=await purgeEmployeeResponse.text();
+ check("Administrator can remove staff and its time with immutable deletion archive",()=>{
+  assert.equal(purgeEmployeeResponse.status,200,purgeEmployeeBody.slice(0,700));
+ });
+ const purgeCheck=new DatabaseSync(await onlyDatabase(join(dir,"data")),{readOnly:true});
+ try{
+  check("Purged employee's time is gone and sync tombstone survives without their name/email",()=>{
+   assert.equal(purgeCheck.prepare("SELECT COUNT(*) n FROM time_entries WHERE id=?").get(eraseEntry.id).n,0);
+   const archived=purgeCheck.prepare("SELECT source_event_id eventId,employee_email email,employee_name name FROM time_entry_removal_archive WHERE original_entry_id=?").get(eraseEntry.id);
+   assert.ok(archived?.eventId>0);
+   assert.equal(archived.email,"");
+   assert.equal(archived.name,"Borttagen medarbetare");
+   assert.equal(purgeCheck.prepare("PRAGMA foreign_key_check").all().length,0);
+  });
+ }finally{purgeCheck.close()}
  const db=new DatabaseSync(await onlyDatabase(join(dir,"data")),{readOnly:true});
  try{
   check("Time adjustments are audited, including delete",()=>{
