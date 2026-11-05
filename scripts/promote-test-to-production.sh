@@ -63,7 +63,7 @@ fi
 command -v flock >/dev/null || fail "Saknar flock."
 exec 9>"$LOCK"
 flock -n 9 || fail "En annan uppgradering pågår redan."
-for tool in python3 systemctl curl git node pnpm runuser cp mv; do
+for tool in python3 systemctl curl git node pnpm runuser cp mv ss seq; do
  command -v "$tool" >/dev/null || fail "Saknar kommando: $tool"
 done
 id resursplanering >/dev/null || fail "Tjänstanvändaren resursplanering finns inte."
@@ -72,6 +72,13 @@ for path in "$PROD_APP" "$TEST_APP" "$PROD_STATE/data" "$TEST_STATE/data"; do
 done
 systemctl cat "$PROD_SERVICE" >/dev/null || fail "Produktionssystemd saknas."
 systemctl cat "$TEST_SERVICE" >/dev/null || fail "Testsystemd saknas."
+# Never assume the service points at the expected SQLite location or port.
+PROD_ENV="$(systemctl show -p Environment --value "$PROD_SERVICE")"
+TEST_ENV="$(systemctl show -p Environment --value "$TEST_SERVICE")"
+[[ " $PROD_ENV " == *" PORT=3000 "* && " $PROD_ENV " == *" DATA_DIR=$PROD_STATE/data "* ]] ||
+ fail "Produktionen pekar inte på förväntad port/databas. Kontrollera systemctl cat resursplanering."
+[[ " $TEST_ENV " == *" PORT=3200 "* && " $TEST_ENV " == *" DATA_DIR=$TEST_STATE/data "* ]] ||
+ fail "Testtjänsten pekar inte på förväntad port/databas. Kontrollera systemctl cat resursplanering-test-access."
 
 inspect() {
  python3 - "$PROD_STATE/data" "$TEST_STATE/data" <<'PY'
@@ -222,6 +229,7 @@ git -C "$STAGE" checkout --quiet --detach "$RELEASE_SHA"
 [[ "$(git -C "$STAGE" rev-parse HEAD)" == "$RELEASE_SHA" ]] ||
  fail "Fel kodversion efter kloning."
 chown -R resursplanering:resursplanering "$STAGE"
+install -d -m 0750 -o resursplanering -g resursplanering "$STAGE/selfhost/.wrangler/tmp"
 message "Bygger release och typkontrollerar medan port 3000 fortfarande är igång"
 runuser -u resursplanering -- env HOME="$PROD_STATE" CI=true pnpm --dir "$STAGE" install --frozen-lockfile
 runuser -u resursplanering -- env HOME="$PROD_STATE" CI=true pnpm --dir "$STAGE" build
@@ -311,6 +319,32 @@ try:
     print("Skärpt databaskontroll godkänd. Aktiva administratörer:",admins)
 finally:
     conn.close()
+PY
+# Detect any accidental loss of existing staff, project or time-entry rows.
+BASELINE="$BACKUP/production-data"
+[[ "$SOURCE" == test ]] && BASELINE="$BACKUP/test-data"
+python3 - "$BASELINE" "$PROD_STATE/data" <<'PY'
+import pathlib,sqlite3,sys
+TABLES=("employees","projects","activities","assignments","user_accounts",
+        "project_members","time_entries","individual_form_items","assignment_requests")
+def counts(root):
+    result=[]
+    for path in pathlib.Path(root).rglob("*.sqlite"):
+        try:
+            conn=sqlite3.connect(path.as_uri()+"?mode=ro",uri=True,timeout=30)
+            names={r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+            if {"employees","projects","activities"}<=names:
+                result.append({t:conn.execute('SELECT COUNT(*) FROM "'+t+'"').fetchone()[0] if t in names else 0 for t in TABLES})
+            conn.close()
+        except sqlite3.Error:
+            continue
+    if len(result)!=1: raise SystemExit("Hittade inte exakt en Planering-databas för att jämföra datainnehåll.")
+    return result[0]
+before,after=counts(sys.argv[1]),counts(sys.argv[2])
+for name in TABLES:
+    if before[name]!=after[name]:
+        raise SystemExit(f"FEL: förlorade eller ändrade poster i {name}: före {before[name]}, efter {after[name]}.")
+print("Datainnehåll verifierat mot vald källa:",", ".join(f"{k}={v}" for k,v in after.items()))
 PY
 NGINX_CODE="$(curl -sS --connect-timeout 1 --max-time 3 -o /dev/null -w '%{http_code}' http://127.0.0.1:3001/ || true)"
 [[ "$NGINX_CODE" == 401 ]] || fail "Nginx skyddar inte ingången (väntat HTTP 401, fick $NGINX_CODE)."
