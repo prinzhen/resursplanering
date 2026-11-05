@@ -11,6 +11,7 @@ COPY . .
 RUN bash -n scripts/install-team-test-3200.sh
 RUN bash -n scripts/promote-test-to-production.sh
 RUN bash -n scripts/disable-nginx-basic-auth.sh && bash -n installera.sh
+RUN bash -n scripts/update-production-deletefix.sh
 RUN pnpm build
 RUN pnpm exec tsc --noEmit
 RUN node scripts/test-individual-integration.mjs
