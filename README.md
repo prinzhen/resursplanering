@@ -111,6 +111,80 @@ Om administratörsåterställningen misslyckas: läs felmeddelandet och starta
 tjänsten manuellt igen. Verktyget använder PBKDF2-SHA256 och lagrar
 inte lösenordet i klartext.
 
+## Säker övergång från testport 3200 till skarp port 3000
+
+På Planering-servern (Ubuntu 24.04) används:
+
+- Produktion: `resursplanering.service`, `127.0.0.1:3000`,
+  `/var/lib/resursplanering/data`, systemanvändare `resursplanering`.
+- Nginx: `127.0.0.1:3001`, bakom Tailscale Funnel på befintlig adress.
+- Test: `resursplanering-test-access.service`, `127.0.0.1:3200`,
+  `/var/lib/resursplanering-test-access/data`, systemanvändare `prinzhen`.
+
+**Databaserna är oberoende. Ingen automatisk sammanslagning genomförs.**
+Att välja testdatabasen innebär att produktionsdata från 3000 blir en
+säkerhetskopierad historisk datamängd (inte aktiva person-/projektposter).
+Använd `--inspect` och kontrollera posterna innan datakälla väljs.
+
+Den kontrollerade växlingsrutinen finns i
+`scripts/promote-test-to-production.sh`:
+
+```bash
+# På Planering-servern: hämta och syntaxkontrollera skriptet.
+curl -fsSLo /tmp/promote-test-to-production.sh \
+  https://raw.githubusercontent.com/prinzhen/resursplanering/feature/quick-activities-gantt-proposals/scripts/promote-test-to-production.sh
+bash -n /tmp/promote-test-to-production.sh
+
+# 1. OFARLIG inventering av båda databaserna (ingen tjänst stoppas):
+sudo bash /tmp/promote-test-to-production.sh --inspect
+
+# 2. Först efter granskning: välj exakt EN aktiv datakälla.
+# Behåll konton och arbete som registrerats i testversionen:
+sudo bash /tmp/promote-test-to-production.sh --promote --source=test
+
+# Alternativt: behåll produktionsdatan (kräver aktivt adminkonto där):
+# sudo bash /tmp/promote-test-to-production.sh --promote --source=production
+```
+
+Skriptet gör följande:
+
+1. Kontrollerar tjänsternas `PORT` och `DATA_DIR` mot förväntade värden.
+2. Visar tabellantal, SQLite-integritet och antal aktiva administratörer.
+3. Kräver explicit datakälla och en interaktiv bekräftelse.
+4. Klonar och bygger **exakt en GitHub-CI-testad release-SHA**
+   i en separat stagingkatalog; kör både roll- och synkroniseringstester.
+5. Stoppar 3000 och 3200, tar kalla fullständiga databaskopior,
+   kopierar vald datakälla vid behov och byter applikationskod.
+6. Startar produktion på port 3000 och verifierar API, autenticering,
+   SQLite-integritet, aktiva administratörer, antal dataposter och
+   Nginx-skydd (HTTP 401 utan credentials).
+7. Om något misslyckas återställs den gamla produktionskoden,
+   originaldatabasen och båda tjänsterna automatiskt.
+8. Först efter lyckad kontroll inaktiveras testtjänsten.
+   Tidrapport-adaptern aktiveras **inte**; separat systemd-timer
+   förblir avstängd tills mottagar-API är verifierat.
+
+Både kod från föregående version och originaldatabaser bevaras
+under `/opt/resursplanering.before-<timestamp>` respektive
+`/var/backups/resursplanering-promotion/<timestamp>/`.
+Testkataloger tas inte bort automatiskt och kan tas bort först
+när den nya skarpa versionen har använts och manuellt verifierats.
+
+Efter uppgraderingen:
+
+```bash
+sudo systemctl status resursplanering --no-pager
+sudo systemctl is-enabled resursplanering-test-access
+sudo ss -lntp | grep -E ':3000|:3001|:3200'
+sudo tailscale funnel status
+```
+
+Tänk på att ett gammalt webbläsarpass till port 3000 inte behöver
+gälla i den nya databasen: logga in med ett aktivt administratörs- eller
+arbetskonto från **vald datakälla**. Nginx Basic Auth och Tailscale-adressen
+är oförändrade. Ändra inte `installera.sh` mot `main` som en genväg
+innan samma nya release har förts till huvudgrenen.
+
 ## Alternativ installation med Docker
 
 Följande avsnitt beskriver den äldre Docker-baserade installationen.
