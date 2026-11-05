@@ -293,7 +293,9 @@ try{
  const anonymousTime=await api("","/api/time-entries");
  check("Anonymous staff cannot read logged work hours",()=>assert.equal(anonymousTime.status,401));
  const unlinkedTime=await api(admin,"/api/time-entries");
- check("Admin account without employee identity cannot report work time",()=>assert.equal(unlinkedTime.status,403));
+ check("Admin account without employee identity may review the time screen",()=>assert.equal(unlinkedTime.status,200));
+ const noPersonalTimer=await api(admin,"/api/time-entries",{action:"start",activityId:1});
+ check("Admin account without employee identity still cannot create personal work hours",()=>assert.equal(noPersonalTimer.status,403));
  const timeBefore=await ok(ordinary,"/api/time-entries");
  check("Staff time reporting offers only authorized activities",()=>{
   assert.ok(timeBefore.activities.some(a=>a.projectId===1));
