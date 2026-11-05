@@ -43,6 +43,7 @@ nginx -t >/dev/null
 
 BACKUP="${SITE}.before-native-login-$(date -u +%Y%m%dT%H%M%SZ)"
 cp -a "$SITE" "$BACKUP"
+CHANGED=1  # Roll back even if the subsequent file rewrite only partially succeeds.
 msg "Säkerhetskopia: $BACKUP"
 
 # Remove only the exact Basic Authentication directives inside this one site.
@@ -75,7 +76,6 @@ if len(removed)==2:
 else:
     print("Nginx Basic Authentication är redan frånslagen.")
 PY
-CHANGED=1
 msg "Kontrollerar och laddar om Nginx utan att starta om Planering"
 nginx -t
 systemctl reload nginx
