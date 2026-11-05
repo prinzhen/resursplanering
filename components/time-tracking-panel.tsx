@@ -8,7 +8,7 @@ type Activity={id:number;projectId:number;code:string|null;name:string;status:st
 type Entry={id:number;employeeId:number;activityId:number;projectId:number;employeeEmail:string|null;employeeName:string;reportingGroupId:number|null;reportingGroupName:string|null;projectCode:string;
  activityCode:string|null;activityName:string;workDate:string;startedAt:number;endedAt:number|null;
  durationSeconds:number|null;note:string;source:string;updatedAt:number};
-type State={viewer:{employeeId:number|null;isAdmin:boolean;canViewGroupHistory:boolean};projects:Project[];activities:Activity[];entries:Entry[];serverTime:number;today:string;hasMore:boolean};
+type State={viewer:{employeeId:number|null;isAdmin:boolean;canViewGroupHistory:boolean};projects:Project[];activities:Activity[];entries:Entry[];serverTime:number;today:string;hasMore:boolean;entryCount:number;totalSeconds:number;offset:number};
 const clock=(secs:number)=>{
  const total=Math.max(0,Math.floor(secs)),h=Math.floor(total/3600),m=Math.floor(total%3600/60),s=total%60;
  return `${String(h).padStart(2,"0")}:${String(m).padStart(2,"0")}:${String(s).padStart(2,"0")}`;
@@ -19,18 +19,19 @@ const today=()=>new Intl.DateTimeFormat("en-CA",{timeZone:"Europe/Stockholm",yea
 export default function TimeTrackingPanel(){
  const [data,setData]=useState<State|null>(null);
  const [view,setView]=useState<"mine"|"all"|"history">("mine");
+ const [page,setPage]=useState(0);
  const [activityId,setActivityId]=useState("");
  const [manualDate,setManualDate]=useState(today()),[manualMinutes,setManualMinutes]=useState("60"),[manualNote,setManualNote]=useState("");
  const [editing,setEditing]=useState<number|null>(null),[editDate,setEditDate]=useState(""),[editMinutes,setEditMinutes]=useState(""),[editNote,setEditNote]=useState(""),[editActivity,setEditActivity]=useState("");
  const [now,setNow]=useState(Math.floor(Date.now()/1000));
  const [busy,setBusy]=useState(false),[error,setError]=useState(""),[notice,setNotice]=useState("");
  const fetchData=useCallback(async()=>{
-  const r=await fetch("/api/time-entries?scope="+view,{cache:"no-store"}),j=await r.json() as State&{error?:string};
+  const r=await fetch("/api/time-entries?scope="+view+"&offset="+(page*250),{cache:"no-store"}),j=await r.json() as State&{error?:string};
   if(r.status===401){window.location.assign("/login");return}
   if(!r.ok)throw Error(j.error||"Kunde inte läsa tidrapporten");
   setData(j);
   setActivityId(old=>old&&j.activities.some(x=>String(x.id)===old)?old:String(j.activities[0]?.id??""));
- },[view]);
+ },[view,page]);
  useEffect(()=>{
   fetchData().catch(e=>setError(e instanceof Error?e.message:String(e)));
   const handle=setInterval(()=>setNow(Math.floor(Date.now()/1000)),1000);
@@ -49,7 +50,7 @@ export default function TimeTrackingPanel(){
  };
  const active=data?.entries.find(e=>e.endedAt===null&&e.employeeId===data.viewer.employeeId);
  const selectedActivity=data?.activities.find(a=>String(a.id)===activityId);
- const total=useMemo(()=>data?.entries.filter(e=>e.endedAt!==null).reduce((sum,e)=>sum+(e.durationSeconds??0),0)??0,[data]);
+ const total=useMemo(()=>data?.totalSeconds??0,[data]);
  const start=()=>post({action:"start",activityId:Number(activityId)},"Tidtagningen startade och fortsätter även om du lämnar sidan.");
  const stop=()=>active&&post({action:"stop",id:active.id},"Tidtagningen stoppades. Du kan korrigera tiden i listan nedan.");
  const addManual=async(e:FormEvent<HTMLFormElement>)=>{
@@ -76,7 +77,7 @@ export default function TimeTrackingPanel(){
   if(await post({action:adminOther?"adminDelete":"delete",id:entry.id},"Tidposten togs bort och ändringen är spårbar."))setEditing(null);
  };
  const classes="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900";
- const visible=(data?.entries||[]).slice(0,250);
+ const visible=(data?.entries||[]);
  return <section className="panel overflow-hidden">
   <div className="panel-head flex-wrap items-start gap-3">
    <div><h2 className="flex items-center gap-2"><Clock3 className="h-5 w-5"/>Tidrapportering</h2>
@@ -89,7 +90,7 @@ export default function TimeTrackingPanel(){
    {!data&&<p className="text-sm text-slate-600">Läser aktiviteter och tidposter…</p>}
    {data&&<>
     {(data.viewer.isAdmin||data.viewer.canViewGroupHistory)&&<label className="block max-w-xl text-sm font-medium">Visa tidrapporter
-      <select className="mt-1 block w-full rounded-lg border border-slate-300 bg-white p-2" value={view} onChange={e=>{setView(e.target.value as "mine"|"all"|"history");setEditing(null)}}>
+      <select className="mt-1 block w-full rounded-lg border border-slate-300 bg-white p-2" value={view} onChange={e=>{setView(e.target.value as "mine"|"all"|"history");setPage(0);setEditing(null)}}>
        <option value="mine">Min rapporterade tid</option>
        {data.viewer.isAdmin&&<option value="all">Alla medarbetare och grupper (administratör)</option>}
        <option value="history">Historiska timmar bokförda på grupp</option>
@@ -129,7 +130,7 @@ export default function TimeTrackingPanel(){
      <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
       <p className="text-sm font-semibold text-slate-700">Summa registrerad tid</p>
       <div className="mt-3 text-3xl font-bold tabular-nums text-slate-950">{hours(total)}</div>
-      <p className="mt-2 text-sm text-slate-600">{data.entries.filter(e=>e.endedAt!==null).length} färdiga tidposter. Pågående tid räknas först när du stoppar klockan.</p>
+      <p className="mt-2 text-sm text-slate-600">{data.entryCount} tidposter i valt urval. Summeringen omfattar alla sidor, men inte pågående eller borttagna tidposter.</p>
       <p className="mt-3 text-xs text-slate-500">CSV innehåller medarbetare, projektkod, aktivitetskod, datum och timmar. Synkronisering med Tidrapport kan anslutas när dess API är känt.</p>
      </div>
     </div>
@@ -162,7 +163,14 @@ export default function TimeTrackingPanel(){
          </div>
         </div>}
       </div>)}</div>}
-     {data.hasMore&&<p className="mt-3 text-sm text-amber-700">Många tidposter finns. Exportera CSV för fullständig historik.</p>}
+     <div className="mt-4 flex flex-wrap items-center justify-between gap-3 text-sm">
+      <span>Visar sida {page+1} · {data.entryCount} tidposter i totalt urval</span>
+      <div className="flex gap-2">
+       <Button variant="outline" size="sm" type="button" disabled={busy||page===0} onClick={()=>{setPage(p=>Math.max(0,p-1));setEditing(null)}}>Föregående</Button>
+       <Button variant="outline" size="sm" type="button" disabled={busy||!data.hasMore} onClick={()=>{setPage(p=>p+1);setEditing(null)}}>Nästa</Button>
+      </div>
+     </div>
+     {data.entryCount>20000&&<p className="mt-3 text-xs text-amber-700">För att exportera fler än 20 000 poster, dela upp CSV-exporten med datumfilter.</p>}
     </div>
    </>}
   </div>
