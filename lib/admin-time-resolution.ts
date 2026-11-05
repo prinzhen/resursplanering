@@ -54,7 +54,10 @@ export function timeResolutionStatements(
     work_date,started_at,ended_at,duration_seconds,note,source,updated_at,
     was_deleted,removed_by_account_id,removed_at,removal_reason)
     SELECT (SELECT MAX(j.id) FROM time_entry_audit j WHERE j.time_entry_id=t.id),
-    t.id,t.employee_id,e.email,e.name,p.id,p.code,p.name,
+    t.id,t.employee_id,
+    CASE WHEN e.is_group_ledger=1 THEN '' ELSE e.email END,
+    CASE WHEN e.is_group_ledger=1 THEN 'Borttagen medarbetare' ELSE e.name END,
+    p.id,p.code,p.name,
     a.id,a.code,a.name,t.work_date,t.started_at,t.ended_at,t.duration_seconds,
     t.note,t.source,t.updated_at,1,?,?,?
     FROM time_entries t JOIN employees e ON e.id=t.employee_id
