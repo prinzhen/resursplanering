@@ -22,7 +22,11 @@ export async function GET(req:Request){
   const suggested=groups.results.find(g=>memberIds.has(g.id))??
    groups.results.find(g=>g.ownerId!==null&&g.ownerId===employee.managerId);
   const impact=await employeeTimeImpact(d,id);
-  return Response.json({impact,groups:groups.results,suggestedGroupId:suggested?.id??null},
+  const linkedAccount=await d.prepare("SELECT id,email,is_admin isAdmin,is_disabled isDisabled FROM user_accounts WHERE employee_id=? LIMIT 1").bind(id)
+    .first<{id:number;email:string;isAdmin:number;isDisabled:number}>();
+  return Response.json({impact,groups:groups.results,suggestedGroupId:suggested?.id??null,
+   linkedAccount:linkedAccount?{id:linkedAccount.id,email:linkedAccount.email,isAdmin:!!linkedAccount.isAdmin,isDisabled:!!linkedAccount.isDisabled}:null,
+   canDeactivateAccount:!linkedAccount||linkedAccount.id!==user.accountId},
    {headers:{"cache-control":"no-store"}});
  }catch(e){console.error("employee-delete-impact",e);
   return Response.json({error:"Kunde inte kontrollera medarbetarens tid."},{status:500});
