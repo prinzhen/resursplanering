@@ -427,8 +427,24 @@ export async function DELETE(request:Request){
     d.prepare("DELETE FROM employee_groups WHERE id=?").bind(id)
    ]);
   }else if(type==="employee"){
-   const linked=await d.prepare("SELECT email FROM user_accounts WHERE employee_id=?").bind(id).first<{email:string}>();
-   if(linked)return Response.json({error:"Medarbetaren är kopplad till inloggningskontot "+linked.email+". Ta först bort kontot under Konton och behörigheter, eller behåll medarbetaren och koppla administratörskontot till den befintliga personen. Ingen planering har raderats."},{status:409});
+   const linked=await d.prepare("SELECT id,email,is_admin isAdmin,is_disabled isDisabled FROM user_accounts WHERE employee_id=?").bind(id)
+    .first<{id:number;email:string;isAdmin:number;isDisabled:number}>();
+   const disableLogin:D1PreparedStatement[]=[];
+   if(linked){
+    if(!user.isAdmin||u.searchParams.get("deactivateLinkedAccount")!=="yes")
+     return Response.json({error:"Medarbetaren har inloggningskontot "+linked.email+". Bekräfta att kontot också ska inaktiveras och kopplas bort."},{status:409});
+    if(linked.id===user.accountId)
+     return Response.json({error:"Du kan inte ta bort den medarbetare som ditt eget aktiva administratörskonto är kopplat till."},{status:409});
+    if(linked.isAdmin&&!linked.isDisabled){
+     const active=await d.prepare("SELECT COUNT(*) n FROM user_accounts WHERE is_admin=1 AND is_disabled=0 AND id<>?")
+      .bind(linked.id).first<{n:number}>();
+     if(!(active?.n??0))return Response.json({error:"Minst en annan aktiv administratör måste finnas kvar."},{status:409});
+    }
+    disableLogin.push(
+     d.prepare("UPDATE user_accounts SET employee_id=NULL,is_admin=0,is_group_manager=0,is_disabled=1,failed_attempts=0,locked_until=NULL WHERE id=?").bind(linked.id),
+     d.prepare("DELETE FROM user_sessions WHERE user_id=?").bind(linked.id)
+    );
+   }
    if(!await d.prepare("SELECT id FROM employees WHERE id=? AND is_group_ledger=0").bind(id).first())return Response.json({error:"Medarbetaren saknas."},{status:404});
    const employeeImpact=await employeeTimeImpact(d,id);
    let employeeTimeResolution:D1PreparedStatement[]=[];
@@ -454,6 +470,7 @@ export async function DELETE(request:Request){
    }
    await d.batch([
     ...employeeTimeResolution,
+    ...disableLogin,
     d.prepare("UPDATE employees SET manager_id=NULL WHERE manager_id=?").bind(id),
     d.prepare("UPDATE employee_groups SET owner_id=NULL WHERE owner_id=?").bind(id),
     d.prepare("DELETE FROM assignment_requests WHERE requested_by=? OR recipient_id=?").bind(id,id),
