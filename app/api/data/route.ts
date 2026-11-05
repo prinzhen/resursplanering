@@ -1,4 +1,6 @@
 import {setAssignmentStatus,setWholeActivityStatus,reconcileActivityStatus,normalizeStatus,validStatuses} from "@/lib/assignment-status";
+import {activityIdsInScope,deletionImpact,type DeletableKind} from "@/lib/delete-time-impact";
+import {timeResolutionStatements} from "@/lib/admin-time-resolution";
 import { env } from "cloudflare:workers";
 import {sessionIdentity,unauthorized,forbidden,sameOrigin,type Identity} from "@/lib/auth";
 import {accessScope,authorizePlanningAction,filteredSnapshot,projectOfActivity} from "@/lib/permissions";
@@ -382,6 +384,37 @@ export async function DELETE(request:Request){
     type==="workPackage"?access.projectLedIds.size>0&&!!await d.prepare("SELECT id FROM work_packages WHERE id=? AND project_id IN ("+[...access.projectLedIds].map(()=>"?").join(",")+")").bind(id,...access.projectLedIds).first():false;
    if(!canDelete)return forbidden();
   }
+  const kind=(type==="project"||type==="workPackage"||type==="activity")?type as DeletableKind:null;
+  let reconciliation:D1PreparedStatement[]=[];
+  if(kind){
+   const scope=activityIdsInScope(kind);
+   const current=await deletionImpact(d,kind,id);
+   if(current.entryCount){
+    if(!user.isAdmin)return Response.json({error:"Rapporterad tid måste hanteras av en administratör innan denna post kan tas bort."},{status:409});
+    const mode=u.searchParams.get("timeMode");
+    if(mode!=="transfer"&&mode!=="purge")
+     return Response.json({error:"Posten har rapporterad tid. Välj att flytta eller ta bort tidposterna innan du raderar.",needsTimeResolution:true,impact:current},{status:409});
+    if(current.runningEntryCount)
+     return Response.json({error:"En eller flera tidtagningar pågår. Stoppa dem innan du flyttar eller tar bort tid."},{status:409});
+    if(u.searchParams.get("expectedFingerprint")!==current.fingerprint)
+     return Response.json({error:"Tidrapporterna har förändrats efter att dialogen öppnades. Läs in uppgifterna igen innan du fortsätter.",needsTimeResolution:true,impact:current},{status:409});
+    const reason=(u.searchParams.get("reason")||"Administrativ korrigering i samband med radering").trim().slice(0,500);
+    const targetId=Number(u.searchParams.get("targetActivityId"));
+    if(mode==="transfer"){
+     if(!Number.isSafeInteger(targetId)||targetId<=0)
+      return Response.json({error:"Välj en giltig mottagande aktivitet."},{status:400});
+     const target=await d.prepare("SELECT id FROM activities WHERE id=?").bind(targetId).first();
+     if(!target)return Response.json({error:"Mottagande aktivitet finns inte."},{status:404});
+     const inScope=await d.prepare(`SELECT id FROM activities WHERE id=? AND id IN (${scope})`).bind(targetId,id).first();
+     if(inScope)return Response.json({error:"Mottagande aktivitet kommer också att raderas. Välj en aktivitet utanför det som tas bort."},{status:409});
+    }else{
+     if(u.searchParams.get("confirm")!=="RADERA TID")
+      return Response.json({error:"Skriv RADERA TID för att bekräfta permanent borttagning och arkivering av tidposter."},{status:400});
+    }
+    reconciliation=timeResolutionStatements(d,kind,id,mode,user.accountId,Math.floor(Date.now()/1000),
+      mode==="transfer"?targetId:null,reason);
+   }
+  }
   if(type==="group"){
    await d.batch([
     d.prepare("DELETE FROM employee_group_members WHERE group_id=?").bind(id),
@@ -415,9 +448,9 @@ export async function DELETE(request:Request){
    if(!await d.prepare("SELECT id FROM projects WHERE id=?").bind(id).first())
     return Response.json({error:"Projektet finns inte."},{status:404});
    const selectIds="SELECT id FROM activities WHERE project_id=?";
-   const used=await d.prepare(`SELECT t.id FROM time_entries t WHERE t.activity_id IN (${selectIds}) LIMIT 1`).bind(id).first();
-   if(used)return Response.json({error:"Projektet innehåller rapporterad tid och kan inte raderas utan att historiken först hanteras."},{status:409});
+
    await d.batch([
+    ...reconciliation,
     ...activityDeletionStatements(d,selectIds,id),
     d.prepare("DELETE FROM individual_project_state WHERE project_id=?").bind(id),
     d.prepare("DELETE FROM employee_project_orders WHERE project_id=?").bind(id),
@@ -433,9 +466,8 @@ export async function DELETE(request:Request){
    if(!await d.prepare(`SELECT id FROM ${table} WHERE id=?`).bind(id).first())
     return Response.json({error:type==="workPackage"?"Uppdraget finns inte.":"Aktiviteten finns inte."},{status:404});
    const selectIds=activitySubtree(type==="workPackage"?"work_package_id=?":"id=?");
-   const used=await d.prepare(`SELECT t.id FROM time_entries t WHERE t.activity_id IN (${selectIds}) LIMIT 1`).bind(id).first();
-   if(used)return Response.json({error:type==="workPackage"?"Uppdraget innehåller rapporterad tid och kan inte raderas.":"Aktiviteten innehåller rapporterad tid och kan inte raderas."},{status:409});
-   const q=activityDeletionStatements(d,selectIds,id);
+
+   const q=[...reconciliation,...activityDeletionStatements(d,selectIds,id)];
    if(type==="workPackage")q.push(
     d.prepare("DELETE FROM work_package_leaders WHERE work_package_id=?").bind(id),
     d.prepare("DELETE FROM work_packages WHERE id=?").bind(id)
