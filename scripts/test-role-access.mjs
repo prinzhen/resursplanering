@@ -430,6 +430,83 @@ try{
   });
  }finally{deletedDb.close()}
 
+
+ // ADMIN reconciliation of historical time before removing source projects.
+ const makeTemporaryProject=async(code,name)=>{
+  const created=await ok(admin,"/api/data",{action:"project",code,name,description:"Admin time reconciliation CI",priority:3});
+  const project=created.projects.find(p=>p.code===code);
+  assert.ok(project?.id,"Test project not created");
+  await ok(admin,"/api/data",{action:"setSingleProjectMember",projectId:project.id,employeeId:sara,enabled:true});
+  const state=await ok(admin,"/api/data",{action:"activity",projectId:project.id,name:"Tid att flytta "+code,description:"Admin tidflytt test",startDate:"2026-11-01",endDate:"2026-11-28",status:"Planerad"});
+  const activity=state.activities.find(a=>a.projectId===project.id&&a.name==="Tid att flytta "+code);
+  assert.ok(activity?.id,"Test activity not created");
+  return {projectId:project.id,activityId:activity.id};
+ };
+ const from=await makeTemporaryProject("CI-TIME-XFER","CI Tidflytt");
+ await ok(ordinary,"/api/time-entries",{action:"manual",activityId:from.activityId,workDate:"2026-11-05",durationMinutes:67,note:"ci-transfer-original"});
+ const original=(await ok(ordinary,"/api/time-entries")).entries.find(x=>x.note==="ci-transfer-original");
+ assert.ok(original?.id,"Source time missing");
+ const deniedImpact=await fetch(base+`/api/delete-impact?type=project&id=${from.projectId}`,{headers:{cookie:ordinary}});
+ check("Non-admin cannot inspect organizational time-deletion preview",()=>assert.equal(deniedImpact.status,403));
+ const preview=await ok(admin,`/api/delete-impact?type=project&id=${from.projectId}`);
+ check("Admin sees time count, hours and safe destinations before deletion",()=>{
+  assert.equal(preview.impact.entryCount,1);
+  assert.equal(preview.impact.totalSeconds,4020);
+  assert.ok(preview.targets.some(t=>t.id===2));
+  assert.ok(!preview.targets.some(t=>t.id===from.activityId));
+ });
+ const unconfirmed=await fetch(base+`/api/data?type=project&id=${from.projectId}`,{method:"DELETE",headers:{cookie:admin}});
+ check("Project with time cannot be deleted without choosing relocation or archival removal",()=>assert.equal(unconfirmed.status,409));
+ const transferParams=new URLSearchParams({type:"project",id:String(from.projectId),timeMode:"transfer",
+  targetActivityId:"2",expectedFingerprint:preview.impact.fingerprint});
+ const movedResponse=await fetch(base+"/api/data?"+transferParams,{method:"DELETE",headers:{cookie:admin}});
+ const movedRaw=await movedResponse.text();
+ check("Administrator can move historical time to another project before removing source project",()=>{
+  assert.equal(movedResponse.status,200,movedRaw.slice(0,550));
+ });
+ const moved= (await ok(ordinary,"/api/time-entries")).entries.find(x=>x.id===original.id);
+ check("Transferred time retains original employee, work date and duration",()=>{
+  assert.ok(moved);assert.equal(moved.activityId,2);
+  assert.equal(moved.durationSeconds,4020);assert.equal(moved.workDate,"2026-11-05");
+ });
+ const toPurge=await makeTemporaryProject("CI-TIME-PURGE","CI Radera tid");
+ await ok(ordinary,"/api/time-entries",{action:"manual",activityId:toPurge.activityId,workDate:"2026-11-05",durationMinutes:14,note:"ci-purge-original"});
+ const purgeOriginal=(await ok(ordinary,"/api/time-entries")).entries.find(x=>x.note==="ci-purge-original");
+ assert.ok(purgeOriginal?.id);
+ const allRows=await ok(admin,"/api/time-entries?scope=all");
+ check("ADMIN can view all employees' reported time",()=>assert.ok(allRows.entries.some(x=>x.id===purgeOriginal.id&&x.employeeId===sara)));
+ await ok(admin,"/api/time-entries",{action:"adminDelete",id:purgeOriginal.id});
+ const afterAdminSoftDelete=(await ok(ordinary,"/api/time-entries")).entries;
+ check("ADMIN can audit-soft-delete colleague's finished report",()=>assert.ok(!afterAdminSoftDelete.some(x=>x.id===purgeOriginal.id)));
+ const previewPurge=await ok(admin,`/api/delete-impact?type=project&id=${toPurge.projectId}`);
+ check("Soft-deleted time also remains protected until explicitly resolved",()=>{
+  assert.equal(previewPurge.impact.entryCount,1);
+  assert.equal(previewPurge.impact.deletedEntryCount,1);
+ });
+ const purgeParams=new URLSearchParams({type:"project",id:String(toPurge.projectId),timeMode:"purge",
+  expectedFingerprint:previewPurge.impact.fingerprint,confirm:"RADERA TID"});
+ const incomplete=await fetch(base+"/api/data?"+new URLSearchParams({type:"project",id:String(toPurge.projectId),timeMode:"purge",expectedFingerprint:previewPurge.impact.fingerprint}),{method:"DELETE",headers:{cookie:admin}});
+ check("Permanent removal requires an explicit typed confirmation",()=>assert.equal(incomplete.status,400));
+ const purgedResponse=await fetch(base+"/api/data?"+purgeParams,{method:"DELETE",headers:{cookie:admin}});
+ const purgedRaw=await purgedResponse.text();
+ check("Administrator can archive reported time, issue tombstone and then remove project",()=>{
+  assert.equal(purgedResponse.status,200,purgedRaw.slice(0,500));
+ });
+ const afterReconcileDb=new DatabaseSync(await onlyDatabase(join(dir,"data")),{readOnly:true});
+ try{
+  check("Time relocation history and permanent removal archive survive source-project deletion",()=>{
+   const transfer=afterReconcileDb.prepare("SELECT * FROM time_entry_relocations WHERE entry_id=?").get(original.id);
+   assert.equal(transfer.original_activity_id,from.activityId);
+   assert.equal(transfer.target_activity_id,2);
+   assert.equal(transfer.actor_account_id>0,true);
+   const rem=afterReconcileDb.prepare("SELECT * FROM time_entry_removal_archive WHERE original_entry_id=?").get(purgeOriginal.id);
+   assert.ok(rem?.source_event_id>0);
+   assert.equal(rem.original_activity_id,toPurge.activityId);
+   assert.equal(afterReconcileDb.prepare("SELECT COUNT(*) n FROM time_entries WHERE id=?").get(purgeOriginal.id).n,0);
+   assert.equal(afterReconcileDb.prepare("PRAGMA foreign_key_check").all().length,0);
+  });
+ }finally{afterReconcileDb.close()}
+
  const db=new DatabaseSync(await onlyDatabase(join(dir,"data")),{readOnly:true});
  try{
   check("Time adjustments are audited, including delete",()=>{
