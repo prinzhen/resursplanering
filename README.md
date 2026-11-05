@@ -2,7 +2,51 @@
 
 Webbapplikation för projekt, uppdrag, aktiviteter, bemanning, beläggning, personliga planeringar, Gantt-scheman samt import och export.
 
-Den rekommenderade egna driftsättningen på Ubuntu 24.04 använder Node.js och en systemd-tjänst, helt utan Docker. Applikationen ligger på serverns loopback-adress, skyddas med Nginx Basic Authentication och publiceras med HTTPS via Tailscale Funnel. Inga inkommande portar behöver öppnas i internetbrandväggen.
+## En enda inloggning – ta bort Nginx-popupen
+
+Planerings egna personliga inloggning på `/login` använder sessioncookies,
+kontroll på varje skyddat API och kontobaserade behörigheter. Den äldre
+Nginx Basic Authentication (webbläsar-popupen) behövs därför inte som
+separat inloggningslager. Port 3000, Nginx på 3001 och Tailscale Funnel
+förblir oförändrade. **Observera:** Funnel är publik på internet och när
+popupen tas bort kan vem som helst se inloggningssidan; skyddet består
+därefter av Planerings inbyggda inloggning och dess låsningsfunktion
+vid upprepade felaktiga lösenord.
+
+Ändra den befintliga skarpa installationen på Planering-servern
+(uppdaterar enbart Nginx-konfigurationen, INTE applikation eller databas):
+
+```bash
+curl -fsSLo /tmp/disable-nginx-basic-auth.sh \
+  https://raw.githubusercontent.com/prinzhen/resursplanering/feature/quick-activities-gantt-proposals/scripts/disable-nginx-basic-auth.sh
+bash -n /tmp/disable-nginx-basic-auth.sh
+sudo bash /tmp/disable-nginx-basic-auth.sh
+```
+
+Skriptet verifierar **innan** ändringen att `/api/data` och
+`/api/time-entries` ger HTTP 401 utan en Planering-session.
+Det tar backup av Nginx-konfigurationen i
+`/etc/nginx/sites-available/resursplanering.before-native-login-<timestamp>`,
+tar endast bort de två `auth_basic`-direktiven, kör `nginx -t`,
+laddar om Nginx och testar sedan att `/login` ger HTTP 200 och
+att privata API:er fortfarande ger HTTP 401. Fel triggar återställning.
+
+Kontroll efteråt (utan cookies/credentials):
+
+```bash
+curl -s -o /dev/null -w 'Login: HTTP %{http_code}\n' http://127.0.0.1:3001/login
+curl -s -o /dev/null -w 'Data: HTTP %{http_code}\n' http://127.0.0.1:3001/api/data
+# Login ska ge 200. Data ska ge 401.
+```
+
+Gamla htpasswd-filen behålls orörd som återställningsmöjlighet,
+men används inte. Rulla inte tillbaka till äldre `installera.sh` på
+`main` – den skulle kunna lägga tillbaka popupen **och** installera
+äldre applikationskod. Den uppdaterade installeraren i
+`feature/quick-activities-gantt-proposals` tar inte längre emot eller
+kräver ett separat Nginx-lösenord.
+
+Den rekommenderade egna driftsättningen på Ubuntu 24.04 använder Node.js och en systemd-tjänst, helt utan Docker. Applikationen ligger på serverns loopback-adress, skyddas av applikationens personliga inloggning och publiceras med HTTPS via Tailscale Funnel. Inga inkommande portar behöver öppnas i internetbrandväggen.
 
 ## Snabbinstallation på Ubuntu 24.04
 
@@ -14,7 +58,7 @@ curl -fsSL https://raw.githubusercontent.com/prinzhen/resursplanering/main/insta
 
 Installationsskriptet installerar Node.js, pnpm, Nginx och Tailscale, hämtar och bygger applikationen samt skapar systemd-tjänsterna. Första gången får du välja användarnamn och ett lösenord på minst 14 tecken. Endast lösenordets bcrypt-hash sparas. När Tailscale visar en inloggningslänk öppnar du den och godkänner servern.
 
-Tailscale Funnel gör adressen publik på internet, men alla sidor och API-anrop skyddas av Nginx-inloggningen. Använd ett unikt och långt lösenord.
+Tailscale Funnel gör inloggningssidan publik på internet. Projektdata och skyddade API:er kräver inloggning i Planering; använd ett unikt och långt lösenord på varje konto.
 
 Applikationsdata sparas i `/var/lib/resursplanering/data` och påverkas inte när installationsskriptet körs igen.
 
@@ -25,8 +69,7 @@ sudo systemctl status resursplanering
 # Logg
 sudo journalctl -u resursplanering -f
 
-# Byt lösenord för ett befintligt användarnamn
-sudo htpasswd /etc/nginx/resursplanering.htpasswd DITT_ANVÄNDARNAMN
+# Byt lösenord på ett befintligt personligt konto via Planerings kontosida
 
 # Uppdatera till senaste versionen
 curl -fsSL https://raw.githubusercontent.com/prinzhen/resursplanering/main/installera.sh | sudo bash
@@ -40,7 +83,7 @@ Docker-instruktionerna längre ned finns kvar som ett alternativ för miljöer d
 - Lokal Cloudflare Worker-körning via Wrangler/Miniflare.
 - Lokal beständig SQLite/D1-databas i `/var/lib/resursplanering/data`.
 - systemd för start, övervakning och automatisk omstart.
-- Nginx Basic Authentication på `127.0.0.1:3001`.
+- Nginx som omvänd proxy på `127.0.0.1:3001`; Planerings egen sessioninloggning skyddar data.
 - Tailscale Funnel som publik HTTPS-proxy till Nginx.
 - GitHub Actions bygger automatiskt en containerbild till GitHub Container Registry.
 
