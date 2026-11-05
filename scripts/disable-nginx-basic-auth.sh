@@ -80,14 +80,54 @@ msg "Kontrollerar och laddar om Nginx utan att starta om Planering"
 nginx -t
 systemctl reload nginx
 
-msg "Verifierar: inbyggd login synlig, alla data fortfarande skyddade"
-[[ "$(status_code "$NGINX_URL/login")" == 200 ]] || die "/login svarar inte HTTP 200 via Nginx."
-[[ "$(status_code "$NGINX_URL/api/auth")" == 200 ]] || die "/api/auth svarar inte HTTP 200 via Nginx."
-[[ "$(status_code "$NGINX_URL/api/data")" == 401 ]] || die "/api/data måste svara HTTP 401 utan session via Nginx."
-[[ "$(status_code "$NGINX_URL/api/time-entries")" == 401 ]] || die "/api/time-entries måste svara HTTP 401 utan session via Nginx."
-if curl --noproxy '*' --connect-timeout 2 --max-time 10 -sSI "$NGINX_URL/api/data" \
- | grep -qi '^www-authenticate: *basic'; then
-  die "Det finns fortfarande en Basic Authentication-utmaning från Nginx."
+msg "Verifierar att Nginx laddat om: inbyggd login synlig, privata API:er skyddade"
+# systemctl reload returns before all Nginx workers have necessarily changed
+# configuration. Retry briefly to avoid a false 401 from an OLD worker.
+# Supply the real browser Host header; local probes to 127.0.0.1 are otherwise
+# not identical to traffic received through Tailscale Funnel.
+probe_headers="$(mktemp /tmp/planering-nginx-probe.XXXXXXXX)"
+proxy_status() {
+  local path="$1"
+  curl --noproxy '*' --connect-timeout 2 --max-time 5 \
+    -H "Host: planering.tail323ccb.ts.net" \
+    -sS -D "$probe_headers" -o /dev/null -w '%{http_code}' \
+    "$NGINX_URL$path" || true
+}
+basic_challenge() {
+  grep -qiE '^www-authenticate:[[:space:]]*basic([[:space:]]|$)' "$probe_headers"
+}
+READY=0
+login_code="000"
+auth_code="000"
+data_code="000"
+time_code="000"
+last_basic=""
+for attempt in $(seq 1 15); do
+  login_code="$(proxy_status /login)"
+  login_basic=0; basic_challenge && login_basic=1
+  auth_code="$(proxy_status /api/auth)"
+  auth_basic=0; basic_challenge && auth_basic=1
+  data_code="$(proxy_status /api/data)"
+  data_basic=0; basic_challenge && data_basic=1
+  time_code="$(proxy_status /api/time-entries)"
+  time_basic=0; basic_challenge && time_basic=1
+  last_basic="login:$login_basic auth:$auth_basic data:$data_basic tid:$time_basic"
+  if [[ "$login_code" == 200 && "$auth_code" == 200 \
+        && "$data_code" == 401 && "$time_code" == 401 \
+        && "$login_basic" -eq 0 && "$auth_basic" -eq 0 \
+        && "$data_basic" -eq 0 && "$time_basic" -eq 0 ]]; then
+    READY=1
+    break
+  fi
+  if (( attempt == 1 || attempt == 5 || attempt == 10 )); then
+    printf 'Omladdningskontroll %s/15: login=%s, auth=%s, data=%s, tid=%s; Basic-challenge=%s\n' \
+      "$attempt" "$login_code" "$auth_code" "$data_code" "$time_code" "$last_basic"
+  fi
+  sleep 1
+done
+rm -f "$probe_headers"
+if [[ "$READY" != 1 ]]; then
+  die "Nginx-kontrollen misslyckades efter 15 försök: login=$login_code, auth=$auth_code, data=$data_code, tid=$time_code; Basic-challenge=$last_basic. Konfigurationen återställs. Skicka dessa statuskoder för felsökning."
 fi
 SUCCESS=1
 msg "KLART: Nginx-popupen är borttagen och Planerings egna inloggning är kvar."
