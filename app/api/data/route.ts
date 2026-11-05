@@ -208,7 +208,7 @@ export async function POST(request:Request){try{const d=db();const user=await se
   if(employeeIds.some(x=>!Number.isSafeInteger(x)||x<=0)||new Set(employeeIds).size!==employeeIds.length)return Response.json({error:"Medlemslistan innehåller dubbletter eller ogiltiga ID."},{status:400});
   if(id!==null&&(!Number.isSafeInteger(id)||id<=0||!await d.prepare("SELECT id FROM employee_groups WHERE id=?").bind(id).first()))return Response.json({error:"Gruppen finns inte."},{status:404});
   if(employeeIds.length){
-   const all=await d.prepare("SELECT id FROM employees").all<{id:number}>();
+   const all=await d.prepare("SELECT id FROM employees WHERE is_group_ledger=0").all<{id:number}>();
    const valid=new Set(all.results.map(e=>e.id));
    if(employeeIds.some(x=>!valid.has(x)))return Response.json({error:"En vald medarbetare saknas."},{status:400});
   }
@@ -228,7 +228,7 @@ export async function POST(request:Request){try{const d=db();const user=await se
  else if(action==="setEmployeeProjectOrder"||action==="resetEmployeeProjectOrder"){
   const employeeId=Number(b.employeeId);
   if(!Number.isSafeInteger(employeeId)||employeeId<=0)return Response.json({error:"Ogiltig medarbetare."},{status:400});
-  if(!await d.prepare("SELECT id FROM employees WHERE id=?").bind(employeeId).first())return Response.json({error:"Medarbetaren finns inte."},{status:404});
+  if(!await d.prepare("SELECT id FROM employees WHERE id=? AND is_group_ledger=0").bind(employeeId).first())return Response.json({error:"Medarbetaren finns inte."},{status:404});
   const choices=action==="resetEmployeeProjectOrder"?[]:b.projectIds;
   if(!Array.isArray(choices)||choices.length>250)return Response.json({error:"Ogiltig projektordning."},{status:400});
   const ordered=choices.map(x=>Number(x));
@@ -317,7 +317,7 @@ export async function POST(request:Request){try{const d=db();const user=await se
   const existingPeriods=await d.prepare("SELECT s.employee_id employeeId,s.effort_percent effortPercent,COUNT(p.id) periodCount FROM assignments s LEFT JOIN assignment_periods p ON p.assignment_id=s.id WHERE s.activity_id=? GROUP BY s.id").bind(activityId).all<{employeeId:number;effortPercent:number;periodCount:number}>();
   if(resources.some(x=>existingPeriods.results.some(old=>old.employeeId===x.employeeId&&old.periodCount>1&&old.effortPercent!==x.effortPercent)))
    return Response.json({error:"Resursen har flera bemanningsperioder. Ändra procent för varje period via Ändra perioder."},{status:400});
-  const valid=await d.prepare("SELECT id FROM employees").all<{id:number}>();
+  const valid=await d.prepare("SELECT id FROM employees WHERE is_group_ledger=0").all<{id:number}>();
   const ids=new Set(valid.results.map(x=>x.id));
   if(resources.some(x=>!ids.has(x.employeeId)))return Response.json({error:"Någon medarbetare saknas."},{status:400});
   const prev=await d.prepare("SELECT employee_id employeeId FROM assignments WHERE activity_id=?").bind(activityId).all<{employeeId:number}>();
@@ -342,7 +342,7 @@ export async function POST(request:Request){try{const d=db();const user=await se
  else if(action==="setSingleProjectMember"){
    const projectId=Number(b.projectId),employeeId=Number(b.employeeId);
    if(!Number.isSafeInteger(projectId)||!Number.isSafeInteger(employeeId)||projectId<=0||employeeId<=0)return Response.json({error:"Ogiltigt projekt eller medarbetare"},{status:400});
-   if(!await d.prepare("SELECT id FROM projects WHERE id=?").bind(projectId).first()||!await d.prepare("SELECT id FROM employees WHERE id=?").bind(employeeId).first())return Response.json({error:"Projektet eller medarbetaren saknas"},{status:404});
+   if(!await d.prepare("SELECT id FROM projects WHERE id=?").bind(projectId).first()||!await d.prepare("SELECT id FROM employees WHERE id=? AND is_group_ledger=0").bind(employeeId).first())return Response.json({error:"Projektet eller medarbetaren saknas"},{status:404});
    if(Boolean(b.enabled))await d.prepare("INSERT OR IGNORE INTO project_members(project_id,employee_id) VALUES(?,?)").bind(projectId,employeeId).run();
    else await d.prepare("DELETE FROM project_members WHERE project_id=? AND employee_id=?").bind(projectId,employeeId).run();
  }
@@ -418,6 +418,8 @@ export async function DELETE(request:Request){
   }
   if(type==="group"){
    const groupTime=await d.prepare("SELECT id FROM time_entries WHERE reporting_group_id=? LIMIT 1").bind(id).first();
+   const ledger=await d.prepare("SELECT id FROM employees WHERE is_group_ledger=1 AND ledger_group_id=? LIMIT 1").bind(id).first();
+   if(ledger)return Response.json({error:"Gruppen har en bokföringsidentitet för historisk tid och kan inte raderas medan den finns."},{status:409});
    if(groupTime)return Response.json({error:"Gruppen har historiskt bokförda timmar. Flytta eller radera dessa tidposter innan gruppen kan tas bort."},{status:409});
    await d.batch([
     d.prepare("DELETE FROM employee_group_members WHERE group_id=?").bind(id),
