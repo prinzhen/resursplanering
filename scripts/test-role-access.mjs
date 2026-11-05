@@ -651,14 +651,28 @@ try{
  assert.ok(eraseEntry?.id);
  const eraseAccount=(await ok(admin,"/api/access")).accounts.find(x=>x.email===erasedEmail);
  assert.ok(eraseAccount?.id);
- await ok(admin,"/api/access",{action:"deleteAccount",accountId:eraseAccount.id});
  const erasePreview=await ok(admin,`/api/employee-delete-impact?id=${erasePerson}`);
+ check("Deleting a person with a linked login requires explicit account offboarding",()=>{
+  assert.equal(erasePreview.linkedAccount.id,eraseAccount.id);
+  assert.equal(erasePreview.canDeactivateAccount,true);
+ });
  const purgeEmployeeParams=new URLSearchParams({type:"employee",id:String(erasePerson),
-  employeeTimeMode:"purge",expectedFingerprint:erasePreview.impact.fingerprint,confirm:"RADERA TID"});
+  employeeTimeMode:"purge",expectedFingerprint:erasePreview.impact.fingerprint,confirm:"RADERA TID"}); 
+ const noAccountConfirmation=await fetch(base+"/api/data?"+purgeEmployeeParams,{method:"DELETE",headers:{cookie:admin}});
+ check("Account deletion is refused until administrator confirms disabling the linked login",()=>assert.equal(noAccountConfirmation.status,409));
+ purgeEmployeeParams.set("deactivateLinkedAccount","yes");
  const purgeEmployeeResponse=await fetch(base+"/api/data?"+purgeEmployeeParams,{method:"DELETE",headers:{cookie:admin}});
  const purgeEmployeeBody=await purgeEmployeeResponse.text();
  check("Administrator can remove staff and its time with immutable deletion archive",()=>{
   assert.equal(purgeEmployeeResponse.status,200,purgeEmployeeBody.slice(0,700));
+ });
+ const linkedAfter=(await ok(admin,"/api/access")).accounts.find(x=>x.id===eraseAccount.id);
+ const expiredStaffLogin=await api(eraseCookie,"/api/time-entries");
+ check("Deleted staff login is disabled, detached from person and all sessions revoked",()=>{
+  assert.ok(linkedAfter);
+  assert.equal(linkedAfter.employeeId,null);
+  assert.equal(linkedAfter.isDisabled,1);
+  assert.equal(expiredStaffLogin.status,401);
  });
  const purgeCheck=new DatabaseSync(await onlyDatabase(join(dir,"data")),{readOnly:true});
  try{
