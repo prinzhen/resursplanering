@@ -64,10 +64,10 @@ try{
   original_activity_name TEXT,work_date TEXT,started_at INTEGER,ended_at INTEGER,
   duration_seconds INTEGER,note TEXT,source TEXT,updated_at INTEGER,removed_at INTEGER
  );
- INSERT INTO employees VALUES(7,'CI Medarbetare','role-ci@example.se');
+ INSERT INTO employees(id,name,email) VALUES(7,'CI Medarbetare','role-ci@example.se');
  INSERT INTO projects VALUES(11,'P-1042','Controller modernisering');
  INSERT INTO activities VALUES(12,11,'A-42','Integrationstest aktivitet');
- INSERT INTO time_entries VALUES(22,7,12,'2026-11-03',1793692800,1793696400,3600,'Första timmen','manual',1793696400,NULL);
+ INSERT INTO time_entries(id,employee_id,activity_id,work_date,started_at,ended_at,duration_seconds,note,source,updated_at,deleted_at) VALUES(22,7,12,'2026-11-03',1793692800,1793696400,3600,'Första timmen','manual',1793696400,NULL);
  INSERT INTO time_entry_audit VALUES(1,22,'manual',1793696400);
  `);
  await new Promise((resolve,reject)=>server.listen(0,"127.0.0.1",e=>e?reject(e):resolve()));
@@ -127,7 +127,7 @@ try{
   assert.equal(received[2].body.sourceVersion,3);
   assert.equal(received[2].body.durationSeconds,null);
  });
- db.exec(`INSERT INTO time_entries VALUES(23,7,12,'2026-11-04',1793779200,1793781000,1800,'Ny post','timer',1793781000,NULL);
+ db.exec(`INSERT INTO time_entries(id,employee_id,activity_id,work_date,started_at,ended_at,duration_seconds,note,source,updated_at,deleted_at) VALUES(23,7,12,'2026-11-04',1793779200,1793781000,1800,'Ny post','timer',1793781000,NULL);
  INSERT INTO time_entry_audit VALUES(4,23,'start',1793779200);
  INSERT INTO time_entry_audit VALUES(5,23,'stop',1793781000);`);
  forceFailure=true;
