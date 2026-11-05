@@ -50,11 +50,12 @@ try{
  await mkdir(dbdir,{recursive:true});
  const db=new DatabaseSync(dbpath);
  db.exec(`
- CREATE TABLE employees(id INTEGER PRIMARY KEY,name TEXT,email TEXT);
+ CREATE TABLE employees(id INTEGER PRIMARY KEY,name TEXT,email TEXT,is_group_ledger INTEGER NOT NULL DEFAULT 0);
  CREATE TABLE projects(id INTEGER PRIMARY KEY,code TEXT,name TEXT);
  CREATE TABLE activities(id INTEGER PRIMARY KEY,project_id INTEGER,code TEXT,name TEXT);
  CREATE TABLE time_entries(id INTEGER PRIMARY KEY,employee_id INTEGER,activity_id INTEGER,work_date TEXT,started_at INTEGER,
-  ended_at INTEGER,duration_seconds INTEGER,note TEXT,source TEXT,updated_at INTEGER,deleted_at INTEGER);
+  ended_at INTEGER,duration_seconds INTEGER,note TEXT,source TEXT,updated_at INTEGER,deleted_at INTEGER,
+  reporting_group_id INTEGER,reporting_group_name TEXT);
  CREATE TABLE time_entry_audit(id INTEGER PRIMARY KEY,time_entry_id INTEGER,action TEXT,changed_at INTEGER);
  CREATE TABLE time_entry_removal_archive(
   source_event_id INTEGER PRIMARY KEY, original_entry_id INTEGER,employee_id INTEGER,
@@ -173,6 +174,20 @@ try{
   assert.equal(received.at(-1).body.sourceEntryId,"23");
   assert.equal(received.at(-1).body.sourceVersion,6);
   assert.equal(erasedState.lastEventId,6);
+ });
+ db.exec(`INSERT INTO employees(id,name,email,is_group_ledger) VALUES(8,'Borttagen medarbetare','deleted-group-42@internal.invalid',1);
+ INSERT INTO time_entries(id,employee_id,activity_id,work_date,started_at,ended_at,duration_seconds,note,source,updated_at,deleted_at,reporting_group_id,reporting_group_name)
+ VALUES(24,8,12,'2026-11-05',1793865600,1793869200,3600,'Gruppens arbete','manual',1793869200,NULL,42,'Teknikgruppen');
+ INSERT INTO time_entry_audit VALUES(7,24,'manual',1793869200);`);
+ const groupRun=await run();
+ check("Group-held historical time syncs without former person name, email or employee ID",()=>{
+  assert.equal(groupRun.code,0,groupRun.stderr);
+  const body=received.at(-1).body;
+  assert.equal(body.sourceEntryId,"24");
+  assert.equal(body.operation,"upsert");
+  assert.equal(body.employee,null);
+  assert.deepEqual(body.group,{sourceId:42,name:"Teknikgruppen"});
+  assert.ok(!JSON.stringify(body).includes("deleted-group-"));
  });
  const mismatched=await run({TIDRAPPORT_SYNC_INSTANCE:"wrong-instance"});
  check("Checkpoint cannot be accidentally reused for another Planering instance",()=>{
