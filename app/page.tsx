@@ -218,7 +218,9 @@ export default function Home(){const[data,setData]=useState<Data>(empty),[scope,
       {employeeMode==="group"&&<><label htmlFor="employee-group-ledger" className="block font-medium">Ansvarig grupp</label>
        <select id="employee-group-ledger" className="w-full rounded-lg border border-slate-300 bg-white p-2" value={employeeGroup} onChange={e=>setEmployeeGroup(e.target.value)}>
         <option value="">Välj grupp som ska överta timmarna…</option>
-        {employeePreview.groups.map(g=><option key={g.id} value={g.id}>{g.name}{g.ownerId===null?" (saknar utsedd gruppchef)":""}</option>)}
+        {employeePreview.groups.map(g=><option key={g.id} value={g.id} disabled={g.ownerId===remove?.id}>
+         {g.name}{g.ownerId===null?" (saknar utsedd gruppchef)":g.ownerId===remove?.id?" (utse annan gruppchef först)":""}
+        </option>)}
        </select>
        {!employeePreview.groups.length&&<p className="text-xs text-red-700">Skapa först en grupp under TEAM för att kunna behålla timmarna.</p>}
        <p className="text-xs text-slate-600">Tidposternas projekt, aktivitet, datum och timmar bevaras. Medarbetaren tas bort och visas inte som person i historiken. Gruppchefen och projektledaren kan följa upp grupptimmarna.</p>
