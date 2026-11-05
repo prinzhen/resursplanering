@@ -685,6 +685,14 @@ try{
    assert.equal(purgeCheck.prepare("PRAGMA foreign_key_check").all().length,0);
   });
  }finally{purgeCheck.close()}
+ const pagedFirst=await ok(admin,"/api/time-entries?scope=all&offset=0");
+ const pagedSecond=await ok(admin,"/api/time-entries?scope=all&offset=1");
+ check("Time report paging changes rows but preserves full-scope totals and count",()=>{
+  assert.ok(pagedFirst.entries.length>=2);
+  assert.notEqual(pagedFirst.entries[0].id,pagedSecond.entries[0].id);
+  assert.equal(pagedFirst.entryCount,pagedSecond.entryCount);
+  assert.equal(pagedFirst.totalSeconds,pagedSecond.totalSeconds);
+ });
  const db=new DatabaseSync(await onlyDatabase(join(dir,"data")),{readOnly:true});
  try{
   check("Time adjustments are audited, including delete",()=>{
