@@ -13,6 +13,7 @@ type Employee={id:number;name:string;email:string;role:string;managerId:number|n
 type DeleteImpact={kind:"project"|"workPackage"|"activity";id:number;entryCount:number;activeEntryCount:number;deletedEntryCount:number;runningEntryCount:number;totalSeconds:number;fingerprint:string};
 type DeleteDestination={id:number;name:string;code:string|null;projectId:number;projectCode:string;projectName:string};
 type DeletePreview={impact:DeleteImpact;targets:DeleteDestination[]};
+type EmployeeDeletePreview={impact:{employeeId:number;entryCount:number;activeEntryCount:number;deletedEntryCount:number;runningEntryCount:number;totalSeconds:number;fingerprint:string};groups:{id:number;name:string;ownerId:number|null}[];suggestedGroupId:number|null};
 type Data={viewer?:Viewer;projectDirectory?:Project[];employees:Employee[];projects:Project[];workPackages:WorkPackage[];activities:WorkActivity[];assignments:Assignment[];assignmentPeriods:EffortPeriod[];activityPriorityHistory?:ActivityPriorityEvent[];projectMembers:ProjectMember[];employeeProjectOrders:EmployeeProjectOrder[];employeeGroups:EmployeeGroup[];employeeGroupMembers:EmployeeGroupMember[];
  employeeDirectory?:{id:number;name:string}[];
  projectLeaders?:{projectId:number;employeeId:number;employeeName?:string}[];
@@ -65,7 +66,12 @@ export default function Home(){const[data,setData]=useState<Data>(empty),[scope,
  [deleteLoading,setDeleteLoading]=useState(false),[deleteBusy,setDeleteBusy]=useState(false),
  [deleteMode,setDeleteMode]=useState<"transfer"|"purge">("transfer"),
  [deleteTarget,setDeleteTarget]=useState(""),[deleteConfirm,setDeleteConfirm]=useState(""),
- [deleteError,setDeleteError]=useState(""),[detail,setDetail]=useState<Detail|null>(null);const [quick,setQuick]=useState<QuickPreset|null>(null);const fileRef=useRef<HTMLInputElement>(null);
+ [deleteError,setDeleteError]=useState(""),
+ [employeePreview,setEmployeePreview]=useState<EmployeeDeletePreview|null>(null),
+ [employeePreviewLoading,setEmployeePreviewLoading]=useState(false),
+ [employeeMode,setEmployeeMode]=useState<"group"|"purge">("group"),
+ [employeeGroup,setEmployeeGroup]=useState(""),[employeeConfirm,setEmployeeConfirm]=useState(""),
+ [detail,setDetail]=useState<Detail|null>(null);const [quick,setQuick]=useState<QuickPreset|null>(null);const fileRef=useRef<HTMLInputElement>(null);
  const refresh=async()=>{try{const r=await fetch("/api/data",{cache:"no-store"}),j=await r.json() as Data&{error?:string};if(r.status===401){window.location.assign("/login");return}if(!r.ok)throw new Error(j.error);setData(j)}catch(e){setError(e instanceof Error?e.message:"Ett fel uppstod")}};useEffect(()=>{refresh()},[]);const post=async(payload:Record<string,unknown>,message:string)=>{setError("");const r=await fetch("/api/data",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(payload)}),j=await r.json() as Data&{error?:string};if(r.status===401){window.location.assign("/login");return false}if(!r.ok){setError(j.error||"Kunde inte spara");return false}setData(j);setDialog(null);setEditing(null);setNotice(message);setTimeout(()=>setNotice(""),3500);return true};const saveLeadership=async(payload:LeaderAction)=>{
   setError("");
   try{
@@ -91,11 +97,37 @@ export default function Home(){const[data,setData]=useState<Data>(empty),[scope,
    .catch(e=>{if(!ctl.signal.aborted){setDeleteError(e instanceof Error?e.message:"Kunde inte hämta tidrapporter.");setDeleteLoading(false)}});
   return ()=>ctl.abort();
  },[remove?.type,remove?.id,data.viewer?.isAdmin]);
+ useEffect(()=>{
+  setEmployeePreview(null);setEmployeeGroup("");setEmployeeMode("group");setEmployeeConfirm("");setDeleteError("");
+  if(!remove||remove.type!=="employee"||!data.viewer?.isAdmin){setEmployeePreviewLoading(false);return}
+  const ctl=new AbortController();
+  setEmployeePreviewLoading(true);
+  fetch(`/api/employee-delete-impact?id=${remove.id}`,{cache:"no-store",signal:ctl.signal})
+   .then(async r=>{const j=await r.json() as EmployeeDeletePreview&{error?:string};if(!r.ok)throw Error(j.error||"Kunde inte läsa medarbetarens tid");return j})
+   .then(j=>{if(!ctl.signal.aborted){setEmployeePreview(j);setEmployeeGroup(String(j.suggestedGroupId??j.groups[0]?.id??""));setEmployeePreviewLoading(false)}})
+   .catch(e=>{if(!ctl.signal.aborted){setDeleteError(e instanceof Error?e.message:"Kunde inte läsa tidposter");setEmployeePreviewLoading(false)}});
+  return ()=>ctl.abort();
+ },[remove?.type,remove?.id,data.viewer?.isAdmin]);
  const del=async()=>{
   if(!remove||deleteBusy)return;
   const impact=deletePreview?.impact;
   if(hasDeleteImpact&&data.viewer?.isAdmin&&(!deletePreview||deleteLoading)){setDeleteError("Tidrapporterna måste kontrolleras innan radering.");return}
+  if(remove.type==="employee"&&data.viewer?.isAdmin&&(!employeePreview||employeePreviewLoading)){
+   setDeleteError("Medarbetarens tidposter måste kontrolleras innan borttagning.");return
+  }
   const params=new URLSearchParams({type:remove.type,id:String(remove.id)});
+  if(remove.type==="employee"&&employeePreview?.impact.entryCount){
+   if(employeePreview.impact.runningEntryCount){setDeleteError("Stoppa medarbetarens tidtagning innan borttagning.");return}
+   params.set("employeeTimeMode",employeeMode);
+   params.set("expectedFingerprint",employeePreview.impact.fingerprint);
+   if(employeeMode==="group"){
+    if(!employeeGroup){setDeleteError("Välj en grupp som ska överta timmarna.");return}
+    params.set("groupId",employeeGroup);
+   }else{
+    if(employeeConfirm!=="RADERA TID"){setDeleteError("Skriv RADERA TID exakt för att bekräfta.");return}
+    params.set("confirm",employeeConfirm);
+   }
+  }
   if(impact?.entryCount){
    if(impact.runningEntryCount){setDeleteError("Stoppa alla pågående tidtagningar innan du fortsätter.");return}
    params.set("timeMode",deleteMode);
@@ -116,6 +148,10 @@ export default function Home(){const[data,setData]=useState<Data>(empty),[scope,
     if(r.status===409&&hasDeleteImpact&&data.viewer?.isAdmin){
      const again=await fetch(`/api/delete-impact?type=${remove.type}&id=${remove.id}`,{cache:"no-store"});
      if(again.ok)setDeletePreview(await again.json() as DeletePreview);
+    }
+    if(r.status===409&&remove.type==="employee"&&data.viewer?.isAdmin){
+     const again=await fetch(`/api/employee-delete-impact?id=${remove.id}`,{cache:"no-store"});
+     if(again.ok)setEmployeePreview(await again.json() as EmployeeDeletePreview);
     }
     return
    }
@@ -165,9 +201,39 @@ export default function Home(){const[data,setData]=useState<Data>(empty),[scope,
      </fieldset>
     </>:<p>Inga registrerade tidposter finns på den här posten.</p>}
    </div>}
+   {remove?.type==="employee"&&data.viewer?.isAdmin&&<div className="space-y-3 rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-900">
+    {employeePreviewLoading?<p>Läser medarbetarens rapporterade tid…</p>:employeePreview?.impact.entryCount?<>
+     <p className="font-semibold">Registrerad tid: {employeePreview.impact.entryCount} poster · {(employeePreview.impact.totalSeconds/3600).toLocaleString("sv-SE",{maximumFractionDigits:2})} timmar.</p>
+     {!!employeePreview.impact.deletedEntryCount&&<p>{employeePreview.impact.deletedEntryCount} tidigare borttagna poster ingår i historiken.</p>}
+     {!!employeePreview.impact.runningEntryCount&&<p className="font-semibold text-red-700">Pågående tidtagning måste stoppas innan borttagning.</p>}
+     <fieldset className="space-y-2" disabled={deleteBusy||!!employeePreview.impact.runningEntryCount}>
+      <legend className="font-semibold">Hur ska medarbetarens tid hanteras?</legend>
+      <label className="flex items-start gap-2"><input type="radio" checked={employeeMode==="group"} onChange={()=>setEmployeeMode("group")}/>Behåll timmarna på projekt och aktivitet, men bokför dem anonymt på grupp</label>
+      {employeeMode==="group"&&<><label htmlFor="employee-group-ledger" className="block font-medium">Ansvarig grupp</label>
+       <select id="employee-group-ledger" className="w-full rounded-lg border border-slate-300 bg-white p-2" value={employeeGroup} onChange={e=>setEmployeeGroup(e.target.value)}>
+        {employeePreview.groups.map(g=><option key={g.id} value={g.id}>{g.name}{g.ownerId===null?" (saknar utsedd gruppchef)":""}</option>)}
+       </select>
+       {!employeePreview.groups.length&&<p className="text-xs text-red-700">Skapa först en grupp under TEAM för att kunna behålla timmarna.</p>}
+       <p className="text-xs text-slate-600">Tidposternas projekt, aktivitet, datum och timmar bevaras. Medarbetaren tas bort och visas inte som person i historiken. Gruppchefen och projektledaren kan följa upp grupptimmarna.</p>
+       <p className="text-xs text-amber-700">Om kommentarer innehåller personuppgifter behöver de granskas separat.</p>
+      </>}
+      <label className="flex items-start gap-2"><input type="radio" checked={employeeMode==="purge"} onChange={()=>setEmployeeMode("purge")}/>Ta bort de rapporterade timmarna</label>
+      {employeeMode==="purge"&&<><label htmlFor="confirm-employee-time-removal" className="block font-medium">Skriv RADERA TID</label>
+       <input id="confirm-employee-time-removal" className="w-full rounded-lg border border-red-300 bg-white p-2" value={employeeConfirm} onChange={e=>setEmployeeConfirm(e.target.value)} placeholder="RADERA TID"/>
+       <p className="text-xs text-red-700">Timmarna försvinner från rapporteringen. Ett administrativt revisionsspår och en synkroniseringsmarkering sparas.</p>
+      </>}
+     </fieldset>
+    </>:<p>Inga tidposter finns kopplade till medarbetaren.</p>}
+   </div>}
    {deleteError&&<p role="alert" className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{deleteError}</p>}
    <AlertDialogFooter><AlertDialogCancel disabled={deleteBusy}>Avbryt</AlertDialogCancel>
-    <AlertDialogAction onClick={e=>{e.preventDefault();void del()}} disabled={deleteBusy||deleteLoading||!!(deletePreview?.impact.runningEntryCount)||!!(hasDeleteImpact&&data.viewer?.isAdmin&&!deletePreview)||!!(deletePreview?.impact.entryCount&&deleteMode==="transfer"&&!deleteTarget)||!!(deletePreview?.impact.entryCount&&deleteMode==="purge"&&deleteConfirm!=="RADERA TID")} className="bg-red-600 hover:bg-red-700">
+    <AlertDialogAction onClick={e=>{e.preventDefault();void del()}} disabled={deleteBusy||deleteLoading||employeePreviewLoading||!!(deletePreview?.impact.runningEntryCount)||!!(employeePreview?.impact.runningEntryCount)
+     ||!!(hasDeleteImpact&&data.viewer?.isAdmin&&!deletePreview)
+     ||!!(remove?.type==="employee"&&data.viewer?.isAdmin&&!employeePreview)
+     ||!!(deletePreview?.impact.entryCount&&deleteMode==="transfer"&&!deleteTarget)
+     ||!!(deletePreview?.impact.entryCount&&deleteMode==="purge"&&deleteConfirm!=="RADERA TID")
+     ||!!(remove?.type==="employee"&&employeePreview?.impact.entryCount&&employeeMode==="group"&&!employeeGroup)
+     ||!!(remove?.type==="employee"&&employeePreview?.impact.entryCount&&employeeMode==="purge"&&employeeConfirm!=="RADERA TID")} className="bg-red-600 hover:bg-red-700">
      {deleteBusy?"Bearbetar…":deletePreview?.impact.entryCount?"Bekräfta och ta bort":"Ta bort"}
     </AlertDialogAction></AlertDialogFooter>
   </AlertDialogContent>
