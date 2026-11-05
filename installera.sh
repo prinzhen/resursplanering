@@ -7,7 +7,6 @@ APP_GROUP="resursplanering"
 APP_DIR="/opt/resursplanering"
 STATE_DIR="/var/lib/resursplanering"
 SERVICE_FILE="/etc/systemd/system/resursplanering.service"
-AUTH_FILE="/etc/nginx/resursplanering.htpasswd"
 NGINX_SITE="/etc/nginx/sites-available/resursplanering"
 REPO_ARCHIVE="https://github.com/prinzhen/resursplanering/archive/refs/heads/main.tar.gz"
 NODE_MAJOR="24"
@@ -169,10 +168,12 @@ systemctl daemon-reload
 systemctl enable "${APP_NAME}.service"
 systemctl restart "${APP_NAME}.service"
 
-step "Kontrollerar applikationen"
+step "Kontrollerar applikationen och dess inbyggda sessionsskydd"
 healthy=false
 for _ in $(seq 1 30); do
-  if curl -fsS --max-time 5 http://127.0.0.1:3000/api/data >/dev/null 2>&1; then
+  auth_code="$(curl --max-time 5 -sS -o /dev/null -w '%{http_code}' http://127.0.0.1:3000/api/auth || true)"
+  data_code="$(curl --max-time 5 -sS -o /dev/null -w '%{http_code}' http://127.0.0.1:3000/api/data || true)"
+  if [[ "${auth_code}" == 200 && "${data_code}" == 401 ]]; then
     healthy=true
     break
   fi
@@ -181,45 +182,18 @@ done
 if [[ ${healthy} != true ]]; then
   systemctl status --no-pager "${APP_NAME}.service" || true
   journalctl -u "${APP_NAME}.service" -n 100 --no-pager || true
-  die "Applikationen startade inte. Diagnostiken visas ovan."
+  die "Applikationen startade inte eller saknar sessionsskydd (API /api/data måste svara HTTP 401 anonymt)."
 fi
 
-step "Installerar inloggningsskydd"
-apt-get install -y --no-install-recommends nginx apache2-utils
-
-if [[ ! -s "${AUTH_FILE}" ]]; then
-  [[ -r /dev/tty && -w /dev/tty ]] || \
-    die "En interaktiv terminal krävs för att skapa inloggningen."
-
-  read -r -p "Användarnamn för Resursplanering [admin]: " AUTH_USER </dev/tty
-  AUTH_USER="${AUTH_USER:-admin}"
-  [[ "${AUTH_USER}" =~ ^[A-Za-z0-9._-]+$ ]] || \
-    die "Användarnamnet får bara innehålla bokstäver, siffror, punkt, bindestreck och understreck."
-
-  read -r -s -p "Lösenord (minst 14 tecken): " AUTH_PASSWORD </dev/tty
-  printf '\n' >/dev/tty
-  read -r -s -p "Upprepa lösenordet: " AUTH_PASSWORD_CONFIRM </dev/tty
-  printf '\n' >/dev/tty
-  [[ ${#AUTH_PASSWORD} -ge 14 ]] || die "Lösenordet måste vara minst 14 tecken."
-  [[ "${AUTH_PASSWORD}" == "${AUTH_PASSWORD_CONFIRM}" ]] || \
-    die "Lösenorden stämmer inte överens."
-
-  printf '%s\n' "${AUTH_PASSWORD}" | htpasswd -i -c -B "${AUTH_FILE}" "${AUTH_USER}" >/dev/null
-  unset AUTH_PASSWORD AUTH_PASSWORD_CONFIRM
-  chown root:www-data "${AUTH_FILE}"
-  chmod 0640 "${AUTH_FILE}"
-else
-  printf 'Befintlig inloggning behålls för användaren %s.\n' "$(cut -d: -f1 "${AUTH_FILE}")"
-fi
+step "Installerar Nginx som reverse proxy – inloggning hanteras av Planering"
+apt-get install -y --no-install-recommends nginx
 
 cat > "${NGINX_SITE}" <<'EOF'
 server {
     listen 127.0.0.1:3001;
     server_name _;
 
-    auth_basic "Resursplanering";
-    auth_basic_user_file /etc/nginx/resursplanering.htpasswd;
-
+    # No Nginx Basic Auth popup: the application enforces sessions on its APIs.
     client_max_body_size 25m;
     add_header X-Content-Type-Options nosniff always;
     add_header Referrer-Policy same-origin always;
@@ -244,9 +218,10 @@ nginx -t
 systemctl enable nginx
 systemctl restart nginx
 
-auth_status="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 5 http://127.0.0.1:3001/)"
-[[ "${auth_status}" == "401" ]] || \
-  die "Inloggningsskyddet svarade med HTTP ${auth_status}, förväntat svar är 401."
+login_status="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 5 http://127.0.0.1:3001/login)"
+data_status="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 5 http://127.0.0.1:3001/api/data)"
+[[ "${login_status}" == "200" && "${data_status}" == "401" ]] || \
+  die "Kontroll av Nginx/inbyggd inloggning misslyckades: /login=${login_status}, /api/data=${data_status}."
 
 step "Ansluter Tailscale"
 if ! tailscale ip -4 >/dev/null 2>&1; then
