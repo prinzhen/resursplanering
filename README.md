@@ -2,6 +2,52 @@
 
 Webbapplikation för projekt, uppdrag, aktiviteter, bemanning, beläggning, personliga planeringar, Gantt-scheman samt import och export.
 
+## Administratör: flytta eller radera tid vid projektradering
+
+Om ett projekt, uppdrag eller en aktivitet har registrerade tidposter visas
+nu en obligatorisk administratörsdialog som visar antalet tidposter och timmar,
+även tidposter som tidigare markerats som borttagna.
+
+Administratören väljer:
+
+1. **Flytta tidposter** till en befintlig aktivitet utanför det som ska raderas.
+   Överföring bevarar medarbetare, arbetsdatum, varaktighet, kommentarer och
+   tidpostens oförändrade ID. Endast aktivitet/projekt ändras.
+   Flytten registreras i `time_entry_relocations` med gammal och ny kontext,
+   administratörskonto och tidpunkt. Projektmedlemskap och bemanning på
+   mottagaren ändras **inte** automatiskt.
+2. **Ta bort tidposter**. Kräver att administratören skriver `RADERA TID`.
+   Varje borttagen tidpost arkiveras i `time_entry_removal_archive`
+   tillsammans med en egen beständig utgående delete-händelse för framtida
+   synkronisering mot Tidrapport. De gamla huvud- och auditposterna kan därefter
+   tas bort utan FK-fel, men granskningsuppgifterna finns kvar i arkivet.
+
+Om någon tidtagning fortfarande pågår måste den stoppas innan projektet
+eller aktiviteten får raderas. Dialogen använder en tidsdatabas-fingerprint
+för att upptäcka förändrade tidposter och kräva att användaren granskar igen
+före borttagningen. Alla förändringar utförs i samma D1 batch/transaction.
+
+Det finns också ett administratörsval **Visa alla medarbetares tidposter**
+under Tidrapportering. Där kan administratören markera en annan medarbetares
+avslutade tidpost som borttagen (soft delete) utan att radera dennes
+revisionshistorik. Den kan sedan arkiveras tillsammans med källprojektet.
+
+**Installera på skarp port 3000 efter grön CI**, utan att påverka Tailscale eller
+Nginx och utan att skriva över databasen:
+
+```bash
+curl -fsSLo /tmp/update-production-timereconciliation.sh \
+  https://raw.githubusercontent.com/prinzhen/resursplanering/feature/quick-activities-gantt-proposals/scripts/update-production-timereconciliation.sh
+bash -n /tmp/update-production-timereconciliation.sh
+sudo bash /tmp/update-production-timereconciliation.sh
+```
+
+Skriptet kräver `JA TID`, kör isolerade tester före bytet, tar en kall
+säkerhetskopia av hela D1/SQLite-databasen, växlar endast programkoden och
+kontrollerar antalet projekt, aktiviteter, medarbetare och tidposter efteråt.
+Om något misslyckas försöker det återställa gammal kod och databas. **Kör inte
+äldre `installera.sh` från `main` för denna uppdatering**.
+
 ## En enda inloggning – ta bort Nginx-popupen
 
 Planerings egna personliga inloggning på `/login` använder sessioncookies,
