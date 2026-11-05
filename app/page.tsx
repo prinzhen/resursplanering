@@ -104,7 +104,7 @@ export default function Home(){const[data,setData]=useState<Data>(empty),[scope,
   setEmployeePreviewLoading(true);
   fetch(`/api/employee-delete-impact?id=${remove.id}`,{cache:"no-store",signal:ctl.signal})
    .then(async r=>{const j=await r.json() as EmployeeDeletePreview&{error?:string};if(!r.ok)throw Error(j.error||"Kunde inte läsa medarbetarens tid");return j})
-   .then(j=>{if(!ctl.signal.aborted){setEmployeePreview(j);setEmployeeGroup(String(j.suggestedGroupId??j.groups[0]?.id??""));setEmployeePreviewLoading(false)}})
+   .then(j=>{if(!ctl.signal.aborted){setEmployeePreview(j);setEmployeeGroup(j.suggestedGroupId===null?"":String(j.suggestedGroupId));setEmployeePreviewLoading(false)}})
    .catch(e=>{if(!ctl.signal.aborted){setDeleteError(e instanceof Error?e.message:"Kunde inte läsa tidposter");setEmployeePreviewLoading(false)}});
   return ()=>ctl.abort();
  },[remove?.type,remove?.id,data.viewer?.isAdmin]);
@@ -211,6 +211,7 @@ export default function Home(){const[data,setData]=useState<Data>(empty),[scope,
       <label className="flex items-start gap-2"><input type="radio" checked={employeeMode==="group"} onChange={()=>setEmployeeMode("group")}/>Behåll timmarna på projekt och aktivitet, men bokför dem anonymt på grupp</label>
       {employeeMode==="group"&&<><label htmlFor="employee-group-ledger" className="block font-medium">Ansvarig grupp</label>
        <select id="employee-group-ledger" className="w-full rounded-lg border border-slate-300 bg-white p-2" value={employeeGroup} onChange={e=>setEmployeeGroup(e.target.value)}>
+        <option value="">Välj grupp som ska överta timmarna…</option>
         {employeePreview.groups.map(g=><option key={g.id} value={g.id}>{g.name}{g.ownerId===null?" (saknar utsedd gruppchef)":""}</option>)}
        </select>
        {!employeePreview.groups.length&&<p className="text-xs text-red-700">Skapa först en grupp under TEAM för att kunna behålla timmarna.</p>}
