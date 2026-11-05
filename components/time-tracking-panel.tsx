@@ -80,7 +80,7 @@ export default function TimeTrackingPanel(){
   <div className="panel-head flex-wrap items-start gap-3">
    <div><h2 className="flex items-center gap-2"><Clock3 className="h-5 w-5"/>Tidrapportering</h2>
     <p>Registrera faktiskt nedlagd tid per aktivitet. Planerad beläggning förändras inte.</p></div>
-   <a className="inline-flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-800 hover:bg-slate-50" href="/api/time-entries?format=csv"><Download className="h-4 w-4"/>Exportera till CSV</a>
+   <a className="inline-flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-800 hover:bg-slate-50" href={"/api/time-entries?format=csv"+(showAll?"&scope=all":"") }><Download className="h-4 w-4"/>Exportera till CSV</a>
   </div>
   <div className="space-y-5 p-4 sm:p-6">
    {error&&<p role="alert" className="rounded-lg border border-red-300 bg-red-50 p-3 text-sm text-red-800">{error}</p>}
