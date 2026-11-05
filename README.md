@@ -2,6 +2,55 @@
 
 Webbapplikation för projekt, uppdrag, aktiviteter, bemanning, beläggning, personliga planeringar, Gantt-scheman samt import och export.
 
+## Medarbetare med rapporterad tid – behåll på grupp eller ta bort
+
+När en administratör tar bort en medarbetare som har rapporterad tid erbjuder
+bekräftelsedialogen två uttryckliga alternativ:
+
+- **Behåll timmarna på grupp:** Välj befintlig TEAM/grupp. Alla tidposter,
+  inklusive tidigare mjukt borttagna poster för revisionshistorik, kopplas om
+  till en icke-personlig **gruppbokföringsidentitet**. Namn och e-postadress
+  från medarbetaren används inte som rapportidentitet. Projekt, aktivitet,
+  arbetsdatum, minuter, kommentarer, externa tidpost-ID och tidrapportens
+  ändringshistorik behålls. Gruppbokföringsidentiteten är varken ett konto
+  eller en person som visas i den ordinarie personal- och bemanningsvyn.
+  Endast en särskilt dold teknisk personrad används för att uppfylla
+  SQLite-tabellens befintliga foreign key `time_entries.employee_id`.
+- **Radera timmar:** Kräver `RADERA TID`. Tidposterna tas bort från den
+  aktiva redovisningen, men revisionsarkivet och tombstones för framtida
+  synkronisering sparas. Arkivet anonymiserar namn och e-postadress.
+
+**Behörighet:** Under fliken *Tidrapportering* väljer administratören
+*Alla medarbetare och grupper* för att se och **ändra** datum, minuter,
+kommentar och aktivitet/projekt på slutförda tidposter. Ändringar spåras
+i `time_entry_audit`, och byte av aktivitet även i
+`time_entry_relocations`. Gruppchefer som äger gruppen
+(`employee_groups.owner_id` och aktiv gruppchefsroll) och projektledare
+för projektet (`project_leaders`) får välja *Historiska timmar bokförda
+på grupp*. De får **läsa men inte ändra** grupptimmarna. Vanliga medarbetare
+får inte läsa andra personers tid eller gruppens historik.
+
+**Viktiga begränsningar:** En pågående tidtagning måste stoppas innan
+medarbetaren tas bort. Ett aktivt inloggningskonto som är kopplat till
+medarbetaren ska först hanteras under *Konton och behörigheter*; det
+raderas inte tyst med personposten. För att gruppchef ska se grupptimmarna
+måste gruppen ha en tilldelad chef/ägare. Fritextkommentarer kan själva
+innehålla personnamn och behöver i så fall granskas separat. En grupp
+med kvarvarande historiska bokföringsrader kan inte raderas utan att
+historiens destination först hanteras.
+
+Migration `0016_group_time_ledger.sql` lägger till gruppkoppling och
+bokföringsmarkering utan att återskapa eller tömma `time_entries` eller
+`time_entry_audit`. Testerna verifierar skyddad åtkomst, korrigeringar,
+gruppöverföring och bevarade FK-relationer.
+
+### Produktionsuppdatering
+
+Använd `scripts/update-production-group-ledger.sh` i utvecklingsgrenen
+när GitHub Actions har passerat. Skriptet installerar en versionslåst
+release, testar helt isolerat och tar kall backup av skarpa databasen innan
+den byter kod på port 3000. Nginx på port 3001 och Tailscale ändras inte.
+
 ## Administratör: flytta eller radera tid vid projektradering
 
 Om ett projekt, uppdrag eller en aktivitet har registrerade tidposter visas
