@@ -111,22 +111,29 @@ def snapshot(root):
     for file in pathlib.Path(root).rglob("*.sqlite"):
         try:
             c=sqlite3.connect(file.as_uri()+"?mode=ro",uri=True,timeout=15)
-            names={r[0] for r in c.execute("SELECT name FROM sqlite_master WHERE type='table'")}
-            if {"employees","projects","activities","user_accounts","time_entries"}<=names:
-                assert c.execute("PRAGMA integrity_check").fetchone()[0]=="ok","sqlite integrity_check failed"
-                assert not c.execute("PRAGMA foreign_key_check").fetchall(),"foreign key check failed"
-                candidates.append({name:c.execute('SELECT COUNT(*) FROM "'+name+'"').fetchone()[0] if name in names else 0 for name in TABLES})
-            c.close()
-        except sqlite3.Error: pass
-    assert len(candidates)==1,"Expected exactly one application SQLite database"
+            try:
+                names={r[0] for r in c.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+                if {"employees","projects","activities","user_accounts","time_entries"}<=names:
+                    assert c.execute("PRAGMA integrity_check").fetchone()[0]=="ok","SQLite integrity_check failed"
+                    assert not c.execute("PRAGMA foreign_key_check").fetchall(),"SQLite foreign_key_check failed"
+                    counts={name:c.execute('SELECT COUNT(*) FROM "'+name+'"').fetchone()[0]
+                            if name in names else 0 for name in TABLES}
+                    candidates.append((file,counts,names))
+            finally:
+                c.close()
+        except sqlite3.Error as e:
+            raise AssertionError(f"SQLite kunde inte läsas: {file}: {e}") from e
+    assert len(candidates)==1, f"Expected exactly one Planering app database under {root}; found {len(candidates)}"
     return candidates[0]
-before,after=snapshot(sys.argv[1]),snapshot(sys.argv[2])
+before_file,before,before_tables=snapshot(sys.argv[1])
+after_file,after,after_tables=snapshot(sys.argv[2])
 assert before==after,f"Unexpected change in business data: {before} -> {after}"
-new=sqlite3.connect(next(pathlib.Path(sys.argv[2]).rglob("*.sqlite")).as_uri()+"?mode=ro",uri=True)
-try:
-    tables={x[0] for x in new.execute("SELECT name FROM sqlite_master WHERE type='table'")}
-    assert {"time_entry_relocations","time_entry_removal_archive"} <= tables,"Time-reconciliation migration 0015 missing"
-finally:new.close()
+required={"time_entry_relocations","time_entry_removal_archive"}
+assert required<=after_tables, (
+    f"Time-reconciliation migration 0015 missing in the ACTUAL Planering database: {after_file}; "
+    f"missing tables: {sorted(required-after_tables)}"
+)
+print(f"Kontrollerad applikationsdatabas: {after_file}")
 print("Datakontroll OK: inga personer, projekt, aktiviteter eller tidposter förlorade. Tidflytts- och revisionsarkiv finns.")
 PY
 SUCCESS=1
