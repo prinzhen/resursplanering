@@ -166,12 +166,13 @@ try{
   '2026-11-04',1793779200,1793781000,1800,'Ny post','timer',1793782000,1793782000);`);
  await writeFile(state,JSON.stringify({schemaVersion:1,sourceInstance:"planering-ci",lastEventId:5}));
  const erased=await run();
+ const erasedState=JSON.parse(await readFile(state,"utf8"));
  check("Hard-deleted source time sends durable tombstone from independent archive",()=>{
   assert.equal(erased.code,0,erased.stderr);
   assert.equal(received.at(-1).body.operation,"delete");
   assert.equal(received.at(-1).body.sourceEntryId,"23");
   assert.equal(received.at(-1).body.sourceVersion,6);
-  assert.equal(JSON.parse(await readFile(state,"utf8")).lastEventId,6);
+  assert.equal(erasedState.lastEventId,6);
  });
  const mismatched=await run({TIDRAPPORT_SYNC_INSTANCE:"wrong-instance"});
  check("Checkpoint cannot be accidentally reused for another Planering instance",()=>{
