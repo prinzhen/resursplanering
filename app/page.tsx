@@ -13,7 +13,8 @@ type Employee={id:number;name:string;email:string;role:string;managerId:number|n
 type DeleteImpact={kind:"project"|"workPackage"|"activity";id:number;entryCount:number;activeEntryCount:number;deletedEntryCount:number;runningEntryCount:number;totalSeconds:number;fingerprint:string};
 type DeleteDestination={id:number;name:string;code:string|null;projectId:number;projectCode:string;projectName:string};
 type DeletePreview={impact:DeleteImpact;targets:DeleteDestination[]};
-type EmployeeDeletePreview={impact:{employeeId:number;entryCount:number;activeEntryCount:number;deletedEntryCount:number;runningEntryCount:number;totalSeconds:number;fingerprint:string};groups:{id:number;name:string;ownerId:number|null}[];suggestedGroupId:number|null};
+type EmployeeDeletePreview={impact:{employeeId:number;entryCount:number;activeEntryCount:number;deletedEntryCount:number;runningEntryCount:number;totalSeconds:number;fingerprint:string};groups:{id:number;name:string;ownerId:number|null}[];suggestedGroupId:number|null;
+ linkedAccount:{id:number;email:string;isAdmin:boolean;isDisabled:boolean}|null;canDeactivateAccount:boolean};
 type Data={viewer?:Viewer;projectDirectory?:Project[];employees:Employee[];projects:Project[];workPackages:WorkPackage[];activities:WorkActivity[];assignments:Assignment[];assignmentPeriods:EffortPeriod[];activityPriorityHistory?:ActivityPriorityEvent[];projectMembers:ProjectMember[];employeeProjectOrders:EmployeeProjectOrder[];employeeGroups:EmployeeGroup[];employeeGroupMembers:EmployeeGroupMember[];
  employeeDirectory?:{id:number;name:string}[];
  projectLeaders?:{projectId:number;employeeId:number;employeeName?:string}[];
@@ -71,6 +72,7 @@ export default function Home(){const[data,setData]=useState<Data>(empty),[scope,
  [employeePreviewLoading,setEmployeePreviewLoading]=useState(false),
  [employeeMode,setEmployeeMode]=useState<"group"|"purge">("group"),
  [employeeGroup,setEmployeeGroup]=useState(""),[employeeConfirm,setEmployeeConfirm]=useState(""),
+ [disableLinkedLogin,setDisableLinkedLogin]=useState(false),
  [detail,setDetail]=useState<Detail|null>(null);const [quick,setQuick]=useState<QuickPreset|null>(null);const fileRef=useRef<HTMLInputElement>(null);
  const refresh=async()=>{try{const r=await fetch("/api/data",{cache:"no-store"}),j=await r.json() as Data&{error?:string};if(r.status===401){window.location.assign("/login");return}if(!r.ok)throw new Error(j.error);setData(j)}catch(e){setError(e instanceof Error?e.message:"Ett fel uppstod")}};useEffect(()=>{refresh()},[]);const post=async(payload:Record<string,unknown>,message:string)=>{setError("");const r=await fetch("/api/data",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(payload)}),j=await r.json() as Data&{error?:string};if(r.status===401){window.location.assign("/login");return false}if(!r.ok){setError(j.error||"Kunde inte spara");return false}setData(j);setDialog(null);setEditing(null);setNotice(message);setTimeout(()=>setNotice(""),3500);return true};const saveLeadership=async(payload:LeaderAction)=>{
   setError("");
@@ -98,7 +100,7 @@ export default function Home(){const[data,setData]=useState<Data>(empty),[scope,
   return ()=>ctl.abort();
  },[remove?.type,remove?.id,data.viewer?.isAdmin]);
  useEffect(()=>{
-  setEmployeePreview(null);setEmployeeGroup("");setEmployeeMode("group");setEmployeeConfirm("");setDeleteError("");
+  setEmployeePreview(null);setEmployeeGroup("");setEmployeeMode("group");setEmployeeConfirm("");setDisableLinkedLogin(false);setDeleteError("");
   if(!remove||remove.type!=="employee"||!data.viewer?.isAdmin){setEmployeePreviewLoading(false);return}
   const ctl=new AbortController();
   setEmployeePreviewLoading(true);
@@ -116,6 +118,10 @@ export default function Home(){const[data,setData]=useState<Data>(empty),[scope,
    setDeleteError("Medarbetarens tidposter måste kontrolleras innan borttagning.");return
   }
   const params=new URLSearchParams({type:remove.type,id:String(remove.id)});
+  if(remove.type==="employee"&&employeePreview?.linkedAccount){
+   if(!employeePreview.canDeactivateAccount||!disableLinkedLogin){setDeleteError("Du måste bekräfta att medarbetarens inloggningskonto ska inaktiveras.");return}
+   params.set("deactivateLinkedAccount","yes");
+  }
   if(remove.type==="employee"&&employeePreview?.impact.entryCount){
    if(employeePreview.impact.runningEntryCount){setDeleteError("Stoppa medarbetarens tidtagning innan borttagning.");return}
    params.set("employeeTimeMode",employeeMode);
@@ -226,11 +232,18 @@ export default function Home(){const[data,setData]=useState<Data>(empty),[scope,
      </fieldset>
     </>:<p>Inga tidposter finns kopplade till medarbetaren.</p>}
    </div>}
+   {remove?.type==="employee"&&employeePreview?.linkedAccount&&<div className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm">
+    {employeePreview.canDeactivateAccount?<label className="flex items-start gap-2">
+     <input type="checkbox" checked={disableLinkedLogin} onChange={e=>setDisableLinkedLogin(e.target.checked)} disabled={deleteBusy}/>
+     <span>Inaktivera och koppla bort inloggningskontot <strong>{employeePreview.linkedAccount.email}</strong>. Alla aktiva inloggningssessioner avslutas; kontot behålls utan personkoppling för revisionshistorik.</span>
+    </label>:<p className="text-red-700">Detta är kontot du är inloggad med. Ta inte bort din egen medarbetarpost härifrån.</p>}
+   </div>}
    {deleteError&&<p role="alert" className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{deleteError}</p>}
    <AlertDialogFooter><AlertDialogCancel disabled={deleteBusy}>Avbryt</AlertDialogCancel>
     <AlertDialogAction onClick={e=>{e.preventDefault();void del()}} disabled={deleteBusy||deleteLoading||employeePreviewLoading||!!(deletePreview?.impact.runningEntryCount)||!!(employeePreview?.impact.runningEntryCount)
      ||!!(hasDeleteImpact&&data.viewer?.isAdmin&&!deletePreview)
      ||!!(remove?.type==="employee"&&data.viewer?.isAdmin&&!employeePreview)
+     ||!!(remove?.type==="employee"&&employeePreview?.linkedAccount&&(!employeePreview.canDeactivateAccount||!disableLinkedLogin))
      ||!!(deletePreview?.impact.entryCount&&deleteMode==="transfer"&&!deleteTarget)
      ||!!(deletePreview?.impact.entryCount&&deleteMode==="purge"&&deleteConfirm!=="RADERA TID")
      ||!!(remove?.type==="employee"&&employeePreview?.impact.entryCount&&employeeMode==="group"&&!employeeGroup)
