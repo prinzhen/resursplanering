@@ -507,6 +507,52 @@ try{
   });
  }finally{afterReconcileDb.close()}
 
+
+ // Re-check the scoped activity/subtree path with time: wrong targets and
+ // concurrent changes must be rejected, running clocks must be stopped.
+ const actSource=await makeTemporaryProject("CI-TIME-ACT","CI Radera aktivitetsgren");
+ const firstChildState=await ok(admin,"/api/data",{action:"activity",projectId:actSource.projectId,parentActivityId:actSource.activityId,
+  name:"CI child with time",description:"Undertest",startDate:"2026-11-01",endDate:"2026-11-28",status:"Planerad"});
+ const actChild=firstChildState.activities.find(x=>x.name==="CI child with time"&&x.parentActivityId===actSource.activityId);
+ assert.ok(actChild?.id);
+ await ok(ordinary,"/api/time-entries",{action:"manual",activityId:actChild.id,workDate:"2026-11-06",durationMinutes:23,note:"ci-subtree-transfer"});
+ const actPreview=await ok(admin,`/api/delete-impact?type=activity&id=${actSource.activityId}`);
+ check("Parent activity impact includes descendant time, excludes source and child as targets",()=>{
+  assert.equal(actPreview.impact.entryCount,1);
+  assert.ok(!actPreview.targets.some(x=>x.id===actSource.activityId||x.id===actChild.id));
+ });
+ const badTarget=await fetch(base+"/api/data?"+new URLSearchParams({type:"activity",id:String(actSource.activityId),
+  timeMode:"transfer",expectedFingerprint:actPreview.impact.fingerprint,targetActivityId:String(actChild.id)}),{method:"DELETE",headers:{cookie:admin}});
+ check("Transfer target inside a deleted activity subtree is rejected",()=>assert.equal(badTarget.status,409));
+ await ok(ordinary,"/api/time-entries",{action:"manual",activityId:actChild.id,workDate:"2026-11-07",durationMinutes:31,note:"ci-subtree-stale"});
+ const stale=await fetch(base+"/api/data?"+new URLSearchParams({type:"activity",id:String(actSource.activityId),
+  timeMode:"transfer",expectedFingerprint:actPreview.impact.fingerprint,targetActivityId:"2"}),{method:"DELETE",headers:{cookie:admin}});
+ check("Admin must refresh confirmation if newly reported time changed the impact",()=>assert.equal(stale.status,409));
+ const livePreview=await ok(admin,`/api/delete-impact?type=activity&id=${actSource.activityId}`);
+ await ok(ordinary,"/api/time-entries",{action:"start",activityId:actChild.id});
+ const clockPreview=await ok(admin,`/api/delete-impact?type=activity&id=${actSource.activityId}`);
+ const runningDelete=await fetch(base+"/api/data?"+new URLSearchParams({type:"activity",id:String(actSource.activityId),
+  timeMode:"purge",expectedFingerprint:clockPreview.impact.fingerprint,confirm:"RADERA TID"}),{method:"DELETE",headers:{cookie:admin}});
+ check("Running time capture prevents admin from deleting that activity",()=>assert.equal(runningDelete.status,409));
+ const saraActive=(await ok(ordinary,"/api/time-entries")).entries.find(x=>x.activityId===actChild.id&&x.endedAt===null);
+ assert.ok(saraActive?.id);
+ await ok(ordinary,"/api/time-entries",{action:"stop",id:saraActive.id});
+ const afterStop=await ok(admin,`/api/delete-impact?type=activity&id=${actSource.activityId}`);
+ const deletedActivity=await fetch(base+"/api/data?"+new URLSearchParams({type:"activity",id:String(actSource.activityId),
+  timeMode:"transfer",expectedFingerprint:afterStop.impact.fingerprint,targetActivityId:"2"}),{method:"DELETE",headers:{cookie:admin}});
+ const deletedActivityBody=await deletedActivity.text();
+ check("Parent and children with recorded hours can be removed after moving time",()=>{
+  assert.equal(deletedActivity.status,200,deletedActivityBody.slice(0,800));
+ });
+ const afterActivityMove=new DatabaseSync(await onlyDatabase(join(dir,"data")),{readOnly:true});
+ try{
+  check("All descendant hours retain their employee and now reference the chosen destination",()=>{
+   assert.equal(afterActivityMove.prepare("SELECT COUNT(*) n FROM activities WHERE id IN (?,?)").get(actSource.activityId,actChild.id).n,0);
+   assert.equal(afterActivityMove.prepare("SELECT COUNT(*) n FROM time_entries WHERE activity_id=?").get(actChild.id).n,0);
+   assert.equal(afterActivityMove.prepare("SELECT COUNT(*) n FROM time_entries WHERE employee_id=? AND activity_id=? AND work_date IN ('2026-11-06','2026-11-07')").get(sara,2).n>=2,true);
+   assert.equal(afterActivityMove.prepare("PRAGMA foreign_key_check").all().length,0);
+  });
+ }finally{afterActivityMove.close()}
  const db=new DatabaseSync(await onlyDatabase(join(dir,"data")),{readOnly:true});
  try{
   check("Time adjustments are audited, including delete",()=>{
