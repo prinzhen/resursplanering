@@ -4,7 +4,7 @@
 # Performs build/tests before short downtime and uses a cold backup with rollback.
 set -Eeuo pipefail
 umask 077
-VERSION="acb0dada80ae635e76264ab2123bec343f775977"
+VERSION="7f72efd0fff9f9aa010aad31562baf945890395f"
 BRANCH="feature/quick-activities-gantt-proposals"
 APP="/opt/resursplanering"
 STATE="/var/lib/resursplanering"
