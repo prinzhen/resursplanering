@@ -84,7 +84,9 @@ const sql=`
    t.id entryId,t.employee_id employeeId,t.activity_id activityId,t.work_date workDate,
    t.started_at startedAt,t.ended_at endedAt,t.duration_seconds durationSeconds,
    t.note,t.source,t.updated_at updatedAt,t.deleted_at deletedAt,
-   e.email employeeEmail,e.name employeeName,
+   CASE WHEN e.is_group_ledger=1 THEN NULL ELSE e.email END employeeEmail,
+   CASE WHEN e.is_group_ledger=1 THEN NULL ELSE e.name END employeeName,
+   t.reporting_group_id groupId,t.reporting_group_name groupName,
    a.code activityCode,a.name activityName,a.project_id projectId,
    p.code projectCode,p.name projectName
   FROM time_entry_audit j
@@ -103,6 +105,7 @@ const sql=`
    r.started_at startedAt,r.ended_at endedAt,r.duration_seconds durationSeconds,
    r.note,r.source,r.updated_at updatedAt,r.removed_at deletedAt,
    r.employee_email employeeEmail,r.employee_name employeeName,
+   NULL groupId,NULL groupName,
    r.original_activity_code activityCode,r.original_activity_name activityName,
    r.original_project_id projectId,r.original_project_code projectCode,
    r.original_project_name projectName
@@ -123,7 +126,9 @@ const makePayload=(row,instance)=>{
   sourceEventId:String(row.eventId),
   sourceVersion:row.eventId,
   operation:deleted?"delete":"upsert",
-  employee:{sourceId:row.employeeId,email:row.employeeEmail,name:row.employeeName},
+  employee:row.groupId!==null?null:
+   {sourceId:row.employeeId,email:row.employeeEmail||null,name:row.employeeName||null},
+  group:row.groupId!==null?{sourceId:row.groupId,name:row.groupName}:null,
   project:{sourceId:row.projectId,code:row.projectCode,name:row.projectName},
   activity:{sourceId:row.activityId,code:row.activityCode,name:row.activityName},
   workDate:row.workDate,
