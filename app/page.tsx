@@ -167,7 +167,7 @@ export default function Home(){const[data,setData]=useState<Data>(empty),[scope,
    </div>}
    {deleteError&&<p role="alert" className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{deleteError}</p>}
    <AlertDialogFooter><AlertDialogCancel disabled={deleteBusy}>Avbryt</AlertDialogCancel>
-    <AlertDialogAction onClick={e=>{e.preventDefault();void del()}} disabled={deleteBusy||deleteLoading||!!deleteError||!!(deletePreview?.impact.runningEntryCount)||!!(hasDeleteImpact&&data.viewer?.isAdmin&&!deletePreview)||!!(deletePreview?.impact.entryCount&&deleteMode==="transfer"&&!deleteTarget)||!!(deletePreview?.impact.entryCount&&deleteMode==="purge"&&deleteConfirm!=="RADERA TID")} className="bg-red-600 hover:bg-red-700">
+    <AlertDialogAction onClick={e=>{e.preventDefault();void del()}} disabled={deleteBusy||deleteLoading||!!(deletePreview?.impact.runningEntryCount)||!!(hasDeleteImpact&&data.viewer?.isAdmin&&!deletePreview)||!!(deletePreview?.impact.entryCount&&deleteMode==="transfer"&&!deleteTarget)||!!(deletePreview?.impact.entryCount&&deleteMode==="purge"&&deleteConfirm!=="RADERA TID")} className="bg-red-600 hover:bg-red-700">
      {deleteBusy?"Bearbetar…":deletePreview?.impact.entryCount?"Bekräfta och ta bort":"Ta bort"}
     </AlertDialogAction></AlertDialogFooter>
   </AlertDialogContent>
