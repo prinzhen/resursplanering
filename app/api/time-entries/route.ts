@@ -55,9 +55,9 @@ export async function GET(req:Request){
  try{
   const {d,user}=await selfUser(req);
   if(!user)return unauthorized();
-  if(!user.employeeId)return bad("Inloggningskontot är inte kopplat till någon medarbetare. Koppla kontot under Konton och behörigheter.",403);
   const u=new URL(req.url),all=u.searchParams.get("scope")==="all"&&user.isAdmin,
    format=u.searchParams.get("format")||"json";
+  if(!user.employeeId&&!all)return bad("Inloggningskontot är inte kopplat till någon medarbetare. Koppla kontot under Konton och behörigheter.",403);
   if(!["json","csv"].includes(format))return bad("Ogiltigt exportformat.");
   const from=u.searchParams.get("from"),to=u.searchParams.get("to");
   if(from&&!validDay(from)||to&&!validDay(to)||from&&to&&from>to)return bad("Ogiltigt datumintervall.");
@@ -86,10 +86,24 @@ export async function POST(req:Request){
   const {d,user}=await selfUser(req);
   if(!user)return unauthorized();
   if(!sameOrigin(req))return forbidden();
-  if(!user.employeeId)return bad("Kontot måste vara kopplat till en medarbetare för att kunna tidrapportera.",403);
   const body=await req.json() as Record<string,unknown>;
   const action=String(body.action||"");
   const timestamp=now(),employeeId=user.employeeId;
+  if(action==="adminDelete"){
+   if(!user.isAdmin)return forbidden();
+   const entryId=positiveId(body.id);
+   if(!entryId)return bad("Ogiltigt tidposts-ID.");
+   const old=await d.prepare("SELECT id,duration_seconds durationSeconds FROM time_entries WHERE id=? AND ended_at IS NOT NULL AND deleted_at IS NULL")
+    .bind(entryId).first<{id:number;durationSeconds:number}>();
+   if(!old)return bad("Tidposten saknas, har redan tagits bort eller pågår.",404);
+   await d.batch([
+    d.prepare("UPDATE time_entries SET deleted_at=?,updated_at=? WHERE id=? AND ended_at IS NOT NULL AND deleted_at IS NULL").bind(timestamp,timestamp,entryId),
+    d.prepare("INSERT INTO time_entry_audit(time_entry_id,actor_account_id,action,old_seconds,new_seconds) VALUES(?,?,'delete',?,NULL)")
+     .bind(entryId,user.accountId,old.durationSeconds)
+   ]);
+   return Response.json({ok:true},{headers:{"cache-control":"no-store"}});
+  }
+  if(!employeeId)return bad("Kontot måste vara kopplat till en medarbetare för att kunna tidrapportera.",403);
   if(action==="start"){
    const activityId=positiveId(body.activityId);
    if(!activityId||!await allowedActivity(d,user,activityId))return bad("Du saknar tillgång till aktiviteten.",403);
