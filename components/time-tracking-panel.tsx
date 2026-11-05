@@ -18,18 +18,19 @@ const today=()=>new Intl.DateTimeFormat("en-CA",{timeZone:"Europe/Stockholm",yea
 
 export default function TimeTrackingPanel(){
  const [data,setData]=useState<State|null>(null);
+ const [showAll,setShowAll]=useState(false);
  const [activityId,setActivityId]=useState("");
  const [manualDate,setManualDate]=useState(today()),[manualMinutes,setManualMinutes]=useState("60"),[manualNote,setManualNote]=useState("");
  const [editing,setEditing]=useState<number|null>(null),[editDate,setEditDate]=useState(""),[editMinutes,setEditMinutes]=useState(""),[editNote,setEditNote]=useState("");
  const [now,setNow]=useState(Math.floor(Date.now()/1000));
  const [busy,setBusy]=useState(false),[error,setError]=useState(""),[notice,setNotice]=useState("");
  const fetchData=useCallback(async()=>{
-  const r=await fetch("/api/time-entries",{cache:"no-store"}),j=await r.json() as State&{error?:string};
+  const r=await fetch("/api/time-entries"+(showAll?"?scope=all":""),{cache:"no-store"}),j=await r.json() as State&{error?:string};
   if(r.status===401){window.location.assign("/login");return}
   if(!r.ok)throw Error(j.error||"Kunde inte läsa tidrapporten");
   setData(j);
   setActivityId(old=>old&&j.activities.some(x=>String(x.id)===old)?old:String(j.activities[0]?.id??""));
- },[]);
+ },[showAll]);
  useEffect(()=>{
   fetchData().catch(e=>setError(e instanceof Error?e.message:String(e)));
   const handle=setInterval(()=>setNow(Math.floor(Date.now()/1000)),1000);
@@ -46,7 +47,7 @@ export default function TimeTrackingPanel(){
   }catch(e){setError(e instanceof Error?e.message:String(e));return false}
   finally{setBusy(false)}
  };
- const active=data?.entries.find(e=>e.endedAt===null);
+ const active=data?.entries.find(e=>e.endedAt===null&&e.employeeId===data.viewer.employeeId);
  const selectedActivity=data?.activities.find(a=>String(a.id)===activityId);
  const total=useMemo(()=>data?.entries.filter(e=>e.endedAt!==null).reduce((sum,e)=>sum+(e.durationSeconds??0),0)??0,[data]);
  const start=()=>post({action:"start",activityId:Number(activityId)},"Tidtagningen startade och fortsätter även om du lämnar sidan.");
@@ -69,8 +70,9 @@ export default function TimeTrackingPanel(){
   setEditing(entry.id);setEditDate(entry.workDate);setEditMinutes(String(Math.max(1,Math.round((entry.durationSeconds??0)/60))));setEditNote(entry.note||"");
  };
  const remove=async(entry:Entry)=>{
-  if(!window.confirm("Ta bort rapporterade "+hours(entry.durationSeconds??0)+" på "+entry.activityName+"? Borttagningen sparas i ändringshistoriken."))return;
-  if(await post({action:"delete",id:entry.id},"Tidposten togs bort och ändringen är spårbar."))setEditing(null);
+  if(!window.confirm("Ta bort rapporterade "+hours(entry.durationSeconds??0)+" för "+entry.employeeEmail+" på "+entry.activityName+"? Borttagningen sparas i ändringshistoriken."))return;
+  const adminOther=data?.viewer.isAdmin&&entry.employeeId!==data.viewer.employeeId;
+  if(await post({action:adminOther?"adminDelete":"delete",id:entry.id},"Tidposten togs bort och ändringen är spårbar."))setEditing(null);
  };
  const classes="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900";
  const visible=(data?.entries||[]).slice(0,250);
@@ -85,6 +87,7 @@ export default function TimeTrackingPanel(){
    {notice&&<p role="status" className="rounded-lg border border-emerald-300 bg-emerald-50 p-3 text-sm text-emerald-800">{notice}</p>}
    {!data&&<p className="text-sm text-slate-600">Läser aktiviteter och tidposter…</p>}
    {data&&<>
+    {data.viewer.isAdmin&&<label className="flex items-center gap-2 text-sm font-medium"><input type="checkbox" checked={showAll} onChange={e=>{setShowAll(e.target.checked);setEditing(null)}}/>Visa alla medarbetares tidposter (administratör)</label>}
     <div className="grid gap-4 rounded-xl border border-slate-200 bg-slate-50 p-4 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-end">
      <label className="block text-sm font-semibold">Aktivitet
       <select className={classes+" mt-2"} value={activityId} onChange={e=>setActivityId(e.target.value)}>
@@ -137,10 +140,11 @@ export default function TimeTrackingPanel(){
         </form>:
         <div className="flex flex-wrap items-center justify-between gap-3">
          <div className="min-w-0"><div className="text-sm font-semibold text-slate-900">{e.projectCode} · {e.activityName}</div>
+          {showAll&&<div className="text-xs font-semibold text-blue-700">{e.employeeEmail}</div>}
           <div className="mt-1 text-xs text-slate-500">{e.workDate} · {e.source==="manual"?"Manuellt":e.source==="adjusted"?"Korrigerad":"Tidtagning"}{e.note?" · "+e.note:""}</div></div>
          <div className="flex flex-wrap items-center gap-2">
           <strong className="font-mono text-base tabular-nums">{e.endedAt===null?"Pågår":clock(e.durationSeconds??0)}</strong>
-          {e.endedAt!==null&&<><Button type="button" size="sm" variant="outline" onClick={()=>changeEdit(e)} disabled={busy} aria-label={"Ändra tidpost "+e.id}><Pencil/>Ändra</Button>
+          {e.endedAt!==null&&<>{e.employeeId===data.viewer.employeeId&&<Button type="button" size="sm" variant="outline" onClick={()=>changeEdit(e)} disabled={busy} aria-label={"Ändra tidpost "+e.id}><Pencil/>Ändra</Button>}
           <Button type="button" size="sm" variant="ghost" className="text-red-700" onClick={()=>remove(e)} disabled={busy} aria-label={"Ta bort tidpost "+e.id}><Trash2/></Button></>}
          </div>
         </div>}
