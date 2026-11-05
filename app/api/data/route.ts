@@ -457,8 +457,11 @@ export async function DELETE(request:Request){
     const at=Math.floor(Date.now()/1000);
     if(employeeMode==="group"){
      const groupId=Number(u.searchParams.get("groupId"));
-     if(!Number.isSafeInteger(groupId)||groupId<=0||!await d.prepare("SELECT id FROM employee_groups WHERE id=?").bind(groupId).first())
-      return Response.json({error:"Välj en befintlig grupp som ska överta timmarna."},{status:400});
+     const targetGroup=Number.isSafeInteger(groupId)&&groupId>0?
+      await d.prepare("SELECT id,owner_id ownerId FROM employee_groups WHERE id=?").bind(groupId).first<{id:number;ownerId:number|null}>():null;
+     if(!targetGroup)return Response.json({error:"Välj en befintlig grupp som ska överta timmarna."},{status:400});
+     if(targetGroup.ownerId===id)
+      return Response.json({error:"Den borttagna medarbetaren är själv gruppchef för vald grupp. Tilldela en annan gruppchef först."},{status:409});
      employeeTimeResolution=employeeGroupRetention(d,id,groupId,user.accountId,at);
     }else if(employeeMode==="purge"){
      if(u.searchParams.get("confirm")!=="RADERA TID")
