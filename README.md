@@ -57,14 +57,14 @@ i den faktiska applikationsdatabasen (inte Wranglers metadatabas).
 
 ```bash
 curl -fsSLo /tmp/update-production-group-ledger.sh \
-  https://raw.githubusercontent.com/prinzhen/resursplanering/16e6ad174890706babe5402cfb87750769f6df61/scripts/update-production-group-ledger.sh
+  https://raw.githubusercontent.com/prinzhen/resursplanering/e70dd91d38f6fd2c449bf0a26f7a47011238497c/scripts/update-production-group-ledger.sh
 bash -n /tmp/update-production-group-ledger.sh
 sudo bash /tmp/update-production-group-ledger.sh
 # Bekräfta med JA GRUPPTID
 ```
 
 Produktionens version efter lyckad installation:
-`acb0dada80ae635e76264ab2123bec343f775977`.
+`7f72efd0fff9f9aa010aad31562baf945890395f`.
 Tidigare kod och kall databasbackup bevaras för återställning.
 **Kör först efter att den angivna releaseversionen fått gröna CI-tester.**
 
