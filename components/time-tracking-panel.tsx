@@ -5,10 +5,10 @@ import {Clock3,Download,Pause,Play,Plus,Save,Trash2,Pencil,X} from "lucide-react
 
 type Project={id:number;code:string;name:string};
 type Activity={id:number;projectId:number;code:string|null;name:string;status:string};
-type Entry={id:number;employeeId:number;activityId:number;projectId:number;employeeEmail:string;projectCode:string;
+type Entry={id:number;employeeId:number;activityId:number;projectId:number;employeeEmail:string|null;employeeName:string;reportingGroupId:number|null;reportingGroupName:string|null;projectCode:string;
  activityCode:string|null;activityName:string;workDate:string;startedAt:number;endedAt:number|null;
  durationSeconds:number|null;note:string;source:string;updatedAt:number};
-type State={viewer:{employeeId:number;isAdmin:boolean};projects:Project[];activities:Activity[];entries:Entry[];serverTime:number;today:string;hasMore:boolean};
+type State={viewer:{employeeId:number|null;isAdmin:boolean;canViewGroupHistory:boolean};projects:Project[];activities:Activity[];entries:Entry[];serverTime:number;today:string;hasMore:boolean};
 const clock=(secs:number)=>{
  const total=Math.max(0,Math.floor(secs)),h=Math.floor(total/3600),m=Math.floor(total%3600/60),s=total%60;
  return `${String(h).padStart(2,"0")}:${String(m).padStart(2,"0")}:${String(s).padStart(2,"0")}`;
@@ -18,19 +18,19 @@ const today=()=>new Intl.DateTimeFormat("en-CA",{timeZone:"Europe/Stockholm",yea
 
 export default function TimeTrackingPanel(){
  const [data,setData]=useState<State|null>(null);
- const [showAll,setShowAll]=useState(false);
+ const [view,setView]=useState<"mine"|"all"|"history">("mine");
  const [activityId,setActivityId]=useState("");
  const [manualDate,setManualDate]=useState(today()),[manualMinutes,setManualMinutes]=useState("60"),[manualNote,setManualNote]=useState("");
- const [editing,setEditing]=useState<number|null>(null),[editDate,setEditDate]=useState(""),[editMinutes,setEditMinutes]=useState(""),[editNote,setEditNote]=useState("");
+ const [editing,setEditing]=useState<number|null>(null),[editDate,setEditDate]=useState(""),[editMinutes,setEditMinutes]=useState(""),[editNote,setEditNote]=useState(""),[editActivity,setEditActivity]=useState("");
  const [now,setNow]=useState(Math.floor(Date.now()/1000));
  const [busy,setBusy]=useState(false),[error,setError]=useState(""),[notice,setNotice]=useState("");
  const fetchData=useCallback(async()=>{
-  const r=await fetch("/api/time-entries"+(showAll?"?scope=all":""),{cache:"no-store"}),j=await r.json() as State&{error?:string};
+  const r=await fetch("/api/time-entries?scope="+view,{cache:"no-store"}),j=await r.json() as State&{error?:string};
   if(r.status===401){window.location.assign("/login");return}
   if(!r.ok)throw Error(j.error||"Kunde inte läsa tidrapporten");
   setData(j);
   setActivityId(old=>old&&j.activities.some(x=>String(x.id)===old)?old:String(j.activities[0]?.id??""));
- },[showAll]);
+ },[view]);
  useEffect(()=>{
   fetchData().catch(e=>setError(e instanceof Error?e.message:String(e)));
   const handle=setInterval(()=>setNow(Math.floor(Date.now()/1000)),1000);
@@ -64,13 +64,14 @@ export default function TimeTrackingPanel(){
   e.preventDefault();
   const minutes=Number(editMinutes);
   if(!Number.isSafeInteger(minutes)||minutes<1||minutes>1440){setError("Ange 1–1440 hela minuter.");return}
-  if(await post({action:"update",id:editing,workDate:editDate,durationMinutes:minutes,note:editNote},"Tidrapporten korrigerades."))setEditing(null);
+  if(await post({action:data?.viewer.isAdmin?"adminUpdate":"update",id:editing,workDate:editDate,durationMinutes:minutes,note:editNote,
+   ...(data?.viewer.isAdmin?{activityId:Number(editActivity)}:{})},"Tidrapporten korrigerades."))setEditing(null);
  };
  const changeEdit=(entry:Entry)=>{
-  setEditing(entry.id);setEditDate(entry.workDate);setEditMinutes(String(Math.max(1,Math.round((entry.durationSeconds??0)/60))));setEditNote(entry.note||"");
+  setEditing(entry.id);setEditActivity(String(entry.activityId));setEditDate(entry.workDate);setEditMinutes(String(Math.max(1,Math.round((entry.durationSeconds??0)/60))));setEditNote(entry.note||"");
  };
  const remove=async(entry:Entry)=>{
-  if(!window.confirm("Ta bort rapporterade "+hours(entry.durationSeconds??0)+" för "+entry.employeeEmail+" på "+entry.activityName+"? Borttagningen sparas i ändringshistoriken."))return;
+  if(!window.confirm("Ta bort rapporterade "+hours(entry.durationSeconds??0)+" för "+(entry.reportingGroupName?"grupp "+entry.reportingGroupName:entry.employeeEmail)+" på "+entry.activityName+"? Borttagningen sparas i ändringshistoriken."))return;
   const adminOther=data?.viewer.isAdmin&&entry.employeeId!==data.viewer.employeeId;
   if(await post({action:adminOther?"adminDelete":"delete",id:entry.id},"Tidposten togs bort och ändringen är spårbar."))setEditing(null);
  };
@@ -80,14 +81,21 @@ export default function TimeTrackingPanel(){
   <div className="panel-head flex-wrap items-start gap-3">
    <div><h2 className="flex items-center gap-2"><Clock3 className="h-5 w-5"/>Tidrapportering</h2>
     <p>Registrera faktiskt nedlagd tid per aktivitet. Planerad beläggning förändras inte.</p></div>
-   <a className="inline-flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-800 hover:bg-slate-50" href={"/api/time-entries?format=csv"+(showAll?"&scope=all":"") }><Download className="h-4 w-4"/>Exportera till CSV</a>
+   <a className="inline-flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-800 hover:bg-slate-50" href={"/api/time-entries?format=csv&scope="+view}><Download className="h-4 w-4"/>Exportera till CSV</a>
   </div>
   <div className="space-y-5 p-4 sm:p-6">
    {error&&<p role="alert" className="rounded-lg border border-red-300 bg-red-50 p-3 text-sm text-red-800">{error}</p>}
    {notice&&<p role="status" className="rounded-lg border border-emerald-300 bg-emerald-50 p-3 text-sm text-emerald-800">{notice}</p>}
    {!data&&<p className="text-sm text-slate-600">Läser aktiviteter och tidposter…</p>}
    {data&&<>
-    {data.viewer.isAdmin&&<label className="flex items-center gap-2 text-sm font-medium"><input type="checkbox" checked={showAll} onChange={e=>{setShowAll(e.target.checked);setEditing(null)}}/>Visa alla medarbetares tidposter (administratör)</label>}
+    {(data.viewer.isAdmin||data.viewer.canViewGroupHistory)&&<label className="block max-w-xl text-sm font-medium">Visa tidrapporter
+      <select className="mt-1 block w-full rounded-lg border border-slate-300 bg-white p-2" value={view} onChange={e=>{setView(e.target.value as "mine"|"all"|"history");setEditing(null)}}>
+       <option value="mine">Min rapporterade tid</option>
+       {data.viewer.isAdmin&&<option value="all">Alla medarbetare och grupper (administratör)</option>}
+       <option value="history">Historiska timmar bokförda på grupp</option>
+      </select>
+      <span className="mt-1 block text-xs font-normal text-slate-500">Grupptimmar visas för ansvarig gruppchef, berörd projektledare och administratör. Timmarna saknar personlig koppling.</span>
+    </label>}
     <div className="grid gap-4 rounded-xl border border-slate-200 bg-slate-50 p-4 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-end">
      <label className="block text-sm font-semibold">Aktivitet
       <select className={classes+" mt-2"} value={activityId} onChange={e=>setActivityId(e.target.value)}>
@@ -131,21 +139,26 @@ export default function TimeTrackingPanel(){
      <div className="space-y-2">{visible.map(e=>
       <div key={e.id} className="rounded-lg border border-slate-200 bg-white p-3">
        {editing===e.id?
-        <form onSubmit={saveEdit} className="grid gap-2 sm:grid-cols-[minmax(0,140px)_minmax(0,140px)_minmax(0,1fr)_auto] sm:items-end">
+        <form onSubmit={saveEdit} className="grid gap-2 sm:grid-cols-2 sm:items-end">
          <label className="text-sm">Datum<input className={classes+" mt-1"} type="date" required value={editDate} onChange={v=>setEditDate(v.target.value)}/></label>
          <label className="text-sm">Minuter<input className={classes+" mt-1"} type="number" min={1} max={1440} required value={editMinutes} onChange={v=>setEditMinutes(v.target.value)}/></label>
          <label className="text-sm">Kommentar<input className={classes+" mt-1"} maxLength={500} value={editNote} onChange={v=>setEditNote(v.target.value)}/></label>
+         {data.viewer.isAdmin&&<label className="text-sm">Projekt och aktivitet<select className={classes+" mt-1"} value={editActivity} onChange={v=>setEditActivity(v.target.value)}>
+          {data.activities.map(a=><option key={a.id} value={a.id}>{data.projects.find(p=>p.id===a.projectId)?.code||"Projekt"} · {a.name}</option>)}
+         </select></label>}
          <div className="flex gap-2"><Button size="sm" type="submit" disabled={busy}><Save/>Spara</Button>
           <Button size="sm" variant="outline" type="button" onClick={()=>setEditing(null)}><X/>Avbryt</Button></div>
         </form>:
         <div className="flex flex-wrap items-center justify-between gap-3">
          <div className="min-w-0"><div className="text-sm font-semibold text-slate-900">{e.projectCode} · {e.activityName}</div>
-          {showAll&&<div className="text-xs font-semibold text-blue-700">{e.employeeEmail}</div>}
+          {(view!=="mine"||e.reportingGroupId!==null)&&<div className="text-xs font-semibold text-blue-700">
+           {e.reportingGroupName?"Borttagen medarbetare · Grupp: "+e.reportingGroupName:e.employeeName+" · "+(e.employeeEmail??"")}
+          </div>}
           <div className="mt-1 text-xs text-slate-500">{e.workDate} · {e.source==="manual"?"Manuellt":e.source==="adjusted"?"Korrigerad":"Tidtagning"}{e.note?" · "+e.note:""}</div></div>
          <div className="flex flex-wrap items-center gap-2">
           <strong className="font-mono text-base tabular-nums">{e.endedAt===null?"Pågår":clock(e.durationSeconds??0)}</strong>
-          {e.endedAt!==null&&<>{e.employeeId===data.viewer.employeeId&&<Button type="button" size="sm" variant="outline" onClick={()=>changeEdit(e)} disabled={busy} aria-label={"Ändra tidpost "+e.id}><Pencil/>Ändra</Button>}
-          <Button type="button" size="sm" variant="ghost" className="text-red-700" onClick={()=>remove(e)} disabled={busy} aria-label={"Ta bort tidpost "+e.id}><Trash2/></Button></>}
+          {e.endedAt!==null&&<>{(data.viewer.isAdmin||e.employeeId===data.viewer.employeeId)&&<Button type="button" size="sm" variant="outline" onClick={()=>changeEdit(e)} disabled={busy} aria-label={"Ändra tidpost "+e.id}><Pencil/>Ändra</Button>}
+          {(data.viewer.isAdmin||e.employeeId===data.viewer.employeeId)&&<Button type="button" size="sm" variant="ghost" className="text-red-700" onClick={()=>remove(e)} disabled={busy} aria-label={"Ta bort tidpost "+e.id}><Trash2/></Button>}</>}
          </div>
         </div>}
       </div>)}</div>}
