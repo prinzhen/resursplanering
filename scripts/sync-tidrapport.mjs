@@ -79,20 +79,36 @@ async function persistState(path,instance,lastEventId){
  }
 }
 const sql=`
- SELECT j.id eventId,j.action,j.changed_at eventTime,
- t.id entryId,t.employee_id employeeId,t.activity_id activityId,t.work_date workDate,
- t.started_at startedAt,t.ended_at endedAt,t.duration_seconds durationSeconds,
- t.note,t.source,t.updated_at updatedAt,t.deleted_at deletedAt,
- e.email employeeEmail,e.name employeeName,
- a.code activityCode,a.name activityName,a.project_id projectId,
- p.code projectCode,p.name projectName
- FROM time_entry_audit j
- JOIN time_entries t ON t.id=j.time_entry_id
- JOIN employees e ON e.id=t.employee_id
- JOIN activities a ON a.id=t.activity_id
- JOIN projects p ON p.id=a.project_id
- WHERE j.id>? AND j.action IN ('stop','manual','update','delete')
- ORDER BY j.id ASC LIMIT ?`;
+ SELECT * FROM (
+  SELECT j.id eventId,j.action,j.changed_at eventTime,
+   t.id entryId,t.employee_id employeeId,t.activity_id activityId,t.work_date workDate,
+   t.started_at startedAt,t.ended_at endedAt,t.duration_seconds durationSeconds,
+   t.note,t.source,t.updated_at updatedAt,t.deleted_at deletedAt,
+   e.email employeeEmail,e.name employeeName,
+   a.code activityCode,a.name activityName,a.project_id projectId,
+   p.code projectCode,p.name projectName
+  FROM time_entry_audit j
+  JOIN time_entries t ON t.id=j.time_entry_id
+  JOIN employees e ON e.id=t.employee_id
+  JOIN activities a ON a.id=t.activity_id
+  JOIN projects p ON p.id=a.project_id
+  WHERE j.action IN ('stop','manual','update','delete')
+  UNION ALL
+  -- An administrator may permanently erase a time entry to remove a project.
+  -- Its original row and audit records no longer exist, but this durable
+  -- tombstone MUST still reach the receiver with its original stable entry ID.
+  SELECT r.source_event_id eventId,'delete' action,r.removed_at eventTime,
+   r.original_entry_id entryId,r.employee_id employeeId,
+   r.original_activity_id activityId,r.work_date workDate,
+   r.started_at startedAt,r.ended_at endedAt,r.duration_seconds durationSeconds,
+   r.note,r.source,r.updated_at updatedAt,r.removed_at deletedAt,
+   r.employee_email employeeEmail,r.employee_name employeeName,
+   r.original_activity_code activityCode,r.original_activity_name activityName,
+   r.original_project_id projectId,r.original_project_code projectCode,
+   r.original_project_name projectName
+  FROM time_entry_removal_archive r
+ )
+ WHERE eventId>? ORDER BY eventId ASC LIMIT ?`;
 const makePayload=(row,instance)=>{
  // Tombstone is based on CURRENT row state, not an earlier event snapshot.
  // The receiver applies only the greatest version per sourceEntryId.
