@@ -5,6 +5,17 @@ type Backup={version:number;data:{employees:Row[];projects:Row[];workPackages:Ro
 const db=()=>{if(!env.DB)throw new Error("Databasen är inte tillgänglig");return env.DB};
 const text=(v:unknown)=>String(v??"").trim();
 const number=(v:unknown)=>v===""||v==null?null:Number(v);
+const projectStatuses=new Set(["Aktivt","Pausat","Inkommande","Avslutat"]);
+const projectStatus=(v:unknown)=>{const value=text(v)||"Aktivt";if(!projectStatuses.has(value))throw new Error("Ogiltig projektstatus.");return value};
+async function validateProjectParent(d:D1Database,projectId:number|null,parentId:number|null){
+ if(parentId===null)return;
+ if(!Number.isInteger(parentId)||parentId<1||parentId===projectId)throw new Error("Ogiltigt överordnat projekt.");
+ const projects=(await d.prepare("SELECT id,parent_project_id parentProjectId FROM projects").all<{id:number;parentProjectId:number|null}>()).results;
+ const byId=new Map(projects.map(p=>[p.id,p.parentProjectId]));
+ if(!byId.has(parentId))throw new Error("Överordnat projekt saknas.");
+ const seen=new Set<number>();let current:number|null=parentId;
+ while(current!==null){if(current===projectId||seen.has(current))throw new Error("Projektstrukturen får inte innehålla cirkulära kopplingar.");seen.add(current);current=byId.get(current)??null}
+}
 const requiredActivityDescription=(v:unknown)=>{const value=text(v);if(!value)throw new Error("Aktiviteten måste ha en beskrivning.");if(value.length>500)throw new Error("Aktivitetsbeskrivningen får vara högst 500 tecken.");return value};
 
 async function seedIfEmpty(d:D1Database){const c=await d.prepare("SELECT COUNT(*) count FROM employees").first<{count:number}>();if((c?.count??0)>0)return;await d.batch([
@@ -15,7 +26,7 @@ async function seedIfEmpty(d:D1Database){const c=await d.prepare("SELECT COUNT(*
 
 async function snapshot(d:D1Database){const [e,p,w,a,s,m]=await Promise.all([
  d.prepare("SELECT id,name,email,role,manager_id managerId,capacity_percent capacityPercent FROM employees ORDER BY name").all<Row>(),
- d.prepare("SELECT id,code,name,color,description,status FROM projects ORDER BY code").all<Row>(),
+ d.prepare("SELECT id,code,name,color,description,status,parent_project_id parentProjectId FROM projects ORDER BY code").all<Row>(),
  d.prepare("SELECT id,project_id projectId,code,name,description FROM work_packages ORDER BY project_id,code").all<Row>(),
  d.prepare("SELECT id,project_id projectId,work_package_id workPackageId,parent_activity_id parentActivityId,code,name,description,start_date startDate,end_date endDate,estimated_hours estimatedHours,status FROM activities ORDER BY start_date,name").all<Row>(),
  d.prepare("SELECT s.id,s.activity_id activityId,s.employee_id employeeId,s.effort_percent effortPercent,a.start_date startDate,a.end_date endDate FROM assignments s JOIN activities a ON a.id=s.activity_id ORDER BY a.start_date").all<Row>(),
@@ -37,7 +48,10 @@ async function importRows(d:D1Database,rows:Array<Record<string,string>>){const 
 
 async function restore(d:D1Database,b:Backup){if(![1,2].includes(b.version)||!b.data||!Array.isArray(b.data.projects))throw new Error("Ogiltig säkerhetskopia");const q:D1PreparedStatement[]=[d.prepare("DELETE FROM project_members"),d.prepare("DELETE FROM assignments"),d.prepare("DELETE FROM activities"),d.prepare("DELETE FROM work_packages"),d.prepare("DELETE FROM projects"),d.prepare("DELETE FROM employees")];
  for(const x of b.data.employees)q.push(d.prepare("INSERT INTO employees (id,name,email,role,manager_id,capacity_percent) VALUES (?,?,?,?,?,?)").bind(x.id,x.name,x.email,x.role,x.managerId??null,x.capacityPercent));
- for(const x of b.data.projects)q.push(d.prepare("INSERT INTO projects (id,code,name,color,description,status) VALUES (?,?,?,?,?,?)").bind(x.id,x.code,x.name,x.color,x.description??null,x.status??"Aktivt"));
+ for(const x of b.data.projects){if(x.parentProjectId!=null&&!b.data.projects.some(p=>Number(p.id)===Number(x.parentProjectId)))throw new Error("Säkerhetskopian refererar till ett saknat överordnat projekt.");}
+ const parents=new Map(b.data.projects.map(p=>[Number(p.id),p.parentProjectId==null?null:Number(p.parentProjectId)]));
+ for(const id of parents.keys()){const seen=new Set<number>();let cursor:number|null=id;while(cursor!==null){if(seen.has(cursor))throw new Error("Säkerhetskopian innehåller en cyklisk projektstruktur.");seen.add(cursor);cursor=parents.get(cursor)??null;}}
+ for(const x of b.data.projects)q.push(d.prepare("INSERT INTO projects (id,code,name,color,description,status,parent_project_id) VALUES (?,?,?,?,?,?,?)").bind(x.id,x.code,x.name,x.color,x.description??null,projectStatus(x.status),x.parentProjectId??null));
  for(const x of b.data.workPackages||[])q.push(d.prepare("INSERT INTO work_packages (id,project_id,code,name,description) VALUES (?,?,?,?,?)").bind(x.id,x.projectId,x.code,x.name,x.description??null));
  for(const x of b.data.activities)q.push(d.prepare("INSERT INTO activities (id,project_id,work_package_id,parent_activity_id,code,name,description,start_date,end_date,estimated_hours,status) VALUES (?,?,?,?,?,?,?,?,?,?,?)").bind(x.id,x.projectId,x.workPackageId??null,x.parentActivityId??null,x.code??null,x.name,x.description??null,x.startDate,x.endDate,x.estimatedHours??null,x.status));
  for(const x of b.data.assignments)q.push(d.prepare("INSERT INTO assignments (id,activity_id,employee_id,effort_percent,start_date,end_date) VALUES (?,?,?,?,?,?)").bind(x.id,x.activityId,x.employeeId,x.effortPercent,x.startDate,x.endDate));
@@ -45,8 +59,8 @@ async function restore(d:D1Database,b:Backup){if(![1,2].includes(b.version)||!b.
 
 export async function POST(request:Request){try{const d=db();const b=await request.json() as Record<string,unknown>;const action=text(b.action);
  if(action==="employee")await d.prepare("INSERT INTO employees (name,email,role,manager_id,capacity_percent) VALUES (?,?,?,?,?)").bind(text(b.name),text(b.email),text(b.role)||"Medarbetare",number(b.managerId),Number(b.capacityPercent||100)).run();
- else if(action==="project")await d.prepare("INSERT INTO projects (code,name,color,description,status) VALUES (?,?,?,?,?)").bind(text(b.code),text(b.name),text(b.color)||"#2563eb",text(b.description)||null,text(b.status)||"Aktivt").run();
- else if(action==="updateProject")await d.prepare("UPDATE projects SET code=?,name=?,color=?,description=?,status=? WHERE id=?").bind(text(b.code),text(b.name),text(b.color)||"#2563eb",text(b.description)||null,text(b.status)||"Aktivt",Number(b.id)).run();
+ else if(action==="project"){const parent=number(b.parentProjectId);await validateProjectParent(d,null,parent);await d.prepare("INSERT INTO projects (code,name,color,description,status,parent_project_id) VALUES (?,?,?,?,?,?)").bind(text(b.code),text(b.name),text(b.color)||"#2563eb",text(b.description)||null,projectStatus(b.status),parent).run();}
+ else if(action==="updateProject"){const id=Number(b.id),parent=number(b.parentProjectId);await validateProjectParent(d,id,parent);await d.prepare("UPDATE projects SET code=?,name=?,color=?,description=?,status=?,parent_project_id=? WHERE id=?").bind(text(b.code),text(b.name),text(b.color)||"#2563eb",text(b.description)||null,projectStatus(b.status),parent,id).run();}
  else if(action==="workPackage")await d.prepare("INSERT INTO work_packages (project_id,code,name,description) VALUES (?,?,?,?)").bind(Number(b.projectId),text(b.code),text(b.name),text(b.description)||null).run();
  else if(action==="updateWorkPackage")await d.prepare("UPDATE work_packages SET project_id=?,code=?,name=?,description=? WHERE id=?").bind(Number(b.projectId),text(b.code),text(b.name),text(b.description)||null,Number(b.id)).run();
  else if(action==="activity")await d.prepare("INSERT INTO activities (project_id,work_package_id,parent_activity_id,code,name,description,start_date,end_date,estimated_hours,status) VALUES (?,?,?,?,?,?,?,?,?,?)").bind(Number(b.projectId),number(b.workPackageId),number(b.parentActivityId),text(b.code)||null,text(b.name),requiredActivityDescription(b.description),text(b.startDate),text(b.endDate),number(b.estimatedHours),text(b.status)||"Planerad").run();
@@ -60,7 +74,7 @@ export async function POST(request:Request){try{const d=db();const b=await reque
 
 export async function DELETE(request:Request){try{const d=db();const u=new URL(request.url);const type=u.searchParams.get("type");const id=Number(u.searchParams.get("id"));if(!id)return Response.json({error:"ID saknas."},{status:400});
  if(type==="employee")await d.batch([d.prepare("UPDATE employees SET manager_id=NULL WHERE manager_id=?").bind(id),d.prepare("DELETE FROM project_members WHERE employee_id=?").bind(id),d.prepare("DELETE FROM assignments WHERE employee_id=?").bind(id),d.prepare("DELETE FROM employees WHERE id=?").bind(id)]);
- else if(type==="project")await d.batch([d.prepare("DELETE FROM project_members WHERE project_id=?").bind(id),d.prepare("DELETE FROM assignments WHERE activity_id IN (SELECT id FROM activities WHERE project_id=?)").bind(id),d.prepare("DELETE FROM activities WHERE project_id=?").bind(id),d.prepare("DELETE FROM work_packages WHERE project_id=?").bind(id),d.prepare("DELETE FROM projects WHERE id=?").bind(id)]);
+ else if(type==="project")await d.batch([d.prepare("UPDATE projects SET parent_project_id=NULL WHERE parent_project_id=?").bind(id),d.prepare("DELETE FROM project_members WHERE project_id=?").bind(id),d.prepare("DELETE FROM assignments WHERE activity_id IN (SELECT id FROM activities WHERE project_id=?)").bind(id),d.prepare("DELETE FROM activities WHERE project_id=?").bind(id),d.prepare("DELETE FROM work_packages WHERE project_id=?").bind(id),d.prepare("DELETE FROM projects WHERE id=?").bind(id)]);
  else if(type==="workPackage")await d.batch([d.prepare("DELETE FROM assignments WHERE activity_id IN (WITH RECURSIVE tree(id) AS (SELECT id FROM activities WHERE work_package_id=? UNION ALL SELECT a.id FROM activities a JOIN tree t ON a.parent_activity_id=t.id) SELECT id FROM tree)").bind(id),d.prepare("DELETE FROM activities WHERE id IN (WITH RECURSIVE tree(id) AS (SELECT id FROM activities WHERE work_package_id=? UNION ALL SELECT a.id FROM activities a JOIN tree t ON a.parent_activity_id=t.id) SELECT id FROM tree)").bind(id),d.prepare("DELETE FROM work_packages WHERE id=?").bind(id)]);
  else if(type==="activity")await d.batch([d.prepare("DELETE FROM assignments WHERE activity_id IN (WITH RECURSIVE tree(id) AS (SELECT id FROM activities WHERE id=? UNION ALL SELECT a.id FROM activities a JOIN tree t ON a.parent_activity_id=t.id) SELECT id FROM tree)").bind(id),d.prepare("DELETE FROM activities WHERE id IN (WITH RECURSIVE tree(id) AS (SELECT id FROM activities WHERE id=? UNION ALL SELECT a.id FROM activities a JOIN tree t ON a.parent_activity_id=t.id) SELECT id FROM tree)").bind(id)]);
  else return Response.json({error:"Okänd typ."},{status:400});return Response.json(await snapshot(d));
