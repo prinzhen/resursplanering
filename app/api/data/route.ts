@@ -45,13 +45,22 @@ async function importRows(d:D1Database,rows:Array<Record<string,string>>){const 
   if(activity)await d.prepare("UPDATE activities SET work_package_id=?,parent_activity_id=?,code=?,name=?,description=?,start_date=?,end_date=?,estimated_hours=?,status=? WHERE id=?").bind(wp,parent,r.activity_code||null,r.activity,description,r.start_date,r.end_date,number(r.estimated_hours),r.status||"Planerad",activity.id).run();else{const x=await d.prepare("INSERT INTO activities (project_id,work_package_id,parent_activity_id,code,name,description,start_date,end_date,estimated_hours,status) VALUES (?,?,?,?,?,?,?,?,?,?)").bind(p.id,wp,parent,r.activity_code||null,r.activity,description,r.start_date,r.end_date,number(r.estimated_hours),r.status||"Planerad").run();activity={id:Number(x.meta.last_row_id)}}
   if(r.employee_email&&r.effort_percent){const e=await d.prepare("SELECT id FROM employees WHERE lower(email)=lower(?)").bind(r.employee_email).first<{id:number}>();if(e)await d.prepare("INSERT INTO assignments (activity_id,employee_id,effort_percent,start_date,end_date) VALUES (?,?,?,?,?) ON CONFLICT(activity_id,employee_id) DO UPDATE SET effort_percent=excluded.effort_percent,start_date=excluded.start_date,end_date=excluded.end_date").bind(activity.id,e.id,Number(r.effort_percent),r.start_date,r.end_date).run()}
 }}
+ for(const r of limited){if(!r.project_code||!r.parent_project_code)continue;
+  const child=await d.prepare("SELECT id FROM projects WHERE code=?").bind(r.project_code).first<{id:number}>();
+  const parent=await d.prepare("SELECT id FROM projects WHERE code=?").bind(r.parent_project_code).first<{id:number}>();
+  if(!child||!parent)throw new Error("Överordnat projekt saknas vid import: "+r.parent_project_code);
+  await validateProjectParent(d,child.id,parent.id);
+  await d.prepare("UPDATE projects SET parent_project_id=? WHERE id=?").bind(parent.id,child.id).run();
+ }
+}
 
 async function restore(d:D1Database,b:Backup){if(![1,2].includes(b.version)||!b.data||!Array.isArray(b.data.projects))throw new Error("Ogiltig säkerhetskopia");const q:D1PreparedStatement[]=[d.prepare("DELETE FROM project_members"),d.prepare("DELETE FROM assignments"),d.prepare("DELETE FROM activities"),d.prepare("DELETE FROM work_packages"),d.prepare("DELETE FROM projects"),d.prepare("DELETE FROM employees")];
  for(const x of b.data.employees)q.push(d.prepare("INSERT INTO employees (id,name,email,role,manager_id,capacity_percent) VALUES (?,?,?,?,?,?)").bind(x.id,x.name,x.email,x.role,x.managerId??null,x.capacityPercent));
  for(const x of b.data.projects){if(x.parentProjectId!=null&&!b.data.projects.some(p=>Number(p.id)===Number(x.parentProjectId)))throw new Error("Säkerhetskopian refererar till ett saknat överordnat projekt.");}
  const parents=new Map(b.data.projects.map(p=>[Number(p.id),p.parentProjectId==null?null:Number(p.parentProjectId)]));
  for(const id of parents.keys()){const seen=new Set<number>();let cursor:number|null=id;while(cursor!==null){if(seen.has(cursor))throw new Error("Säkerhetskopian innehåller en cyklisk projektstruktur.");seen.add(cursor);cursor=parents.get(cursor)??null;}}
- for(const x of b.data.projects)q.push(d.prepare("INSERT INTO projects (id,code,name,color,description,status,parent_project_id) VALUES (?,?,?,?,?,?,?)").bind(x.id,x.code,x.name,x.color,x.description??null,projectStatus(x.status),x.parentProjectId??null));
+ for(const x of b.data.projects)q.push(d.prepare("INSERT INTO projects (id,code,name,color,description,status,parent_project_id) VALUES (?,?,?,?,?,?,NULL)").bind(x.id,x.code,x.name,x.color,x.description??null,projectStatus(x.status)));
+ for(const x of b.data.projects)if(x.parentProjectId!=null)q.push(d.prepare("UPDATE projects SET parent_project_id=? WHERE id=?").bind(x.parentProjectId,x.id));
  for(const x of b.data.workPackages||[])q.push(d.prepare("INSERT INTO work_packages (id,project_id,code,name,description) VALUES (?,?,?,?,?)").bind(x.id,x.projectId,x.code,x.name,x.description??null));
  for(const x of b.data.activities)q.push(d.prepare("INSERT INTO activities (id,project_id,work_package_id,parent_activity_id,code,name,description,start_date,end_date,estimated_hours,status) VALUES (?,?,?,?,?,?,?,?,?,?,?)").bind(x.id,x.projectId,x.workPackageId??null,x.parentActivityId??null,x.code??null,x.name,x.description??null,x.startDate,x.endDate,x.estimatedHours??null,x.status));
  for(const x of b.data.assignments)q.push(d.prepare("INSERT INTO assignments (id,activity_id,employee_id,effort_percent,start_date,end_date) VALUES (?,?,?,?,?,?)").bind(x.id,x.activityId,x.employeeId,x.effortPercent,x.startDate,x.endDate));
