@@ -10,6 +10,7 @@ export const projects = sqliteTable("projects", {
   id: integer("id").primaryKey({ autoIncrement: true }), code: text("code").notNull().unique(),
   name: text("name").notNull(), color: text("color").notNull().default("#2563eb"),
   description: text("description"), status: text("status").notNull().default("Aktivt"),
+  parentProjectId: integer("parent_project_id"),
 });
 export const projectMembers = sqliteTable("project_members", {
   projectId: integer("project_id").notNull().references(() => projects.id),
