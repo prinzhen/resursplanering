@@ -4,7 +4,7 @@
  */
 export type FormActivity={uid:string;week:string;name:string;kind:string;link:string;projectCode:string;hours:number;status:string;priority:string;dueDate:string;comment:string;firstWeek:string;reason:string;periodStart?:string;periodEnd?:string;effortPercent?:number|null};
 export type FormMember={code:string;name:string;state:string};
-export type FormValues={name:string;email:string;activities:FormActivity[];members:FormMember[]};
+export type FormValues={name:string;email:string;activities:FormActivity[];members:FormMember[];savedAt?:string};
 const utf8=new TextEncoder(),utf8d=new TextDecoder();
 const xml=(v:unknown)=>String(v??"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&apos;");
 const col=(n:number)=>{let s="";for(;n;n=Math.floor((n-1)/26))s=String.fromCharCode(65+(n-1)%26)+s;return s};
@@ -117,7 +117,7 @@ export async function readIndividualXlsx(file:File):Promise<FormValues>{
  const members:FormMember[]=[];
  // Keep membership as a separate section on the SAME worksheet.
  for(let r=77;r<=110;r++){const code=cell("A"+r),name=cell("B"+r);if(!code&&!name)continue;members.push({code,name,state:cell("C"+r)||"Aktiv"})}
- return {name:cell("B4"),email:cell("F4"),activities,members};
+ return {name:cell("B4"),email:cell("F4"),activities,members,savedAt:cell("K4")};
 }
 function currentISOWeek(d:Date){const u=new Date(Date.UTC(d.getFullYear(),d.getMonth(),d.getDate()));u.setUTCDate(u.getUTCDate()+4-(u.getUTCDay()||7));const year=u.getUTCFullYear(),yearStart=new Date(Date.UTC(year,0,1));return{year,week:Math.ceil(((u.getTime()-yearStart.getTime())/86400000+1)/7)}}
 function weekLabel(y:number,w:number,base:{year:number;week:number}){
@@ -146,7 +146,7 @@ function row(n:number,cells:Record<number,string|number|null>,style=0){let out="
 export function createIndividualXlsx(values:FormValues){
  const base=currentISOWeek(new Date()),rows:string[]=[];
  rows.push(row(1,{1:"MIN PLANERING · AKTIVITETER & UPPFÖLJNING"},1));
- rows.push(row(4,{1:"NAMN",2:values.name,5:"E-POST",6:values.email,10:"UPPDATERAD",11:new Date().toISOString().slice(0,10)},2));
+ rows.push(row(4,{1:"NAMN",2:values.name,5:"E-POST",6:values.email,10:"UPPDATERAD",11:values.savedAt||new Date().toISOString().slice(0,10)},2));
  rows.push(row(6,{1:"Välj vecka i listan eller skriv fritt, exempelvis 44, v44 eller 2017 8."},3));
  rows.push(row(8,{1:"Vecka",2:"Vad ska jag göra?",3:"Typ av arbete",4:"Projekt / verksamhet",5:"Projektkod",6:"Planerade timmar",7:"Status",8:"Prioritet",9:"Klart senast",10:"Kommentar / behov",11:"Först planerad",12:"Orsak om flyttad",13:"Aktivitets-ID",14:"Start period",15:"Slut period",16:"Förväntad insats (%)"},2));
  for(let i=0;i<60;i++){const a=values.activities[i];rows.push(row(i+9,a?{1:displayWeek(a.week,base),2:a.name,3:a.kind,4:a.link,5:a.projectCode,6:a.hours,7:a.status,8:a.priority,9:a.dueDate,10:a.comment,11:displayWeek(a.firstWeek,base),12:a.reason,13:a.uid,14:a.periodStart??null,15:a.periodEnd??null,16:a.effortPercent??null}:{},i%2?4:5))}
