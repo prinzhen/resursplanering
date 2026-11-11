@@ -290,7 +290,10 @@ export async function POST(req:Request){
     const finishDate=done?(person.completedAt||today):null;
     const plannedEnd=person.originalEnd||person.endDate;
     const segments=explicitPeriods.get(a.uid);
-    let startDate=segments?.[0]?.startDate||person.startDate,plannedEndDate=segments?.[segments.length-1]?.endDate||plannedEnd;
+    // Do not move original assignment start forwards when the spreadsheet
+    // contains only remaining dates: historical load must remain readable.
+    let startDate=segments?.[0]?.startDate&&segments[0].startDate<person.startDate?segments[0].startDate:person.startDate,
+      plannedEndDate=segments?.[segments.length-1]?.endDate||plannedEnd;
     if(!segments&&prior&&prior.currentWeek!==a.week){
       // A moved week means shifting an existing allocation, never collapsing a
       // multi-month assignment to a Monday-Friday window.
