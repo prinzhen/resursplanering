@@ -99,7 +99,7 @@ export async function GET(req:Request){
    comment:String(a.comment||""),firstWeek:String(a.firstWeek||iso(String(a.startDate))),reason:"",
    periodStart:period?.startDate||"",periodEnd:period?.endDate||"",effortPercent:period?.effortPercent??null
   }));
-  }),members:memberships.results};
+  }),members:memberships.results,savedAt:sourceRows.map(x=>String(x.savedAt||"").slice(0,10)).filter(Boolean).sort().at(-1)||""};
   return Response.json(result);
  }catch(e){console.error(e);return Response.json({error:"Kunde inte läsa veckoplaneringen. Kontrollera att migrationen är körd."},{status:500})}
 }
@@ -303,7 +303,7 @@ export async function POST(req:Request){
     // Existing schedule stays unchanged on a status-only import. Reopening a
     // completed assignment restores its previous planned end date.
     const q:D1PreparedStatement[]=[
-      d.prepare("INSERT INTO individual_form_items(item_uid,employee_id,activity_id,first_week,current_week) VALUES(?,?,?,?,?) ON CONFLICT(employee_id,activity_id) DO UPDATE SET current_week=excluded.current_week,updated_at=excluded.updated_at").bind(storedUid,e.id,a.activityId,a.firstWeek,a.week),
+      d.prepare("INSERT INTO individual_form_items(item_uid,employee_id,activity_id,first_week,current_week,updated_at) VALUES(?,?,?,?,?,?) ON CONFLICT(employee_id,activity_id) DO UPDATE SET current_week=excluded.current_week,updated_at=excluded.updated_at").bind(storedUid,e.id,a.activityId,a.firstWeek,a.week,saveDate+" 00:00:00"),
       d.prepare("UPDATE assignments SET work_status=?,status_updated_at=CURRENT_TIMESTAMP,completed_at=?,original_end_date=?,start_date=?,end_date=? WHERE activity_id=? AND employee_id=?").bind(a.status,finishDate,plannedEndDate,startDate,endDate,a.activityId,e.id)
     ];
     if(!segments&&prior&&prior.currentWeek!==a.week){
@@ -369,7 +369,7 @@ export async function POST(req:Request){
     const activityId=Number(result.meta.last_row_id);
     await d.prepare("INSERT INTO activity_priority_history(activity_id,effective_from,priority,changed_by,source) VALUES(?,?,?,?,?)")
       .bind(activityId,startDate,a.priority??3,identity.accountId,"excel").run();
-    await d.batch([d.prepare("INSERT INTO assignments (activity_id,employee_id,effort_percent,start_date,end_date,completed_at,work_status,original_end_date,status_updated_at) VALUES(?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)").bind(activityId,e.id,segments?.[0]?.effortPercent??Math.min(200,Math.round(a.hours/40*100)),startDate,endDate,a.status==="Klar"?importDate:null,a.status,endDate),d.prepare("INSERT INTO individual_form_items(item_uid,employee_id,activity_id,first_week,current_week) VALUES(?,?,?,?,?)").bind(a.uid,e.id,activityId,a.firstWeek,a.week),...(segments?segments.map(period=>d.prepare("INSERT INTO assignment_periods(assignment_id,start_date,end_date,effort_percent) SELECT id,?,?,? FROM assignments WHERE activity_id=? AND employee_id=?")
+    await d.batch([d.prepare("INSERT INTO assignments (activity_id,employee_id,effort_percent,start_date,end_date,completed_at,work_status,original_end_date,status_updated_at) VALUES(?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)").bind(activityId,e.id,segments?.[0]?.effortPercent??Math.min(200,Math.round(a.hours/40*100)),startDate,endDate,a.status==="Klar"?importDate:null,a.status,endDate),d.prepare("INSERT INTO individual_form_items(item_uid,employee_id,activity_id,first_week,current_week,updated_at) VALUES(?,?,?,?,?,?)").bind(a.uid,e.id,activityId,a.firstWeek,a.week,saveDate+" 00:00:00"),...(segments?segments.map(period=>d.prepare("INSERT INTO assignment_periods(assignment_id,start_date,end_date,effort_percent) SELECT id,?,?,? FROM assignments WHERE activity_id=? AND employee_id=?")
       .bind(period.startDate,period.endDate,period.effortPercent,activityId,e.id)):[d.prepare("INSERT INTO assignment_periods(assignment_id,start_date,end_date,effort_percent) SELECT id,start_date,end_date,effort_percent FROM assignments WHERE activity_id=? AND employee_id=?").bind(activityId,e.id)])]);created++;
    }
   }
