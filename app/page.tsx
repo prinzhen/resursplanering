@@ -74,7 +74,7 @@ function workload(data:Data,employeeId:number,start:string,end:string){
 }
 function monthBounds(key:string){const [year,month]=key.split("-").map(Number);return{start:key+"-01",end:new Date(Date.UTC(year,month,0)).toISOString().slice(0,10)}}
 type QuickPreset={projectId?:number;teamId?:number;parentActivityId?:number};
-export default function Home(){const[data,setData]=useState<Data>(empty),[scope,setScope]=useState("all"),[monthOffset,setMonthOffset]=useState(0),[selectedLoadDate,setSelectedLoadDate]=useState(()=>{const d=new Date();return [d.getFullYear(),String(d.getMonth()+1).padStart(2,"0"),String(d.getDate()).padStart(2,"0")].join("-")}),[notice,setNotice]=useState(""),[error,setError]=useState(""),[dialog,setDialog]=useState<"project"|"work"|"activity"|"employee"|"assignment"|"export"|"import"|"group"|null>(null),[editing,setEditing]=useState<Project|WorkPackage|WorkActivity|null>(null),[editingGroup,setEditingGroup]=useState<EmployeeGroup|null>(null),[remove,setRemove]=useState<{type:string;id:number;label:string}|null>(null),
+export default function Home(){const[data,setData]=useState<Data>(empty),[scope,setScope]=useState("all"),[monthOffset,setMonthOffset]=useState(0),[notice,setNotice]=useState(""),[error,setError]=useState(""),[dialog,setDialog]=useState<"project"|"work"|"activity"|"employee"|"assignment"|"export"|"import"|"group"|null>(null),[editing,setEditing]=useState<Project|WorkPackage|WorkActivity|null>(null),[editingGroup,setEditingGroup]=useState<EmployeeGroup|null>(null),[remove,setRemove]=useState<{type:string;id:number;label:string}|null>(null),
  [deletePreview,setDeletePreview]=useState<DeletePreview|null>(null),
  [deleteLoading,setDeleteLoading]=useState(false),[deleteBusy,setDeleteBusy]=useState(false),
  [deleteMode,setDeleteMode]=useState<"transfer"|"purge">("transfer"),
@@ -92,7 +92,7 @@ export default function Home(){const[data,setData]=useState<Data>(empty),[scope,
   }catch(e){setError(e instanceof Error?e.message:String(e));return false}
  };
  const submit=(e:React.FormEvent<HTMLFormElement>,action:string,message:string)=>{e.preventDefault();post({action,...Object.fromEntries(new FormData(e.currentTarget))},message)};
- const months=useMemo(()=>createMonths(monthOffset),[monthOffset]);const managers=data.employees.filter(e=>data.employees.some(x=>x.managerId===e.id));const visible=useMemo(()=>scope==="all"?data.employees:data.employees.filter(e=>e.managerId===Number(scope)||e.id===Number(scope)),[data.employees,scope]);const utilization=(id:number,key:string)=>{const m=monthBounds(key),today=new Date().toISOString().slice(0,10);return key===today.slice(0,7)?currentLoad(data,id,today):workload(data,id,m.start,m.end)};const loads=visible.map(e=>utilization(e.id,new Date().toISOString().slice(0,7))),over=loads.filter((v,i)=>v>visible[i].capacityPercent).length,average=loads.length?Math.round(loads.reduce((a,b)=>a+b,0)/loads.length):0;
+ const months=useMemo(()=>createMonths(monthOffset),[monthOffset]);const managers=data.employees.filter(e=>data.employees.some(x=>x.managerId===e.id));const visible=useMemo(()=>scope==="all"?data.employees:data.employees.filter(e=>e.managerId===Number(scope)||e.id===Number(scope)),[data.employees,scope]);const utilization=(id:number,key:string)=>{const m=monthBounds(key);return workload(data,id,m.start,m.end)};const loads=visible.map(e=>utilization(e.id,new Date().toISOString().slice(0,7))),over=loads.filter((v,i)=>v>visible[i].capacityPercent).length,average=loads.length?Math.round(loads.reduce((a,b)=>a+b,0)/loads.length):0;
  const hasDeleteImpact=!!remove&&["project","workPackage","activity"].includes(remove.type);
  useEffect(()=>{
   setDeletePreview(null);setDeleteMode("transfer");setDeleteTarget("");setDeleteConfirm("");setDeleteError("");
@@ -147,7 +147,7 @@ export default function Home(){const[data,setData]=useState<Data>(empty),[scope,
  <div className="mx-auto max-w-[1500px] px-4 py-6 sm:px-6 lg:py-8">{(notice||error)&&<div className={`mb-4 rounded-xl border px-4 py-3 text-sm ${error?"border-red-200 bg-red-50 text-red-800":"border-emerald-200 bg-emerald-50 text-emerald-800"}`}>{error||notice}</div>}<div className="mb-6 flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between"><div><p className="eyebrow">Planeringsperiod · {months[0]?.label}–{months[months.length-1]?.label}</p><h1 className="text-3xl font-semibold tracking-[-.035em] sm:text-4xl">Planera från projekt till underaktivitet</h1><p className="mt-2 max-w-2xl text-slate-600">Bygg en tydlig struktur, bemanna arbetet och exportera valda delar eller hela databasen.</p></div><div className="flex flex-wrap gap-2">{(data.viewer?.isAdmin||data.viewer?.isGroupManager)&&<Button variant="outline" onClick={()=>setDialog("employee")}><Plus/>Medarbetare</Button>}<Button variant="outline" onClick={()=>setDetail({type:"group",id:0,mode:"list"})}><Users/>Alla personers planering</Button><Button variant="outline" onClick={()=>{setEditingGroup(null);setDialog("group")}}><Plus/>TEAM</Button>{(data.viewer?.isAdmin||data.viewer?.isGroupManager)&&<Button variant="outline" onClick={()=>setDialog("project")}><Plus/>Projekt</Button>}{(data.viewer?.isAdmin||!!data.viewer?.projectLeadIds?.length)&&<Button variant="outline" onClick={()=>setDialog("work")}><Plus/>Uppdrag</Button>}<Button variant="outline" onClick={()=>setQuick({})}><Plus/>Ny aktivitet</Button>{(data.viewer?.isAdmin||!!data.viewer?.projectLeadIds?.length)&&<Button onClick={()=>setDialog("assignment")}><Plus/>Bemanna</Button>}</div></div>
  <section className="mb-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-4"><Metric icon={<Users/>} label="Medarbetare" value={visible.length} hint={scope==="all"?"hela organisationen":"vald chefsgrupp"}/><Metric icon={<BriefcaseBusiness/>} label="Projekt och uppdrag" value={`${data.projects.length} / ${data.workPackages.length}`} hint={`${data.activities.length} aktiviteter`}/><Metric icon={<Activity/>} label="Genomsnittlig beläggning" value={`${average}%`} hint="innevarande månad"/><Metric icon={<CircleAlert/>} label="Överbelagda" value={over} hint={over?"behöver omplaneras":"inga konflikter"} alert={over>0}/></section>
  <Tabs defaultValue="load" className="gap-4"><TabsList variant="line" className="main-tabs mb-1 h-12 gap-1 overflow-x-auto"><TabsTrigger value="load"><Gauge/>Beläggning</TabsTrigger><TabsTrigger value="structure"><FolderKanban/>Projektstruktur</TabsTrigger><TabsTrigger value="activities"><CalendarRange/>Aktiviteter</TabsTrigger><TabsTrigger value="time"><Clock3/>Tidrapportering</TabsTrigger><TabsTrigger value="employees"><Users/>Medarbetare</TabsTrigger><TabsTrigger value="groups"><Users/>TEAM</TabsTrigger></TabsList>
- <TabsContent value="load"><div className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-xl border bg-white p-3"><div className="text-sm font-medium text-slate-700">Beläggningshistorik · {months[0]?.label} – {months[months.length-1]?.label}</div><div className="flex flex-wrap gap-2"><Button variant="outline" onClick={()=>setMonthOffset(x=>x-7)} aria-label="Visa sju föregående månader">← 7 månader</Button><Button variant="outline" onClick={()=>setMonthOffset(x=>x-1)} aria-label="Visa föregående månad">← Månad</Button><Button variant="outline" onClick={()=>setMonthOffset(0)} disabled={monthOffset===0}>Idag</Button><Button variant="outline" onClick={()=>setMonthOffset(x=>x+1)} aria-label="Visa nästa månad">Månad →</Button><Button variant="outline" onClick={()=>setMonthOffset(x=>x+7)} aria-label="Visa sju nästa månader">7 månader →</Button></div></div><LoadPanel employees={visible} months={months} utilization={utilization} onSelect={id=>setDetail({type:"employee",id,mode:"list"})}/><DailyLoadPanel data={data} employees={visible} selectedDay={selectedLoadDate} setSelectedDay={setSelectedLoadDate} onSelect={id=>setDetail({type:"employee",id,mode:"list"})}/></TabsContent>
+ <TabsContent value="load"><div className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-xl border bg-white p-3"><div className="text-sm font-medium text-slate-700">Beläggningshistorik · {months[0]?.label} – {months[months.length-1]?.label}</div><div className="flex flex-wrap gap-2"><Button variant="outline" onClick={()=>setMonthOffset(x=>x-7)} aria-label="Visa sju föregående månader">← 7 månader</Button><Button variant="outline" onClick={()=>setMonthOffset(x=>x-1)} aria-label="Visa föregående månad">← Månad</Button><Button variant="outline" onClick={()=>setMonthOffset(0)} disabled={monthOffset===0}>Idag</Button><Button variant="outline" onClick={()=>setMonthOffset(x=>x+1)} aria-label="Visa nästa månad">Månad →</Button><Button variant="outline" onClick={()=>setMonthOffset(x=>x+7)} aria-label="Visa sju nästa månader">7 månader →</Button></div></div><LoadPanel data={data} employees={visible} months={months} onSelect={id=>setDetail({type:"employee",id,mode:"list"})}/></TabsContent>
  <TabsContent value="structure"><ProjectStructurePanel data={data} onSelect={id=>setDetail({type:"project",id,mode:"list"})} onEdit={openEdit} onRemove={setRemove}/></TabsContent>
  <TabsContent value="activities"><ActivityTable data={data} onCreate={setQuick} onSelect={id=>setDetail({type:"activity",id,mode:"list"})} onPersonSelect={id=>setDetail({type:"employee",id,mode:"list"})} onEdit={a=>openEdit("activity",a)} onRemove={setRemove}/></TabsContent>
  <TabsContent value="time"><TimeTrackingPanel/></TabsContent>
@@ -189,25 +189,77 @@ export default function Home(){const[data,setData]=useState<Data>(empty),[scope,
 
 function Metric({icon,label,value,hint,alert=false}:{icon:React.ReactNode;label:string;value:string|number;hint:string;alert?:boolean}){return <article className={`metric ${alert?"metric-alert":""}`}><div className="metric-icon">{icon}</div><div><p>{label}</p><strong>{value}</strong><span>{hint}</span></div></article>}
 function Avatar({name}:{name:string}){return <div className="avatar">{initials(name)}</div>}function Field({label,children}:{label:string;children:React.ReactNode}){return <div className="grid gap-2"><Label>{label}</Label>{children}</div>}function Actions({edit,remove}:{edit:()=>void;remove:()=>void}){return <div className="flex justify-end gap-1"><Button size="icon-sm" variant="ghost" aria-label="Redigera" onClick={edit}><Pencil/></Button><Button size="icon-sm" variant="ghost" className="text-red-600" aria-label="Ta bort" onClick={remove}><Trash2/></Button></div>}
-function DailyLoadPanel({data,employees,selectedDay,setSelectedDay,onSelect}:{data:Data;employees:Employee[];selectedDay:string;setSelectedDay:(s:string)=>void;onSelect:(id:number)=>void}){
- const today=new Date().toISOString().slice(0,10);
- return <section className="panel mt-4 overflow-hidden">
-  <div className="flex flex-wrap items-center justify-between gap-3 border-b p-4">
-   <div><h2 className="font-semibold">Beläggning på valfritt datum</h2><p className="mt-1 text-sm text-slate-600">Se sparade insatsperioder dag för dag, även bakåt i tiden. En tidigare ändrad insats ska visas med sin dåvarande procent.</p></div>
-   <div className="flex flex-wrap items-center gap-2"><label className="text-sm font-medium" htmlFor="load-date">Datum</label><input id="load-date" type="date" value={selectedDay} onChange={e=>setSelectedDay(e.target.value)} className="rounded-lg border bg-white px-3 py-2 text-sm"/><Button variant="outline" onClick={()=>setSelectedDay(today)} disabled={selectedDay===today}>Idag</Button></div>
+type WorkloadColumn={key:string;label:string;start:string;end:string;day?:string};
+function isoDay(date:Date){return date.toISOString().slice(0,10)}
+function shiftDay(day:string,offset:number){const d=new Date(day+"T00:00:00Z");d.setUTCDate(d.getUTCDate()+offset);return isoDay(d)}
+function isoWeekMonday(day:string){const d=new Date(day+"T00:00:00Z");d.setUTCDate(d.getUTCDate()-(d.getUTCDay()+6)%7);return isoDay(d)}
+function weeksWithinMonth(month:string):WorkloadColumn[]{
+ const bounds=monthBounds(month),list:WorkloadColumn[]=[];
+ let monday=isoWeekMonday(bounds.start);
+ while(monday<=bounds.end){
+  const sunday=shiftDay(monday,6);
+  const start=monday<bounds.start?bounds.start:monday,end=sunday>bounds.end?bounds.end:sunday;
+  const jan4=new Date(monday.slice(0,4)+"-01-04T00:00:00Z");
+  const week1=isoWeekMonday(isoDay(jan4));
+  const weekNum=Math.floor((Date.parse(monday)-Date.parse(week1))/604800000)+1;
+  const label=`v.${String(weekNum).padStart(2,"0")} · ${start.slice(8)}–${end.slice(8)}`;
+  list.push({key:monday,label,start,end});
+  monday=shiftDay(monday,7);
+ }
+ return list;
+}
+function daysWithinWeek(week:WorkloadColumn):WorkloadColumn[]{
+ const fmt=new Intl.DateTimeFormat("sv-SE",{weekday:"short",day:"numeric",month:"short",timeZone:"UTC"});
+ const items:WorkloadColumn[]=[];
+ for(let day=week.start;day<=week.end;day=shiftDay(day,1))
+  items.push({key:day,label:fmt.format(new Date(day+"T00:00:00Z")),start:day,end:day,day});
+ return items;
+}
+function LoadPanel({data,employees,months,onSelect}:{data:Data;employees:Employee[];months:{key:string;label:string}[];onSelect:(id:number)=>void}){
+ const [month,setMonth]=useState<string|null>(null);
+ const [week,setWeek]=useState<WorkloadColumn|null>(null);
+ const [day,setDay]=useState<string|null>(null);
+ const showingMonth=month!==null;
+ const monthColumns:WorkloadColumn[]=months.map(m=>({...monthBounds(m.key),key:m.key,label:m.label}));
+ const weekColumns=month?weeksWithinMonth(month):[];
+ const dayColumns=week?daysWithinWeek(week):[];
+ const columns=day?[{key:day,start:day,end:day,label:new Intl.DateTimeFormat("sv-SE",{dateStyle:"full",timeZone:"UTC"}).format(new Date(day+"T00:00:00Z")),day}]:
+  week?dayColumns:showingMonth?weekColumns:monthColumns;
+ const back=()=>{if(day)setDay(null);else if(week)setWeek(null);else setMonth(null)};
+ const selectColumn=(column:WorkloadColumn)=>{
+  if(!month){setMonth(column.key);setWeek(null);setDay(null)}
+  else if(!week){setWeek(column);setDay(null)}
+  else if(!day)setDay(column.key);
+ };
+ const daySelected=!!day;
+ const value=(employeeId:number,c:WorkloadColumn)=>c.day?loadOnDate(data,employeeId,c.day):workload(data,employeeId,c.start,c.end);
+ const title=day?"Beläggning per dag":week?"Beläggning per veckodag":month?"Beläggning per vecka":"Beläggning per månad";
+ return <section className="panel overflow-hidden">
+  <div className="panel-head">
+   <div><h2>{title}</h2>
+    <p>Klicka på en månad för att visa veckorna, på en vecka för att visa dagarna och på en dag för dess exakta insats. Navigera tillbaka med knappen eller sökvägen ovanför tabellen.</p>
+    {showingMonth&&<nav aria-label="Beläggningens tidsnivå" className="mt-3 flex flex-wrap items-center gap-2 text-sm">
+     <button type="button" onClick={()=>{setMonth(null);setWeek(null);setDay(null)}} className="font-semibold text-blue-700 underline">Månader</button>
+     <span aria-hidden="true">›</span>
+     <button type="button" onClick={()=>{setWeek(null);setDay(null)}} className="font-semibold text-blue-700 underline">{month}</button>
+     {week&&<><span aria-hidden="true">›</span><button type="button" onClick={()=>setDay(null)} className="font-semibold text-blue-700 underline">{week.label}</button></>}
+     {day&&<><span aria-hidden="true">›</span><span>{day}</span></>}
+     <Button variant="outline" onClick={back}>← Tillbaka</Button>
+    </nav>}
+   </div>
+   <div className="legend"><span><i className="bg-emerald-500"/>Under 80%</span><span><i className="bg-amber-500"/>80–100%</span><span><i className="bg-red-500"/>Över kapacitet</span></div>
   </div>
-  <div className="divide-y">{employees.map(e=>{
-   const pct=loadOnDate(data,e.id,selectedDay);
-   const ratio=e.capacityPercent>0?pct/e.capacityPercent:0;
-   return <button key={e.id} type="button" onClick={()=>onSelect(e.id)} className="flex w-full items-center gap-3 px-4 py-3 text-left hover:bg-blue-50">
-    <span className="min-w-0 flex-1 font-medium text-blue-900">{e.name}</span>
-    <span className="w-16 text-right font-bold">{pct}%</span>
-    <span className="hidden w-36 sm:block"><Progress value={Math.min(100,Math.max(0,ratio*100))}/></span>
-   </button>
-  })}</div>
+  <div className="overflow-x-auto"><div className="capacity-grid" style={{gridTemplateColumns:`minmax(235px,2fr) repeat(${columns.length},minmax(${daySelected?160:120}px,1fr))`,minWidth:Math.max(620,235+columns.length*(daySelected?160:120))}}>
+   <div className="capacity-header sticky left-0 z-10 bg-slate-50">Medarbetare</div>
+   {columns.map(c=>daySelected?<div className="capacity-header" key={c.key}>{c.label}</div>:
+    <button type="button" key={c.key} className="capacity-header cursor-pointer text-blue-700 underline hover:bg-blue-100 focus-visible:outline-2 focus-visible:outline-blue-600" onClick={()=>selectColumn(c)} aria-label={`Visa ${!month?"veckor":!week?"dagar":"beläggning"} för ${c.label}`}>{c.label} ↓</button>)}
+   {employees.map(e=><div className="contents" key={e.id}>
+    <button type="button" onClick={()=>onSelect(e.id)} className="person-cell sticky left-0 z-10 bg-white text-left transition hover:bg-blue-50"><Avatar name={e.name}/><div className="min-w-0"><strong className="text-blue-800 hover:underline">{e.name}</strong><span>{e.role} · {e.capacityPercent}% kap.</span></div><ChevronRight className="ml-auto h-4 w-4 text-slate-400"/></button>
+    {columns.map(c=>{const v=value(e.id,c),ratio=e.capacityPercent>0?v/e.capacityPercent:0;return <div className="load-cell" key={c.key}><div className={`load-pill ${ratio>1?"load-over":ratio>=.8?"load-high":"load-ok"}`}><span>{v}%</span><Progress value={Math.min(100,Math.max(0,ratio*100))}/></div></div>})}
+   </div>)}
+  </div></div>
  </section>;
 }
-function LoadPanel({employees,months,utilization,onSelect}:{employees:Employee[];months:{key:string;label:string}[];utilization:(id:number,key:string)=>number;onSelect:(id:number)=>void}){return <section className="panel overflow-hidden"><div className="panel-head"><div><h2>Beläggning per månad</h2><p>Aktuell månad visar beläggningen idag. Övriga månader visar genomsnittlig planerad procent över vardagar. Klicka på en medarbetare för detaljer och Gantt.</p></div><div className="legend"><span><i className="bg-emerald-500"/>Under 80%</span><span><i className="bg-amber-500"/>80–100%</span><span><i className="bg-red-500"/>Över kapacitet</span></div></div><div className="overflow-x-auto"><div className="capacity-grid min-w-[980px]"><div className="capacity-header sticky left-0 z-10 bg-slate-50">Medarbetare</div>{months.map(m=><div className="capacity-header" key={m.key}>{m.label}</div>)}{employees.map(e=><div className="contents" key={e.id}><button type="button" onClick={()=>onSelect(e.id)} className="person-cell sticky left-0 z-10 bg-white text-left transition hover:bg-blue-50"><Avatar name={e.name}/><div className="min-w-0"><strong className="text-blue-800 hover:underline">{e.name}</strong><span>{e.role} · {e.capacityPercent}% kap.</span></div><ChevronRight className="ml-auto h-4 w-4 text-slate-400"/></button>{months.map(m=>{const v=utilization(e.id,m.key),ratio=v/e.capacityPercent;return <div className="load-cell" key={m.key}><div className={`load-pill ${ratio>1?"load-over":ratio>=.8?"load-high":"load-ok"}`}><span>{v}%</span><Progress value={Math.min(100,ratio*100)}/></div></div>})}</div>)}</div></div></section>}
 const PROJECT_STATUS_TABS=[{status:"Aktivt",label:"Pågående"},{status:"Pausat",label:"Pausade"},{status:"Inkommande",label:"Inkommande"},{status:"Avslutat",label:"Avslutade"}] as const;
 function ProjectStructurePanel({data,onSelect,onEdit,onRemove}:{data:Data;onSelect:(id:number)=>void;onEdit:(k:"project"|"work",item:Project|WorkPackage)=>void;onRemove:(x:{type:string;id:number;label:string})=>void}){
  const [status,setStatus]=useState<string>("Aktivt");
