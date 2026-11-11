@@ -259,7 +259,7 @@ function LoadPanel({data,employees,months,onSelect}:{data:Data;employees:Employe
      <Button variant="outline" onClick={back}>← Tillbaka</Button>
     </nav>}
    </div>
-   <div className="legend"><span><i className="bg-emerald-500"/>Under 80%</span><span><i className="bg-amber-500"/>80–100%</span><span><i className="bg-red-500"/>Över kapacitet</span></div>
+   <div className="legend"><span><i className="bg-emerald-500"/>Under 80%</span><span><i className="bg-amber-500"/>80–100%</span><span><i className="bg-red-500"/>Över 100%</span></div>
   </div>
   <div className="overflow-x-auto"><div className="capacity-grid" style={{gridTemplateColumns:`minmax(235px,2fr) repeat(${columns.length},minmax(${daySelected?160:120}px,1fr))`,minWidth:Math.max(620,235+columns.length*(daySelected?160:120))}}>
    <div className="capacity-header sticky left-0 z-10 bg-slate-50">Medarbetare</div>
