@@ -8,6 +8,7 @@ COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc ./
 RUN pnpm install --frozen-lockfile
 
 COPY . .
+RUN bash -n scripts/installera-testtjanst.sh && bash -n scripts/uppdatera-test.sh
 RUN bash -n scripts/install-team-test-3200.sh
 RUN bash -n scripts/promote-test-to-production.sh
 RUN bash -n scripts/disable-nginx-basic-auth.sh && bash -n installera.sh
