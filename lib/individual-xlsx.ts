@@ -148,7 +148,7 @@ export function createIndividualXlsx(values:FormValues){
  rows.push(row(1,{1:"MIN PLANERING · AKTIVITETER & UPPFÖLJNING"},1));
  rows.push(row(4,{1:"NAMN",2:values.name,5:"E-POST",6:values.email,10:"UPPDATERAD",11:values.savedAt||new Date().toISOString().slice(0,10)},2));
  rows.push(row(6,{1:"Välj vecka i listan eller skriv fritt, exempelvis 44, v44 eller 2017 8."},3));
- rows.push(row(8,{1:"Vecka",2:"Vad ska jag göra?",3:"Typ av arbete",4:"Projekt / verksamhet",5:"Projektkod",6:"Planerade timmar",7:"Status",8:"Prioritet",9:"Klart senast",10:"Kommentar / behov",11:"Först planerad",12:"Orsak om flyttad",13:"Aktivitets-ID",14:"Start period",15:"Slut period",16:"Förväntad insats (%)"},2));
+ rows.push(row(8,{1:"Vecka",2:"Vad ska jag göra?",3:"Typ av arbete",4:"Projekt / verksamhet",5:"Projektkod",6:"Planerade timmar",7:"Status",8:"Prioritet",9:"Klart senast",10:"Kommentar / behov",11:"Först planerad",12:"Orsak om flyttad",13:"Aktivitets-ID",14:"Start period",15:"Slut period",16:"Insats (%)"},2));
  for(let i=0;i<60;i++){const a=values.activities[i];rows.push(row(i+9,a?{1:displayWeek(a.week,base),2:a.name,3:a.kind,4:a.link,5:a.projectCode,6:a.hours,7:a.status,8:a.priority,9:a.dueDate,10:a.comment,11:displayWeek(a.firstWeek,base),12:a.reason,13:a.uid,14:a.periodStart??null,15:a.periodEnd??null,16:a.effortPercent??null}:{},i%2?4:5))}
  rows.push(row(73,{1:"PROJEKTMEDVERKAN – även utan aktiviteter"},1));
  rows.push(row(76,{1:"Projektkod",2:"Projektnamn",3:"Medverkan"},2));
