@@ -1029,11 +1029,11 @@ try{
  });
  check("Two Excel period rows create only one activity",()=>assert.equal(periodImport.created,1));
  const roundtrip=await sheet("ci-period-person@example.se");
- const exported=roundtrip.activities.filter(a=>a.name==="Planera två insatsperioder");
+ const exportedPeriods=roundtrip.activities.filter(a=>a.name==="Planera två insatsperioder");
  check("Weekly export preserves two effort periods under one activity ID",()=>{
-  assert.equal(exported.length,2);
-  assert.equal(new Set(exported.map(x=>x.uid)).size,1);
-  assert.deepEqual(exported.map(x=>[x.periodStart,x.periodEnd,x.effortPercent]),[
+  assert.equal(exportedPeriods.length,2);
+  assert.equal(new Set(exportedPeriods.map(x=>x.uid)).size,1);
+  assert.deepEqual(exportedPeriods.map(x=>[x.periodStart,x.periodEnd,x.effortPercent]),[
    ["2026-11-16","2026-12-18",50],["2027-01-11","2027-02-26",80]
   ]);
  });
