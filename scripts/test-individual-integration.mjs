@@ -1100,6 +1100,27 @@ try{
   assert.deepEqual(repeatRows.map(x=>[x.periodStart,x.periodEnd,x.effortPercent]),
    changedRows.map(x=>[x.periodStart,x.periodEnd,x.effortPercent]));
  });
+ // A second correction on the same save day must replace only the current
+ // portion, never touch the preserved 40% history.
+ const correctedAgain={...afterFile,savedAt:dateToday,
+  activities:afterFile.activities.map(x=>x.name===occupancyRow.name&&x.periodStart===dateToday?{...x,effortPercent:70}:x)};
+ await request("/api/individual",correctedAgain);
+ const thirdRows=(await sheet(occupancyEmail)).activities.filter(x=>x.name===occupancyRow.name);
+ check("Second same-day effort correction preserves older 40% history",()=>{
+  assert.deepEqual(thirdRows.map(x=>[x.periodStart,x.periodEnd,x.effortPercent]),[
+   [beginning,dayBefore,40],[dateToday,finish,70]
+  ]);
+ });
+ const stateAfter=await request();
+ const historicalAssignment=stateAfter.assignments.find(x=>x.employeeId===stateAfter.employees.find(y=>y.email===occupancyEmail)?.id&&x.activityId===stateAfter.activities.find(y=>y.name===occupancyRow.name)?.id);
+ check("Assignment keeps original historical start after effort changes",()=>{
+  assert.ok(historicalAssignment);
+  assert.equal(historicalAssignment.startDate,beginning);
+  const matching=stateAfter.assignmentPeriods.filter(x=>x.assignmentId===historicalAssignment.id).sort((a,b)=>a.startDate.localeCompare(b.startDate));
+  assert.deepEqual(matching.map(x=>[x.startDate,x.endDate,x.effortPercent]),[
+    [beginning,dayBefore,40],[dateToday,finish,70]
+  ]);
+ });
  console.log("\nSUCCESS: integration tests passed; only isolated temp database was modified.");
 }catch(err){
  console.error("\nFAILED:",err);
