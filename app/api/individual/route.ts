@@ -317,10 +317,31 @@ export async function POST(req:Request){
      const assignmentId=await d.prepare("SELECT id FROM assignments WHERE activity_id=? AND employee_id=?")
       .bind(a.activityId,e.id).first<{id:number}>();
      if(!assignmentId)throw Error("Personens tilldelning saknas för perioduppdatering.");
-     q.push(d.prepare("DELETE FROM assignment_periods WHERE assignment_id=?").bind(assignmentId.id));
-     for(const period of segments)q.push(d.prepare("INSERT INTO assignment_periods(assignment_id,start_date,end_date,effort_percent) VALUES(?,?,?,?)")
-      .bind(assignmentId.id,period.startDate,period.endDate,period.effortPercent));
-     q.push(d.prepare("UPDATE assignments SET effort_percent=? WHERE id=?").bind(segments[0].effortPercent,assignmentId.id));
+     const old=await d.prepare("SELECT id,start_date startDate,end_date endDate,effort_percent effortPercent FROM assignment_periods WHERE assignment_id=? ORDER BY start_date,id")
+      .bind(assignmentId.id).all<{id:number;startDate:string;endDate:string;effortPercent:number}>();
+     // File modified date is the effective boundary for EFFORT changes only.
+     // Historical occupancy is immutable even when the workbook still contains
+     // the old row covering the effective date.
+     const desired=segments.filter(x=>x.endDate>=saveDate)
+      .map(x=>({...x,startDate:x.startDate<saveDate?saveDate:x.startDate}));
+     const existingFuture=old.results.filter(x=>x.endDate>=saveDate)
+      .map(x=>({startDate:x.startDate<saveDate?saveDate:x.startDate,
+                endDate:x.endDate,effortPercent:x.effortPercent}));
+     const changed=JSON.stringify(existingFuture)!==JSON.stringify(desired);
+     if(changed&&desired.length){
+      // Preserve all periods before the effective date. Only replace the
+      // effective date onward. The operation stays within one DB batch.
+      const before=new Date(saveDate+"T00:00:00Z");
+      before.setUTCDate(before.getUTCDate()-1);
+      const previousDate=before.toISOString().slice(0,10);
+      for(const previous of old.results){
+       if(previous.startDate>=saveDate)q.push(d.prepare("DELETE FROM assignment_periods WHERE id=?").bind(previous.id));
+       else if(previous.endDate>=saveDate)q.push(d.prepare("UPDATE assignment_periods SET end_date=? WHERE id=?").bind(previousDate,previous.id));
+      }
+      for(const period of desired)q.push(d.prepare("INSERT INTO assignment_periods(assignment_id,start_date,end_date,effort_percent) VALUES(?,?,?,?)")
+       .bind(assignmentId.id,period.startDate,period.endDate,period.effortPercent));
+      q.push(d.prepare("UPDATE assignments SET effort_percent=? WHERE id=?").bind(desired[0].effortPercent,assignmentId.id));
+     }
     }
     await d.batch(q);
     if(segments)await d.prepare("UPDATE activities SET start_date=MIN(start_date,?) WHERE id=?").bind(segments[0].startDate,a.activityId).run();
