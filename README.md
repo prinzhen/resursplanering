@@ -1,3 +1,17 @@
+## Flera beläggningsperioder i Excel-veckoplanering
+
+Excel-exporten **Individuell veckoplanering** använder den gamla kolumnordningen A–M och har dessutom:
+
+- **N – Start period** (ÅÅÅÅ-MM-DD).
+- **O – Slut period** (ÅÅÅÅ-MM-DD).
+- **P – Förväntad insats (%)** (skriv t.ex. `50` för 50 procent, inte `50 %`).
+
+När en aktivitet har flera perioder visas en rad per period, och **samma aktivitets-ID i kolumn M återkommer på varje rad**. Ändra endast N–P för beläggningsfördelningen. Aktivitetens övriga fält (inklusive F, totalt planerade timmar) ska vara identiska på periodraderna. En aktivitet med två rader räknas som **en** aktivitet; timmar i F räknas inte två gånger.
+
+För en **ny** aktivitet med flera periodrader: skriv samma unika ID i M på båda raderna, exempelvis `ny-larmsystem-1`. N–P måste vara ifyllda på båda raderna. Perioderna får inte överlappa. Samma ID får inte användas för olika aktiviteter. Saknas ID på raderna tolkas de som olika nya aktiviteter.
+
+Gamla Excel-filer utan periodkolumner importeras enligt tidigare beteende. Importen ändrar planeringsperioder (`assignment_periods`), **inte rapporterade timmar eller tidposter**. Excelmallen har fortfarande högst **60 rader** för aktiviteter/perioder sammanlagt; exporten avbryts i stället för att tappa rader om gränsen överskrids.
+
 # Resursplanering
 
 Webbapplikation för projekt, uppdrag, aktiviteter, bemanning, beläggning, personliga planeringar, Gantt-scheman samt import och export.
