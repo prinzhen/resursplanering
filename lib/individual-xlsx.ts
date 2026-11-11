@@ -94,24 +94,24 @@ export async function readIndividualXlsx(file:File):Promise<FormValues>{
  if(ss){const parsed=new DOMParser().parseFromString(ss,"application/xml");strings=Array.from(parsed.getElementsByTagName("*")).filter(x=>x.localName==="si").map(el=>Array.from(el.getElementsByTagName("*")).filter(x=>x.localName==="t").map(x=>x.textContent||"").join(""))}
  const cell=parseSheet(doc,strings),activities:FormActivity[]=[];
  // Support current approved layout (header row 8), and the prior slim layout (row 7).
- const header=cell("A8").toLowerCase().includes("vecka")?8:cell("A7").toLowerCase().includes("vecka")?7:0;
- if(!header)throw Error("Det här är inte det individuella planeringsformuläret.");
+ const header=cell("A8")==="Vecka"&&cell("H8")==="Start"&&cell("I8")==="Slut"&&cell("J8")==="Insats (%)"&&cell("K8")==="Prioritet"&&cell("P8")==="Aktivitets-ID"?8:0;
+ if(!header)throw Error("Fel Excelmall. Exportera en ny fil: Start (H), Slut (I), Insats (%) (J), Prioritet (K) och Aktivitets-ID (P).");
  // Only the activity table may be imported. Project membership starts at row 73.
  // The earlier compact form used heading row 7 and ended at row 70.
- const lastActivityRow=header===8?68:70;
+ const lastActivityRow=68;
  for(let r=header+1;r<=lastActivityRow;r++){
   const name=cell("B"+r),week=cell("A"+r);
   if(/^(projektkod|projektmedverkan)/i.test(week)||/^(projektnamn|vad ska jag göra\?)/i.test(name))break;
   if(!name)continue;
   const rawHours=cell("F"+r).replace(",",".");const hours=rawHours?Number(rawHours):0;
   if(!Number.isFinite(hours))throw Error("Ogiltigt antal timmar på rad "+r);
-  const d=cell("I"+r);
+  const d=cell("L"+r);
   const excelDate=(value:string)=>value&&/^\d{5}(\.\d+)?$/.test(value)?new Date(Date.UTC(1899,11,30)+Number(value)*86400000).toISOString().slice(0,10):value;
   const dueDate=excelDate(d);
-  const effortRaw=cell("P"+r).replace(",",".").replace(/%$/,"").trim();
+  const effortRaw=cell("J"+r).replace(",",".").replace(/%$/,"").trim();
   const effortPercent=effortRaw===""?null:Number(effortRaw);
   if(effortPercent!==null&&(!Number.isFinite(effortPercent)||effortPercent<0||effortPercent>200))throw Error("Ogiltig förväntad insats (0–200 %) på rad "+r);
-  activities.push({uid:cell("M"+r),week:cell("A"+r),name,kind:cell("C"+r)||"Övrigt",link:cell("D"+r),projectCode:cell("E"+r),hours,status:cell("G"+r)||"Planerad",priority:cell("H"+r),dueDate,comment:cell("J"+r),firstWeek:cell("K"+r),reason:cell("L"+r),periodStart:excelDate(cell("N"+r)),periodEnd:excelDate(cell("O"+r)),effortPercent});
+  activities.push({uid:cell("P"+r),week:cell("A"+r),name,kind:cell("C"+r)||"Övrigt",link:cell("D"+r),projectCode:cell("E"+r),hours,status:cell("G"+r)||"Planerad",priority:cell("K"+r),dueDate,comment:cell("M"+r),firstWeek:cell("N"+r),reason:cell("O"+r),periodStart:excelDate(cell("H"+r)),periodEnd:excelDate(cell("I"+r)),effortPercent});
  }
  if(header===8){for(let r=69;r<=72;r++){if(cell("B"+r)||cell("A"+r))throw Error("Aktivitet utanför formulärets 60 rader (rad "+r+"). Placera aktiviteter på raderna 9–68.");}}
  const members:FormMember[]=[];
@@ -148,8 +148,8 @@ export function createIndividualXlsx(values:FormValues){
  rows.push(row(1,{1:"MIN PLANERING · AKTIVITETER & UPPFÖLJNING"},1));
  rows.push(row(4,{1:"NAMN",2:values.name,5:"E-POST",6:values.email,10:"UPPDATERAD",11:values.savedAt||new Date().toISOString().slice(0,10)},2));
  rows.push(row(6,{1:"Välj vecka i listan eller skriv fritt, exempelvis 44, v44 eller 2017 8."},3));
- rows.push(row(8,{1:"Vecka",2:"Vad ska jag göra?",3:"Typ av arbete",4:"Projekt / verksamhet",5:"Projektkod",6:"Planerade timmar",7:"Status",8:"Prioritet",9:"Klart senast",10:"Kommentar / behov",11:"Först planerad",12:"Orsak om flyttad",13:"Aktivitets-ID",14:"Start period",15:"Slut period",16:"Insats (%)"},2));
- for(let i=0;i<60;i++){const a=values.activities[i];rows.push(row(i+9,a?{1:displayWeek(a.week,base),2:a.name,3:a.kind,4:a.link,5:a.projectCode,6:a.hours,7:a.status,8:a.priority,9:a.dueDate,10:a.comment,11:displayWeek(a.firstWeek,base),12:a.reason,13:a.uid,14:a.periodStart??null,15:a.periodEnd??null,16:a.effortPercent??null}:{},i%2?4:5))}
+ rows.push(row(8,{1:"Vecka",2:"Vad ska jag göra?",3:"Typ av arbete",4:"Projekt / verksamhet",5:"Projektkod",6:"Planerade timmar",7:"Status",8:"Start",9:"Slut",10:"Insats (%)",11:"Prioritet",12:"Klart senast",13:"Kommentar / behov",14:"Först planerad",15:"Orsak om flyttad",16:"Aktivitets-ID"},2));
+ for(let i=0;i<60;i++){const a=values.activities[i];rows.push(row(i+9,a?{1:displayWeek(a.week,base),2:a.name,3:a.kind,4:a.link,5:a.projectCode,6:a.hours,7:a.status,8:a.periodStart??null,9:a.periodEnd??null,10:a.effortPercent??null,11:a.priority,12:a.dueDate,13:a.comment,14:displayWeek(a.firstWeek,base),15:a.reason,16:a.uid}:{},i%2?4:5))}
  rows.push(row(73,{1:"PROJEKTMEDVERKAN – även utan aktiviteter"},1));
  rows.push(row(76,{1:"Projektkod",2:"Projektnamn",3:"Medverkan"},2));
  for(let i=0;i<34;i++){const m=values.members[i];rows.push(row(i+77,m?{1:m.code,2:m.name,3:m.state}:{},i%2?4:5))}
@@ -163,19 +163,19 @@ export function createIndividualXlsx(values:FormValues){
   if(at<0)rows.push(extra);else rows[at]=rows[at].replace("</row>",extra.replace(/^<row[^>]*>/,"").replace("</row>","")+"</row>")
  }
  const maxRow=110,validations=[
- '<dataValidation type="list" allowBlank="1" showErrorMessage="0" sqref="A9:A68 K9:K68"><formula1>$X$2:$X$86</formula1></dataValidation>',
+ '<dataValidation type="list" allowBlank="1" showErrorMessage="0" sqref="A9:A68 N9:N68"><formula1>$X$2:$X$86</formula1></dataValidation>',
  '<dataValidation type="list" allowBlank="1" sqref="C9:C68"><formula1>"Projekt,Verksamhet,Övrigt"</formula1></dataValidation>',
  '<dataValidation type="list" allowBlank="1" sqref="G9:G68"><formula1>"Planerad,Pågående,Pausad,Klar,Fryst"</formula1></dataValidation>',
- '<dataValidation type="list" allowBlank="1" sqref="H9:H68"><formula1>"1,2,3,4,5"</formula1></dataValidation>',
+ '<dataValidation type="list" allowBlank="1" sqref="K9:K68"><formula1>"1,2,3,4,5"</formula1></dataValidation>',
  '<dataValidation type="list" allowBlank="1" sqref="C77:C110"><formula1>"Aktiv,Vilande"</formula1></dataValidation>'
  ].join("");
  // Excel needs rows numerically sorted (source rows 2..86 are inserted in order below).
  rows.sort((a,b)=>Number(/<row r="(\d+)"/.exec(a)?.[1]||0)-Number(/<row r="(\d+)"/.exec(b)?.[1]||0));
  const worksheet='<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
  +'<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetViews><sheetView workbookViewId="0"><pane ySplit="8" topLeftCell="A9" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews>'
- +'<cols>'+[[1,28],[2,40],[3,18],[4,28],[5,19],[6,18],[7,18],[8,15],[9,18],[10,32],[11,27],[12,31],[13,23],[14,19],[15,19],[16,25]].map(([n,w])=>'<col min="'+n+'" max="'+n+'" width="'+w+'" customWidth="1"/>').join('')+'<col min="24" max="24" hidden="1"/></cols>'
+ +'<cols>'+[[1,28],[2,40],[3,18],[4,28],[5,19],[6,18],[7,18],[8,19],[9,19],[10,18],[11,15],[12,18],[13,32],[14,27],[15,31],[16,23]].map(([n,w])=>'<col min="'+n+'" max="'+n+'" width="'+w+'" customWidth="1"/>').join('')+'<col min="24" max="24" hidden="1"/></cols>'
  +'<sheetData>'+rows.join("")+'</sheetData>'
- +'<mergeCells count="3"><mergeCell ref="A1:M2"/><mergeCell ref="A6:M6"/><mergeCell ref="A73:M74"/></mergeCells>'
+ +'<mergeCells count="3"><mergeCell ref="A1:P2"/><mergeCell ref="A6:P6"/><mergeCell ref="A73:P74"/></mergeCells>'
  +'<dataValidations count="5">'+validations+'</dataValidations></worksheet>';
  const styles='<?xml version="1.0" encoding="UTF-8"?>'
  +'<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><fonts count="3"><font><sz val="11"/><name val="Aptos"/></font><font><b/><color rgb="FFFFFFFF"/><sz val="16"/></font><font><b/><color rgb="FFFFFFFF"/><sz val="11"/></font></fonts><fills count="5"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FF142B40"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FF1D4ED8"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFEFF6FF"/></patternFill></fill></fills><borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="6"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="0" fontId="1" fillId="2" borderId="0" xfId="0" applyFill="1" applyFont="1"/><xf numFmtId="0" fontId="2" fillId="3" borderId="0" xfId="0" applyFill="1" applyFont="1"/><xf numFmtId="0" fontId="0" fillId="4" borderId="0" xfId="0" applyFill="1"/><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="0" fontId="0" fillId="4" borderId="0" xfId="0" applyFill="1"/></cellXfs></styleSheet>';
