@@ -117,11 +117,11 @@ export async function POST(req:Request){
    const uid=txt(row.uid);
    const start=txt(row.periodStart),end=txt(row.periodEnd);
    const effort=row.effortPercent;
-   const hasPeriod=!!start||!!end||(effort!==null&&effort!==undefined&&effort!=="");
+   const hasPeriod=!!start||!!end||(effort!==null&&effort!==undefined);
    if(hasPeriod){
     const pct=Number(effort);
     const valid=(v:string)=>/^\d{4}-\d{2}-\d{2}$/.test(v)&&!Number.isNaN(Date.parse(v+"T00:00:00Z"))&&new Date(v+"T00:00:00Z").toISOString().slice(0,10)===v;
-    if(!valid(start)||!valid(end)||start>end||effort===null||effort===undefined||effort===""||!Number.isInteger(pct)||pct<0||pct>200)
+    if(!valid(start)||!valid(end)||start>end||effort===null||effort===undefined||!Number.isInteger(pct)||pct<0||pct>200)
      throw Error("Ange giltigt startdatum, slutdatum och insats (0–200 %) för varje period: "+row.name);
    }
    if(uid&&firstByUid.has(uid)){
@@ -248,7 +248,6 @@ export async function POST(req:Request){
   for(const m of memberChanges)if(m.name)projectNames.set(m.code,m.name);
   for(const a of changes){
    if(a.kind!=="Projekt"||!a.projectName)continue;
-   const prior=projectNames.get(a.projectCode);
    // Conflicting D values for the same project code must be resolved by the user,
    // rather than silently assigning the last name to the project.
    const previousActivityName=changes.find(x=>x!==a&&x.kind==="Projekt"&&x.projectCode===a.projectCode&&x.projectName);
