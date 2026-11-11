@@ -10,7 +10,7 @@ När en aktivitet har flera perioder visas en rad per period, och **samma aktivi
 
 För en **ny** aktivitet med flera periodrader: skriv samma unika ID i M på båda raderna, exempelvis `ny-larmsystem-1`. N–P måste vara ifyllda på båda raderna. Perioderna får inte överlappa. Samma ID får inte användas för olika aktiviteter. Saknas ID på raderna tolkas de som olika nya aktiviteter.
 
-Gamla Excel-filer utan periodkolumner importeras enligt tidigare beteende. Importen ändrar planeringsperioder (`assignment_periods`), **inte rapporterade timmar eller tidposter**. Excelmallen har fortfarande högst **60 rader** för aktiviteter/perioder sammanlagt; exporten avbryts i stället för att tappa rader om gränsen överskrids.
+Gamla Excel-filer utan periodkolumner importeras enligt tidigare beteende. Vid ändrad förväntad insats (%) börjar ändringen gälla från filens senast ändrade datum; tidigare beläggning bevaras. Datum för start/slut är fortfarande uttryckliga planeringsvärden. Importen ändrar planeringsperioder (`assignment_periods`), **inte rapporterade timmar eller tidposter**. Excelmallen har fortfarande högst **60 rader** för aktiviteter/perioder sammanlagt; exporten avbryts i stället för att tappa rader om gränsen överskrids.
 
 # Resursplanering
 
