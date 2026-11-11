@@ -177,9 +177,22 @@ export async function POST(req:Request){
    }
    employeesCreated=1;
   }
+  // Column D ("Projekt / verksamhet") is authoritative for project names.
+  // Column B ("Vad ska jag göra?") is exclusively the activity name.
+  // Project membership names are fallbacks only when no activity row supplies D.
   const projectNames=new Map<string,string>();
-  for(const a of changes)if(a.kind==="Projekt")projectNames.set(a.projectCode,a.projectName||projectNames.get(a.projectCode)||a.projectCode);
-  for(const m of memberChanges)projectNames.set(m.code,m.name||projectNames.get(m.code)||m.code);
+  for(const m of memberChanges)if(m.name)projectNames.set(m.code,m.name);
+  for(const a of changes){
+   if(a.kind!=="Projekt"||!a.projectName)continue;
+   const prior=projectNames.get(a.projectCode);
+   // Conflicting D values for the same project code must be resolved by the user,
+   // rather than silently assigning the last name to the project.
+   const previousActivityName=changes.find(x=>x!==a&&x.kind==="Projekt"&&x.projectCode===a.projectCode&&x.projectName);
+   if(previousActivityName&&previousActivityName.projectName.toLocaleLowerCase("sv-SE")!==a.projectName.toLocaleLowerCase("sv-SE"))
+    throw Error("Olika projektnamn i kolumn D för projektkod "+a.projectCode+". Rätta Excel-filen före import.");
+   // Activity rows override any membership-section fallback.
+   projectNames.set(a.projectCode,a.projectName);
+  }
   const uniqueCodes=new Set([...changes.map(a=>a.projectCode),...memberChanges.map(m=>m.code)]);
   for(const code of uniqueCodes){
    const old=await d.prepare("SELECT id FROM projects WHERE code=? COLLATE NOCASE").bind(code).first<{id:number}>();
