@@ -157,6 +157,10 @@ export async function POST(req:Request){
   if(!identity.isAdmin&&e?.id!==identity.employeeId&&!(identity.isGroupManager&&(e===null||e.managerId===identity.employeeId)))return forbidden();
   if(!e&&(!txt(input.name)||txt(input.name).length>150))return Response.json({error:"Namn saknas eller är för långt för ny medarbetare."},{status:400});
   const importDate=importDateSweden();
+  const saveDate=txt(input.savedAt)||importDate;
+  if(!/^\d{4}-\d{2}-\d{2}$/.test(saveDate)||Number.isNaN(Date.parse(saveDate+"T00:00:00Z"))||
+     new Date(saveDate+"T00:00:00Z").toISOString().slice(0,10)!==saveDate||saveDate>importDate)
+   throw Error("Filens spar-/ändringsdatum är ogiltigt eller ligger i framtiden.");
 
   const allowed=await accessScope(d,identity);
   const changes:{uid:string;week:string;firstWeek:string;name:string;kind:string;projectCode:string;projectName:string;priority:number|null;hours:number;status:string;description:string;reason:string;activityId:number|null}[]=[];
