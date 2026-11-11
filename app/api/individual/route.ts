@@ -65,7 +65,7 @@ export async function GET(req:Request){
   // Include existing project assignments as well as earlier spreadsheet items.
   const items=await d.prepare(`SELECT a.id activityId, COALESCE(i.item_uid,'employee-'||s.employee_id||'-activity-'||a.id) uid,
  COALESCE(i.current_week,'') savedWeek, COALESCE(i.first_week,'') firstWeek,
- a.name,a.description comment,a.status,a.priority,a.estimated_hours hours,a.start_date startDate,s.completed_at completedAt,s.work_status workStatus,
+ a.name,a.description comment,a.status,a.priority,a.estimated_hours hours,a.start_date startDate,s.end_date assignmentEndDate,s.effort_percent assignedEffort,s.completed_at completedAt,s.work_status workStatus,
  p.code projectCode,p.name projectName,p.id projectId,
  CASE WHEN p.code='INTERNAL-VERK' THEN 'Verksamhet' WHEN p.code='INTERNAL-OVR' THEN 'Övrigt' ELSE 'Projekt' END kind
  FROM assignments s JOIN activities a ON a.id=s.activity_id JOIN projects p ON p.id=a.project_id
@@ -74,17 +74,32 @@ export async function GET(req:Request){
   const tracked=await d.prepare(`SELECT i.item_uid uid,i.current_week savedWeek,i.first_week firstWeek,a.id activityId,a.name,a.description comment,a.status,a.priority,a.estimated_hours hours,a.start_date startDate,NULL completedAt,NULL workStatus,p.code projectCode,p.name projectName,p.id projectId,CASE WHEN p.code='INTERNAL-VERK' THEN 'Verksamhet' WHEN p.code='INTERNAL-OVR' THEN 'Övrigt' ELSE 'Projekt' END kind FROM individual_form_items i JOIN activities a ON a.id=i.activity_id JOIN projects p ON p.id=a.project_id LEFT JOIN assignments s ON s.activity_id=i.activity_id AND s.employee_id=i.employee_id WHERE i.employee_id=? AND s.id IS NULL ORDER BY a.start_date,a.name`).bind(e.id).all<Record<string,unknown>>();
   // A previously imported row must not disappear because its allocation link is missing.
   const sourceRows=[...items.results,...tracked.results];
+  const allocationPeriods=await d.prepare(`SELECT s.activity_id activityId,p.start_date startDate,p.end_date endDate,p.effort_percent effortPercent
+    FROM assignments s JOIN assignment_periods p ON p.assignment_id=s.id
+    WHERE s.employee_id=? ORDER BY s.activity_id,p.start_date,p.id`).bind(e.id)
+    .all<{activityId:number;startDate:string;endDate:string;effortPercent:number}>();
+  const periodsByActivity=new Map<number,{startDate:string;endDate:string;effortPercent:number}[]>();
+  for(const period of allocationPeriods.results){
+   const rows=periodsByActivity.get(period.activityId)||[];
+   rows.push(period);periodsByActivity.set(period.activityId,rows);
+  }
   const iso=(raw:string)=>{const d=new Date(raw+'T00:00:00Z');if(Number.isNaN(d.getTime()))return '';d.setUTCDate(d.getUTCDate()+4-(d.getUTCDay()||7));const year=d.getUTCFullYear();const start=new Date(Date.UTC(year,0,1));return year+'-W'+String(Math.ceil(((d.getTime()-start.getTime())/86400000+1)/7)).padStart(2,'0')};
   const memberships=await d.prepare(`SELECT p.code,p.name,COALESCE(s.state,'Aktiv') state
  FROM project_members m JOIN projects p ON p.id=m.project_id
  LEFT JOIN individual_project_state s ON s.employee_id=m.employee_id AND s.project_id=p.id
  WHERE m.employee_id=? AND p.code NOT LIKE 'INTERNAL-%' ORDER BY p.code`).bind(e.id).all<{code:string;name:string;state:string}>();
-  const result:FormValues={name:e.name,email:e.email,activities:sourceRows.filter(a=>u.searchParams.get("includeClosed")!=="0"||["Planerad","Pågående","Pausad","Pågår"].includes(String(a.workStatus||a.status))&&!a.completedAt).map(a=>({
+  const result:FormValues={name:e.name,email:e.email,activities:sourceRows.filter(a=>u.searchParams.get("includeClosed")!=="0"||["Planerad","Pågående","Pausad","Pågår"].includes(String(a.workStatus||a.status))&&!a.completedAt).flatMap(a=>{
+   const periods=periodsByActivity.get(Number(a.activityId));
+   const sourcePeriods=periods?.length?periods:
+     a.assignedEffort!==undefined?[{startDate:String(a.startDate),endDate:String(a.assignmentEndDate||a.startDate),effortPercent:Number(a.assignedEffort)}]:[null];
+   return sourcePeriods.map(period=>({
    uid:String(a.uid),week:String(a.savedWeek||iso(String(a.startDate))),name:String(a.name),kind:String(a.kind),
    link:String(a.projectName||""),projectCode:String(a.projectCode).startsWith("INTERNAL-")?"":String(a.projectCode),
    hours:Number(a.hours||0),status:cleanStatus(String(a.workStatus||a.status)),priority:String(a.priority??3),dueDate:"",
-   comment:String(a.comment||""),firstWeek:String(a.firstWeek||iso(String(a.startDate))),reason:""
-  })),members:memberships.results};
+   comment:String(a.comment||""),firstWeek:String(a.firstWeek||iso(String(a.startDate))),reason:"",
+   periodStart:period?.startDate||"",periodEnd:period?.endDate||"",effortPercent:period?.effortPercent??null
+  }));
+  }),members:memberships.results};
   return Response.json(result);
  }catch(e){console.error(e);return Response.json({error:"Kunde inte läsa veckoplaneringen. Kontrollera att migrationen är körd."},{status:500})}
 }
@@ -92,6 +107,46 @@ export async function POST(req:Request){
  try{
   const d=db(),identity=await sessionIdentity(req,d);if(!identity)return unauthorized();if(!sameOrigin(req))return forbidden();
   const input=await req.json() as FormValues;
+  // Multiple Excel rows with one activity ID represent distinct allocation periods.
+  // Old workbooks without period columns remain supported as single-row activities.
+  const segmentsByUid=new Map<string,{startDate:string;endDate:string;effortPercent:number}[]>();
+  const firstByUid=new Map<string,typeof input.activities[number]>();
+  const groupedActivities:typeof input.activities=[];
+  if(!input||!Array.isArray(input.activities))return Response.json({error:"Felaktigt aktivitetsunderlag."},{status:400});
+  for(const row of input.activities){
+   const uid=txt(row.uid);
+   const start=txt(row.periodStart),end=txt(row.periodEnd);
+   const effort=row.effortPercent;
+   const hasPeriod=!!start||!!end||(effort!==null&&effort!==undefined&&effort!=="");
+   if(hasPeriod){
+    const pct=Number(effort);
+    const valid=(v:string)=>/^\d{4}-\d{2}-\d{2}$/.test(v)&&!Number.isNaN(Date.parse(v+"T00:00:00Z"))&&new Date(v+"T00:00:00Z").toISOString().slice(0,10)===v;
+    if(!valid(start)||!valid(end)||start>end||effort===null||effort===undefined||effort===""||!Number.isInteger(pct)||pct<0||pct>200)
+     throw Error("Ange giltigt startdatum, slutdatum och insats (0–200 %) för varje period: "+row.name);
+   }
+   if(uid&&firstByUid.has(uid)){
+    const previous=firstByUid.get(uid)!;
+    if(!hasPeriod||!segmentsByUid.has(uid))throw Error("Aktiviteten "+row.name+" finns på flera rader utan fullständiga perioder.");
+    for(const field of ["name","kind","link","projectCode","hours","status","priority","comment","week","firstWeek"] as const){
+     if(String(row[field]??"")!==String(previous[field]??""))throw Error("Aktivitetens uppgifter skiljer sig mellan periodrader: "+row.name+" ("+field+").");
+    }
+   }else{
+    groupedActivities.push(row);
+    if(uid)firstByUid.set(uid,row);
+   }
+   if(hasPeriod){
+    const key=uid||"__row_"+(groupedActivities.length-1);
+    const periods=segmentsByUid.get(key)||[];
+    periods.push({startDate:start,endDate:end,effortPercent:Number(effort)});
+    segmentsByUid.set(key,periods);
+   }
+  }
+  for(const [key,periods] of segmentsByUid){
+   periods.sort((a,b)=>a.startDate.localeCompare(b.startDate));
+   for(let i=1;i<periods.length;i++)if(periods[i-1].endDate>=periods[i].startDate)
+    throw Error("Perioder överlappar för aktivitets-ID "+key+".");
+  }
+  input.activities=groupedActivities;
   if(!input||!Array.isArray(input.activities)||input.activities.length>60||!Array.isArray(input.members)||input.members.length>34)return Response.json({error:"Ogiltig eller för stor import."},{status:400});
   const email=txt(input.email).toLowerCase();
   if(!validEmail(email))return Response.json({error:"E-postadressen är ogiltig."},{status:400});
@@ -134,9 +189,18 @@ export async function POST(req:Request){
    const assignedId=legacy?Number(legacy[1]):scoped?Number(scoped[2]):null;
    const assigned=assignedId!==null&&e?await d.prepare("SELECT activity_id activityId FROM assignments WHERE activity_id=? AND employee_id=?").bind(assignedId,e.id).first<{activityId:number}>():null;
    const existing=assigned||matched||(e?await d.prepare("SELECT i.activity_id activityId FROM individual_form_items i WHERE i.item_uid=? AND i.employee_id=?").bind(uid,e.id).first<{activityId:number}>():null);
-   if(a.uid&&!existing)throw Error("Aktivitets-ID "+uid+" tillhör inte denna medarbetare eller finns inte. Avbryter för att undvika dubbletter.");
+   if(a.uid&&!existing&&!uid.startsWith("ny-"))throw Error("Aktivitets-ID "+uid+" tillhör inte denna medarbetare eller finns inte. Avbryter för att undvika dubbletter.");
    if(kind==="Projekt"){const p=await d.prepare("SELECT id FROM projects WHERE code=? COLLATE NOCASE").bind(code).first<{id:number}>();if(!p&&!canCreate)throw Error("Projektkoden "+code+" finns inte. Kontakta en gruppchef eller administratör.");if(p&&!canCreate&&!allowed.selfProjectIds.has(p.id)&&!allowed.projectLedIds.has(p.id))return forbidden()}
    changes.push({uid,week:current,firstWeek:first,name:txt(a.name),kind,projectCode:code,projectName:txt(a.link),priority,hours:hrs,status,description:txt(a.comment).slice(0,500),reason:txt(a.reason).slice(0,500),activityId:existing?.activityId??null});
+  }
+  // Assign generated IDs to period segments whose original row had no UID.
+  const explicitPeriods=new Map<string,{startDate:string;endDate:string;effortPercent:number}[]>();
+  let blankIndex=0;
+  for(const change of changes){
+   const raw=groupedActivities[blankIndex++];
+   const key=txt(raw.uid)||"__row_"+(blankIndex-1);
+   const periods=segmentsByUid.get(key);
+   if(periods)explicitPeriods.set(change.uid,periods);
   }
   const seenActivityIds=new Set<number>(),seenUIDs=new Set<string>();
   for(const a of changes){
@@ -222,8 +286,9 @@ export async function POST(req:Request){
     const done=a.status==="Klar";
     const finishDate=done?(person.completedAt||today):null;
     const plannedEnd=person.originalEnd||person.endDate;
-    let startDate=person.startDate,plannedEndDate=plannedEnd;
-    if(prior&&prior.currentWeek!==a.week){
+    const segments=explicitPeriods.get(a.uid);
+    let startDate=segments?.[0]?.startDate||person.startDate,plannedEndDate=segments?.[segments.length-1]?.endDate||plannedEnd;
+    if(!segments&&prior&&prior.currentWeek!==a.week){
       // A moved week means shifting an existing allocation, never collapsing a
       // multi-month assignment to a Monday-Friday window.
       const shift=(Date.parse(monday(a.week))-Date.parse(monday(prior.currentWeek)))/86400000;
@@ -238,12 +303,21 @@ export async function POST(req:Request){
       d.prepare("INSERT INTO individual_form_items(item_uid,employee_id,activity_id,first_week,current_week) VALUES(?,?,?,?,?) ON CONFLICT(employee_id,activity_id) DO UPDATE SET current_week=excluded.current_week,updated_at=CURRENT_TIMESTAMP").bind(storedUid,e.id,a.activityId,a.firstWeek,a.week),
       d.prepare("UPDATE assignments SET work_status=?,status_updated_at=CURRENT_TIMESTAMP,completed_at=?,original_end_date=?,start_date=?,end_date=? WHERE activity_id=? AND employee_id=?").bind(a.status,finishDate,plannedEndDate,startDate,endDate,a.activityId,e.id)
     ];
-    if(prior&&prior.currentWeek!==a.week){
+    if(!segments&&prior&&prior.currentWeek!==a.week){
       const delta=(Date.parse(monday(a.week))-Date.parse(monday(prior.currentWeek)))/86400000;
       if(!Number.isInteger(delta)||Math.abs(delta)>3650)throw Error("Ogiltig veckoförflyttning.");
       // Shift every effort segment as well; otherwise assignment and Gantt disagree.
       q.push(d.prepare("UPDATE assignment_periods SET start_date=date(start_date, ?),end_date=date(end_date, ?) WHERE assignment_id=(SELECT id FROM assignments WHERE activity_id=? AND employee_id=?)").bind(delta+" days",delta+" days",a.activityId,e.id));
       q.push(d.prepare("INSERT INTO individual_week_moves(item_uid,from_week,to_week,reason) VALUES(?,?,?,?)").bind(storedUid,prior.currentWeek,a.week,a.reason||null));
+    }
+    if(segments){
+     const assignmentId=await d.prepare("SELECT id FROM assignments WHERE activity_id=? AND employee_id=?")
+      .bind(a.activityId,e.id).first<{id:number}>();
+     if(!assignmentId)throw Error("Personens tilldelning saknas för perioduppdatering.");
+     q.push(d.prepare("DELETE FROM assignment_periods WHERE assignment_id=?").bind(assignmentId.id));
+     for(const period of segments)q.push(d.prepare("INSERT INTO assignment_periods(assignment_id,start_date,end_date,effort_percent) VALUES(?,?,?,?)")
+      .bind(assignmentId.id,period.startDate,period.endDate,period.effortPercent));
+     q.push(d.prepare("UPDATE assignments SET effort_percent=? WHERE id=?").bind(segments[0].effortPercent,assignmentId.id));
     }
     await d.batch(q);
     if(a.priority!==null&&await updateActivityPriority(d,a.activityId,a.priority,importDate,identity.accountId))prioritiesChanged++;
@@ -263,11 +337,15 @@ export async function POST(req:Request){
     }
     updated++;
    }else{
-    const result=await d.prepare("INSERT INTO activities (project_id,name,description,start_date,end_date,estimated_hours,status,created_by,priority) VALUES(?,?,?,?,?,?,?,?,?)").bind(p.id,a.name,a.description||null,monday(a.week),friday(a.week),a.hours,a.status,e.id,a.priority??3).run();
+    const segments=explicitPeriods.get(a.uid);
+    const startDate=segments?.[0]?.startDate||monday(a.week);
+    const endDate=segments?.[segments.length-1]?.endDate||friday(a.week);
+    const result=await d.prepare("INSERT INTO activities (project_id,name,description,start_date,end_date,estimated_hours,status,created_by,priority) VALUES(?,?,?,?,?,?,?,?,?)").bind(p.id,a.name,a.description||null,startDate,endDate,a.hours,a.status,e.id,a.priority??3).run();
     const activityId=Number(result.meta.last_row_id);
     await d.prepare("INSERT INTO activity_priority_history(activity_id,effective_from,priority,changed_by,source) VALUES(?,?,?,?,?)")
-      .bind(activityId,monday(a.week),a.priority??3,identity.accountId,"excel").run();
-    await d.batch([d.prepare("INSERT INTO assignments (activity_id,employee_id,effort_percent,start_date,end_date,completed_at,work_status,original_end_date,status_updated_at) VALUES(?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)").bind(activityId,e.id,Math.min(200,Math.round(a.hours/40*100)),monday(a.week),friday(a.week),a.status==="Klar"?importDate:null,a.status,friday(a.week)),d.prepare("INSERT INTO individual_form_items(item_uid,employee_id,activity_id,first_week,current_week) VALUES(?,?,?,?,?)").bind(a.uid,e.id,activityId,a.firstWeek,a.week),d.prepare("INSERT INTO assignment_periods(assignment_id,start_date,end_date,effort_percent) SELECT id,start_date,end_date,effort_percent FROM assignments WHERE activity_id=? AND employee_id=?").bind(activityId,e.id)]);created++;
+      .bind(activityId,startDate,a.priority??3,identity.accountId,"excel").run();
+    await d.batch([d.prepare("INSERT INTO assignments (activity_id,employee_id,effort_percent,start_date,end_date,completed_at,work_status,original_end_date,status_updated_at) VALUES(?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)").bind(activityId,e.id,segments?.[0]?.effortPercent??Math.min(200,Math.round(a.hours/40*100)),startDate,endDate,a.status==="Klar"?importDate:null,a.status,endDate),d.prepare("INSERT INTO individual_form_items(item_uid,employee_id,activity_id,first_week,current_week) VALUES(?,?,?,?,?)").bind(a.uid,e.id,activityId,a.firstWeek,a.week),...(segments?segments.map(period=>d.prepare("INSERT INTO assignment_periods(assignment_id,start_date,end_date,effort_percent) SELECT id,?,?,? FROM assignments WHERE activity_id=? AND employee_id=?")
+      .bind(period.startDate,period.endDate,period.effortPercent,activityId,e.id)):[d.prepare("INSERT INTO assignment_periods(assignment_id,start_date,end_date,effort_percent) SELECT id,start_date,end_date,effort_percent FROM assignments WHERE activity_id=? AND employee_id=?").bind(activityId,e.id)])]);created++;
    }
   }
   for(const m of memberChanges){
