@@ -4,7 +4,7 @@ Excel-exporten **Individuell veckoplanering** använder den gamla kolumnordninge
 
 - **N – Start period** (ÅÅÅÅ-MM-DD).
 - **O – Slut period** (ÅÅÅÅ-MM-DD).
-- **P – Förväntad insats (%)** (skriv t.ex. `50` för 50 procent, inte `50 %`).
+- **P – Insats (%)** (skriv t.ex. `50` för 50 procent, inte `50 %`).
 
 När en aktivitet har flera perioder visas en rad per period, och **samma aktivitets-ID i kolumn M återkommer på varje rad**. Ändra endast N–P för beläggningsfördelningen. Aktivitetens övriga fält (inklusive F, totalt planerade timmar) ska vara identiska på periodraderna. En aktivitet med två rader räknas som **en** aktivitet; timmar i F räknas inte två gånger.
 
