@@ -2,6 +2,7 @@ import {env} from "cloudflare:workers";
 import {sessionIdentity,unauthorized,forbidden,sameOrigin,passwordHash,randomHex} from "@/lib/auth";
 import {accessScope} from "@/lib/permissions";
 import type {FormValues} from "@/lib/individual-xlsx";
+import {overlayEffortPeriods} from "@/lib/effort-history";
 import {importDateSweden,parseExcelPriority,splitAtPriorityChange,type Period} from "@/lib/individual-priority";
 export const dynamic="force-dynamic";
 const db=()=>{if(!env.DB)throw Error("Databasen saknas.");return env.DB};
@@ -322,28 +323,27 @@ export async function POST(req:Request){
      if(!assignmentId)throw Error("Personens tilldelning saknas för perioduppdatering.");
      const old=await d.prepare("SELECT id,start_date startDate,end_date endDate,effort_percent effortPercent FROM assignment_periods WHERE assignment_id=? ORDER BY start_date,id")
       .bind(assignmentId.id).all<{id:number;startDate:string;endDate:string;effortPercent:number}>();
-     // File modified date is the effective boundary for EFFORT changes only.
-     // Historical occupancy is immutable even when the workbook still contains
-     // the old row covering the effective date.
-     const desired=segments.filter(x=>x.endDate>=saveDate)
-      .map(x=>({...x,startDate:x.startDate<saveDate?saveDate:x.startDate}));
-     const existingFuture=old.results.filter(x=>x.endDate>=saveDate)
-      .map(x=>({startDate:x.startDate<saveDate?saveDate:x.startDate,
-                endDate:x.endDate,effortPercent:x.effortPercent}));
-     const changed=JSON.stringify(existingFuture)!==JSON.stringify(desired);
-     if(changed&&desired.length){
-      // Preserve all periods before the effective date. Only replace the
-      // effective date onward. The operation stays within one DB batch.
+     // An XLSX row is a requested FUTURE change, not a replacement for
+     // the complete historical assignment. Overlay only its covered dates.
+     const result=overlayEffortPeriods(old.results,segments,saveDate);
+     if(result.changed){
       const before=new Date(saveDate+"T00:00:00Z");
       before.setUTCDate(before.getUTCDate()-1);
       const previousDate=before.toISOString().slice(0,10);
+      // Rows wholly in history are never updated or deleted.
       for(const previous of old.results){
        if(previous.startDate>=saveDate)q.push(d.prepare("DELETE FROM assignment_periods WHERE id=?").bind(previous.id));
        else if(previous.endDate>=saveDate)q.push(d.prepare("UPDATE assignment_periods SET end_date=? WHERE id=?").bind(previousDate,previous.id));
       }
-      for(const period of desired)q.push(d.prepare("INSERT INTO assignment_periods(assignment_id,start_date,end_date,effort_percent) VALUES(?,?,?,?)")
-       .bind(assignmentId.id,period.startDate,period.endDate,period.effortPercent));
-      q.push(d.prepare("UPDATE assignments SET effort_percent=? WHERE id=?").bind(desired[0].effortPercent,assignmentId.id));
+      // Rebuild only the future portion, preserving other future assignments
+      // that the user did not edit in the Excel workbook.
+      const future=result.periods.filter(x=>x.endDate>=saveDate);
+      for(const item of future){
+       q.push(d.prepare("INSERT INTO assignment_periods(assignment_id,start_date,end_date,effort_percent) VALUES(?,?,?,?)")
+        .bind(assignmentId.id,item.startDate<saveDate?saveDate:item.startDate,item.endDate,item.effortPercent));
+      }
+      const active=future.find(x=>x.startDate<=importDate&&x.endDate>=importDate)||future[0];
+      if(active)q.push(d.prepare("UPDATE assignments SET effort_percent=? WHERE id=?").bind(active.effortPercent,assignmentId.id));
      }
     }
     await d.batch(q);
