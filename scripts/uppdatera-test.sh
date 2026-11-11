@@ -11,6 +11,7 @@ for cmd in git pnpm node python3 sudo systemctl ss curl flock cp; do
 done
 [[ "$TEST_DIR" = /* && "$TEST_DIR" != "/opt/resursplanering" ]] || { echo "Ogiltig testkatalog." >&2; exit 1; }
 [[ -d "$TEST_DIR/.git" ]] || { echo "Saknar testklon: $TEST_DIR" >&2; exit 1; }
+[[ "$(git -C "$TEST_DIR" branch --show-current)" == "$BRANCH" ]] || { echo "Testklonen måste ligga på rätt featuregren: $BRANCH" >&2; exit 1; }
 [[ -z "$(git -C "$TEST_DIR" status --porcelain)" ]] || {
  echo "Testklonen har lokala ändringar. Spara dem innan uppdateringen." >&2; exit 1;
 }
@@ -68,7 +69,7 @@ restore(){
    mkdir -p "$DATA_DIR"
    tar -C "$DATA_DIR" -xf "$BACKUP/data.tar" || true
   fi
-  (cd "$TEST_DIR" && git switch --detach "$OLD" && pnpm install --frozen-lockfile && pnpm build) || true
+  (cd "$TEST_DIR" && git reset --hard "$OLD" && pnpm install --frozen-lockfile && pnpm build) || true
   sudo systemctl start "$SERVICE" || true
  fi
  echo "Testbackup: $BACKUP" >&2
