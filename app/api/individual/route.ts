@@ -112,7 +112,7 @@ export async function POST(req:Request){
   const segmentsByUid=new Map<string,{startDate:string;endDate:string;effortPercent:number}[]>();
   const firstByUid=new Map<string,typeof input.activities[number]>();
   const groupedActivities:typeof input.activities=[];
-  if(!input||!Array.isArray(input.activities))return Response.json({error:"Felaktigt aktivitetsunderlag."},{status:400});
+  if(!input||!Array.isArray(input.activities)||input.activities.length>60||!Array.isArray(input.members)||input.members.length>34)return Response.json({error:"Ogiltig eller för stor import (högst 60 periodrader). "},{status:400});
   for(const row of input.activities){
    const uid=txt(row.uid);
    const start=txt(row.periodStart),end=txt(row.periodEnd);
@@ -319,6 +319,7 @@ export async function POST(req:Request){
      q.push(d.prepare("UPDATE assignments SET effort_percent=? WHERE id=?").bind(segments[0].effortPercent,assignmentId.id));
     }
     await d.batch(q);
+    if(segments)await d.prepare("UPDATE activities SET start_date=MIN(start_date,?) WHERE id=?").bind(segments[0].startDate,a.activityId).run();
     if(a.priority!==null&&await updateActivityPriority(d,a.activityId,a.priority,importDate,identity.accountId))prioritiesChanged++;
     const all=await d.prepare("SELECT work_status workStatus,completed_at completedAt FROM assignments WHERE activity_id=?").bind(a.activityId).all<{workStatus:string|null;completedAt:string|null}>();
     const statuses=all.results.map(x=>x.workStatus||(x.completedAt?"Klar":"Planerad"));
