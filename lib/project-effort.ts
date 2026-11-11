@@ -42,14 +42,13 @@ export function projectEffortForPeriod(
  return new Map([...totals].map(([id,value])=>[id,Math.round(value*100)/100]));
 }
 export function projectEffortOnDay(
- activityIds:ReadonlySet<number>,assignments:readonly ProjectEffortAssignment[],periods:readonly ProjectEffortPeriod[],day:string
+ activityIds:ReadonlySet<number>,assignments:readonly ProjectEffortAssignment[],periods:readonly ProjectEffortPeriod[],day:string,today=new Date().toISOString().slice(0,10)
 ):Map<number,number>{
  // A one-day date lookup also includes weekends, where planned effort
  // still has a defined value (the same daily allocation as weekdays).
  const byAssignment=new Map<number,ProjectEffortPeriod[]>();
  for(const p of periods){const list=byAssignment.get(p.assignmentId)||[];list.push(p);byAssignment.set(p.assignmentId,list)}
  const totals=new Map<number,number>();
- const today=new Date().toISOString().slice(0,10);
  for(const a of assignments){
   if(!activityIds.has(a.activityId))continue;
   if(day>=today&&["Fryst","Pausad"].includes(a.workStatus||""))continue;
