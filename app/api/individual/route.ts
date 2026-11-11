@@ -65,13 +65,13 @@ export async function GET(req:Request){
   // Include existing project assignments as well as earlier spreadsheet items.
   const items=await d.prepare(`SELECT a.id activityId, COALESCE(i.item_uid,'employee-'||s.employee_id||'-activity-'||a.id) uid,
  COALESCE(i.current_week,'') savedWeek, COALESCE(i.first_week,'') firstWeek,
- a.name,a.description comment,a.status,a.priority,a.estimated_hours hours,a.start_date startDate,s.end_date assignmentEndDate,s.effort_percent assignedEffort,s.completed_at completedAt,s.work_status workStatus,
+ a.name,a.description comment,a.status,a.priority,a.estimated_hours hours,i.updated_at savedAt,a.start_date startDate,s.end_date assignmentEndDate,s.effort_percent assignedEffort,s.completed_at completedAt,s.work_status workStatus,
  p.code projectCode,p.name projectName,p.id projectId,
  CASE WHEN p.code='INTERNAL-VERK' THEN 'Verksamhet' WHEN p.code='INTERNAL-OVR' THEN 'Övrigt' ELSE 'Projekt' END kind
  FROM assignments s JOIN activities a ON a.id=s.activity_id JOIN projects p ON p.id=a.project_id
  LEFT JOIN individual_form_items i ON i.activity_id=a.id AND i.employee_id=s.employee_id
  WHERE s.employee_id=? ORDER BY a.start_date,a.name`).bind(e.id).all<Record<string,unknown>>();
-  const tracked=await d.prepare(`SELECT i.item_uid uid,i.current_week savedWeek,i.first_week firstWeek,a.id activityId,a.name,a.description comment,a.status,a.priority,a.estimated_hours hours,a.start_date startDate,NULL completedAt,NULL workStatus,p.code projectCode,p.name projectName,p.id projectId,CASE WHEN p.code='INTERNAL-VERK' THEN 'Verksamhet' WHEN p.code='INTERNAL-OVR' THEN 'Övrigt' ELSE 'Projekt' END kind FROM individual_form_items i JOIN activities a ON a.id=i.activity_id JOIN projects p ON p.id=a.project_id LEFT JOIN assignments s ON s.activity_id=i.activity_id AND s.employee_id=i.employee_id WHERE i.employee_id=? AND s.id IS NULL ORDER BY a.start_date,a.name`).bind(e.id).all<Record<string,unknown>>();
+  const tracked=await d.prepare(`SELECT i.item_uid uid,i.current_week savedWeek,i.first_week firstWeek,a.id activityId,a.name,a.description comment,a.status,a.priority,a.estimated_hours hours,i.updated_at savedAt,a.start_date startDate,NULL completedAt,NULL workStatus,p.code projectCode,p.name projectName,p.id projectId,CASE WHEN p.code='INTERNAL-VERK' THEN 'Verksamhet' WHEN p.code='INTERNAL-OVR' THEN 'Övrigt' ELSE 'Projekt' END kind FROM individual_form_items i JOIN activities a ON a.id=i.activity_id JOIN projects p ON p.id=a.project_id LEFT JOIN assignments s ON s.activity_id=i.activity_id AND s.employee_id=i.employee_id WHERE i.employee_id=? AND s.id IS NULL ORDER BY a.start_date,a.name`).bind(e.id).all<Record<string,unknown>>();
   // A previously imported row must not disappear because its allocation link is missing.
   const sourceRows=[...items.results,...tracked.results];
   const allocationPeriods=await d.prepare(`SELECT s.activity_id activityId,p.start_date startDate,p.end_date endDate,p.effort_percent effortPercent
@@ -303,7 +303,7 @@ export async function POST(req:Request){
     // Existing schedule stays unchanged on a status-only import. Reopening a
     // completed assignment restores its previous planned end date.
     const q:D1PreparedStatement[]=[
-      d.prepare("INSERT INTO individual_form_items(item_uid,employee_id,activity_id,first_week,current_week) VALUES(?,?,?,?,?) ON CONFLICT(employee_id,activity_id) DO UPDATE SET current_week=excluded.current_week,updated_at=CURRENT_TIMESTAMP").bind(storedUid,e.id,a.activityId,a.firstWeek,a.week),
+      d.prepare("INSERT INTO individual_form_items(item_uid,employee_id,activity_id,first_week,current_week) VALUES(?,?,?,?,?) ON CONFLICT(employee_id,activity_id) DO UPDATE SET current_week=excluded.current_week,updated_at=excluded.updated_at").bind(storedUid,e.id,a.activityId,a.firstWeek,a.week),
       d.prepare("UPDATE assignments SET work_status=?,status_updated_at=CURRENT_TIMESTAMP,completed_at=?,original_end_date=?,start_date=?,end_date=? WHERE activity_id=? AND employee_id=?").bind(a.status,finishDate,plannedEndDate,startDate,endDate,a.activityId,e.id)
     ];
     if(!segments&&prior&&prior.currentWeek!==a.week){
