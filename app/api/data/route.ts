@@ -22,7 +22,7 @@ async function checkedProjectParent(d:D1Database,requested:unknown,projectId:num
  while(current!==null){
   if(current===projectId||seen.has(current))throw Error("Projekt kan inte vara överordnat sig självt eller bilda en cirkel.");
   seen.add(current);
-  const row=await d.prepare("SELECT parent_project_id parentProjectId FROM projects WHERE id=?").bind(current).first<{parentProjectId:number|null}>();
+  const row:{parentProjectId:number|null}|null=await d.prepare("SELECT parent_project_id parentProjectId FROM projects WHERE id=?").bind(current).first<{parentProjectId:number|null}>();
   if(!row)throw Error("Överordnat projekt finns inte.");
   current=row.parentProjectId;
  }
