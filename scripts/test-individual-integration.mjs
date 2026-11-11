@@ -1052,6 +1052,54 @@ try{
   method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(overlapping)
  });
  check("Overlapping Excel effort periods are rejected",()=>assert.equal(overlapResponse.status,400));
+
+ // Regression: editing an exported 40% period to 60% must not erase the
+ // historical 40% occupancy. The same effective day is idempotent.
+ const dateToday=new Date().toISOString().slice(0,10);
+ const preceding=new Date(dateToday+"T00:00:00Z");
+ preceding.setUTCDate(preceding.getUTCDate()-1);
+ const dayBefore=preceding.toISOString().slice(0,10);
+ const historicalStart=new Date(dateToday+"T00:00:00Z");
+ historicalStart.setUTCDate(historicalStart.getUTCDate()-21);
+ const beginning=historicalStart.toISOString().slice(0,10);
+ const futureEnd=new Date(dateToday+"T00:00:00Z");
+ futureEnd.setUTCDate(futureEnd.getUTCDate()+120);
+ const finish=futureEnd.toISOString().slice(0,10);
+ const occupancyRow={uid:"ny-effort-split-e2e",week:"2026-W46",firstWeek:"2026-W46",
+  name:"Historiktest insats 40 till 60",kind:"Projekt",link:"E2E Periodplanering",
+  projectCode:"P-PERIOD-TEST",hours:180,status:"Planerad",priority:"3",
+  dueDate:"",comment:"Historisk beläggning",reason:"",
+  periodStart:beginning,periodEnd:finish,effortPercent:40};
+ const occupancyEmail="ci-effort-history@example.se";
+ const firstOccupancy=await request("/api/individual",{
+  name:"CI historik",email:occupancyEmail,activities:[occupancyRow],members:[],savedAt:dateToday
+ });
+ check("New activity with original 40 percent effort created",()=>assert.equal(firstOccupancy.created,1));
+ const beforeFile=await sheet(occupancyEmail);
+ const originalRows=beforeFile.activities.filter(x=>x.name===occupancyRow.name);
+ assert.equal(originalRows.length,1);
+ const changedWorkbook={...beforeFile,savedAt:dateToday,
+  activities:beforeFile.activities.map(x=>x.name===occupancyRow.name?{...x,effortPercent:60}:x)};
+ const changedOccupancy=await request("/api/individual",changedWorkbook);
+ check("Changing effort updates existing activity instead of adding another",()=>{
+  assert.equal(changedOccupancy.created,0);
+  assert.equal(changedOccupancy.updated,1);
+ });
+ const afterFile=await sheet(occupancyEmail);
+ const changedRows=afterFile.activities.filter(x=>x.name===occupancyRow.name);
+ check("40 percent ends the day before saved Excel, 60 percent starts on saved date",()=>{
+  assert.equal(changedRows.length,2);
+  assert.deepEqual(changedRows.map(x=>[x.periodStart,x.periodEnd,x.effortPercent]),[
+   [beginning,dayBefore,40],[dateToday,finish,60]
+  ]);
+  assert.equal(new Set(changedRows.map(x=>x.uid)).size,1);
+ });
+ await request("/api/individual",{...afterFile,savedAt:dateToday});
+ const repeatRows=(await sheet(occupancyEmail)).activities.filter(x=>x.name===occupancyRow.name);
+ check("Reimport unchanged 40/60 effort schedule does not duplicate periods",()=>{
+  assert.deepEqual(repeatRows.map(x=>[x.periodStart,x.periodEnd,x.effortPercent]),
+   changedRows.map(x=>[x.periodStart,x.periodEnd,x.effortPercent]));
+ });
  console.log("\nSUCCESS: integration tests passed; only isolated temp database was modified.");
 }catch(err){
  console.error("\nFAILED:",err);
