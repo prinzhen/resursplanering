@@ -1015,6 +1015,43 @@ try{
  const protectedSqlite=new DatabaseSync(await findSqlite(join(dir,"data")),{readOnly:true});
  try{check("Admin identity tests leave SQLite foreign keys consistent",()=>assert.equal(protectedSqlite.prepare("PRAGMA foreign_key_check").all().length,0))}
  finally{protectedSqlite.close()}
+ // A single activity may be planned for several separate effort periods.
+ const periodRows=[["2026-11-16","2026-12-18",50],["2027-01-11","2027-02-26",80]]
+  .map(([periodStart,periodEnd,effortPercent])=>({
+   uid:"ny-period-e2e",week:"2026-W46",firstWeek:"2026-W46",
+   name:"Planera två insatsperioder",kind:"Projekt",link:"E2E Periodplanering",
+   projectCode:"P-PERIOD-TEST",hours:120,status:"Planerad",priority:"3",
+   dueDate:"",comment:"Kontrollerar olika beläggning",reason:"",
+   periodStart,periodEnd,effortPercent
+  }));
+ const periodImport=await request("/api/individual",{
+  name:"E2E Periodperson",email:"ci-period-person@example.se",activities:periodRows,members:[]
+ });
+ check("Two Excel period rows create only one activity",()=>assert.equal(periodImport.created,1));
+ const roundtrip=await sheet("ci-period-person@example.se");
+ const exported=roundtrip.activities.filter(a=>a.name==="Planera två insatsperioder");
+ check("Weekly export preserves two effort periods under one activity ID",()=>{
+  assert.equal(exported.length,2);
+  assert.equal(new Set(exported.map(x=>x.uid)).size,1);
+  assert.deepEqual(exported.map(x=>[x.periodStart,x.periodEnd,x.effortPercent]),[
+   ["2026-11-16","2026-12-18",50],["2027-01-11","2027-02-26",80]
+  ]);
+ });
+ await request("/api/individual",roundtrip);
+ const afterPeriodReimport=await sheet("ci-period-person@example.se");
+ check("Reimporting multiple rows retains one activity and two effort periods",()=>{
+  const rows=afterPeriodReimport.activities.filter(a=>a.name==="Planera två insatsperioder");
+  assert.equal(rows.length,2);
+  assert.equal(new Set(rows.map(x=>x.uid)).size,1);
+  assert.deepEqual(rows.map(x=>x.effortPercent),[50,80]);
+ });
+ const overlapping=structuredClone(roundtrip);
+ const periodRowsOverlap=overlapping.activities.filter(a=>a.name==="Planera två insatsperioder");
+ periodRowsOverlap[1].periodStart="2026-12-01";
+ const overlapResponse=await fetch(base+"/api/individual",{
+  method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(overlapping)
+ });
+ check("Overlapping Excel effort periods are rejected",()=>assert.equal(overlapResponse.status,400));
  console.log("\nSUCCESS: integration tests passed; only isolated temp database was modified.");
 }catch(err){
  console.error("\nFAILED:",err);
