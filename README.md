@@ -1,16 +1,23 @@
-## Flera beläggningsperioder i Excel-veckoplanering
+## Excel-veckoplanering – ny mall (gamla mallar stöds inte)
 
-Excel-exporten **Individuell veckoplanering** använder den gamla kolumnordningen A–M och har dessutom:
+För att undvika felaktig tolkning av kolumner ska en ny Excel-export göras efter uppgraderingen.
 
-- **N – Start period** (ÅÅÅÅ-MM-DD).
-- **O – Slut period** (ÅÅÅÅ-MM-DD).
-- **P – Insats (%)** (skriv t.ex. `50` för 50 procent, inte `50 %`).
+| Kolumn | Fält |
+|---|---|
+| G | Status |
+| H | Start (ÅÅÅÅ-MM-DD) |
+| I | Slut (ÅÅÅÅ-MM-DD) |
+| J | Insats (%) – skriv exempelvis `40` eller `60` |
+| K | Prioritet |
+| L | Klart senast |
+| M | Kommentar / behov |
+| N | Först planerad |
+| O | Orsak om flyttad |
+| P | Aktivitets-ID |
 
-När en aktivitet har flera perioder visas en rad per period, och **samma aktivitets-ID i kolumn M återkommer på varje rad**. Ändra endast N–P för beläggningsfördelningen. Aktivitetens övriga fält (inklusive F, totalt planerade timmar) ska vara identiska på periodraderna. En aktivitet med två rader räknas som **en** aktivitet; timmar i F räknas inte två gånger.
+Kolumn A–F behåller tidigare betydelse. En aktivitet med flera planerade insatsperioder exporteras som **flera Excel-rader med samma aktivitets-ID i P**. Vid import delas ändrad insats automatiskt på filens senast ändrade datum: tidigare procentvärden och perioder sparas till och med dagen före, och ny insats gäller från ändringsdatum. Återimport samma dag är idempotent. Andra uppgifter historikdelas inte automatiskt. Max 60 period-/aktivitetsrader per fil. Registrerade tidposter påverkas inte.
 
-För en **ny** aktivitet med flera periodrader: skriv samma unika ID i M på båda raderna, exempelvis `ny-larmsystem-1`. N–P måste vara ifyllda på båda raderna. Perioderna får inte överlappa. Samma ID får inte användas för olika aktiviteter. Saknas ID på raderna tolkas de som olika nya aktiviteter.
-
-Gamla Excel-filer utan periodkolumner importeras enligt tidigare beteende. Vid ändrad förväntad insats (%) börjar ändringen gälla från filens senast ändrade datum; tidigare beläggning bevaras. Datum för start/slut är fortfarande uttryckliga planeringsvärden. Importen ändrar planeringsperioder (`assignment_periods`), **inte rapporterade timmar eller tidposter**. Excelmallen har fortfarande högst **60 rader** för aktiviteter/perioder sammanlagt; exporten avbryts i stället för att tappa rader om gränsen överskrids.
+**Observera:** Om en tidigare programversion redan skrivit över eller raderat beläggningsperioder kan kodändringen inte återskapa historiken utan en äldre databasbackup. Kontrollera SQL-tabellen `assignment_periods` och säkerhetskopiera före produktionsuppgradering.
 
 # Resursplanering
 
