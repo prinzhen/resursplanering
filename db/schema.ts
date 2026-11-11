@@ -11,6 +11,7 @@ export const projects = sqliteTable("projects", {
   name: text("name").notNull(), color: text("color").notNull().default("#2563eb"),
   priority: integer("priority").notNull().default(3),
   description: text("description"), status: text("status").notNull().default("Aktivt"),
+  parentProjectId: integer("parent_project_id").references(()=>projects.id,{onDelete:"set null"}),
 });
 export const projectMembers = sqliteTable("project_members", {
   projectId: integer("project_id").notNull().references(() => projects.id),
