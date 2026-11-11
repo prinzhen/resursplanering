@@ -99,6 +99,13 @@
       "when": 1793468010000,
       "tag": "0013_work_package_leaders",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "6",
+      "when": 1794410000000,
+      "tag": "0014_project_hierarchy",
+      "breakpoints": true
     }
   ]
 }
