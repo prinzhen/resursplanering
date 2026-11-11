@@ -1,3 +1,52 @@
+## Automatisk uppdatering av testservern (port 3200)
+
+**Endast test**, på /opt/resursplanering-test. Ändrar aldrig /opt/resursplanering, port 3000 eller produktionsdatabasen.
+
+Första gången: stoppa manuellt startad testserver med Ctrl+C. Kontrollera att testdata finns i den katalog du tidigare använt (vanligtvis `$HOME/resursplanering-fulltest-data`); om annan katalog används, sätt `TEST_DATA_DIR=/absolut/sökväg` vid installationen. Från en uppdaterad testklon:
+
+```bash
+cd /opt/resursplanering-test
+git fetch origin
+git switch feature/full-production-project-hierarchy-and-excel-renames-20261111
+git pull --ff-only
+bash scripts/installera-testtjanst.sh
+```
+
+Detta installerar `resursplanering-test.service` under nuvarande användare, binder enbart 127.0.0.1:3200 och startar automatiskt vid omstart. En annan befintlig tjänst på samma namn skrivs inte över.
+
+Därefter varje uppdatering:
+
+```bash
+bash /opt/resursplanering-test/scripts/uppdatera-test.sh
+```
+
+Skriptet kräver ren Git-arbetskatalog och en installerad, aktiv testtjänst. Det hämtar nya ändringar, stoppar endast testtjänsten, tar en kall backup av testdata, uppdaterar via fast-forward, bygger och kör regressionstester, startar tjänsten och kontrollerar API/databasintegritet. Vid fel försöker det återställa tidigare commit och testdata. Backuper finns i `$HOME/resursplanering-test-backuper`. Tjänsten kan följas via `sudo journalctl -u resursplanering-test -f`. För åtkomst från arbetsdator: `ssh -N -L 3200:127.0.0.1:3200 prinzhen@192.168.55.54`, sedan http://localhost:3200.
+
+**Uppdatera inte testklonen via `git pull` samtidigt som den nya testtjänsten kör**. Använd bara uppdateringsskriptet efter den första installationen.
+
+---
+
+## Excel-veckoplanering – ny mall (gamla mallar stöds inte)
+
+För att undvika felaktig tolkning av kolumner ska en ny Excel-export göras efter uppgraderingen.
+
+| Kolumn | Fält |
+|---|---|
+| G | Status |
+| H | Start (ÅÅÅÅ-MM-DD) |
+| I | Slut (ÅÅÅÅ-MM-DD) |
+| J | Insats (%) – skriv exempelvis `40` eller `60` |
+| K | Prioritet |
+| L | Klart senast |
+| M | Kommentar / behov |
+| N | Först planerad |
+| O | Orsak om flyttad |
+| P | Aktivitets-ID |
+
+Kolumn A–F behåller tidigare betydelse. En aktivitet med flera planerade insatsperioder exporteras som **flera Excel-rader med samma aktivitets-ID i P**. Vid import delas ändrad insats automatiskt på filens senast ändrade datum: tidigare procentvärden och perioder sparas till och med dagen före, och ny insats gäller från ändringsdatum. Återimport samma dag är idempotent. Andra uppgifter historikdelas inte automatiskt. Max 60 period-/aktivitetsrader per fil. Registrerade tidposter påverkas inte.
+
+**Observera:** Om en tidigare programversion redan skrivit över eller raderat beläggningsperioder kan kodändringen inte återskapa historiken utan en äldre databasbackup. Kontrollera SQL-tabellen `assignment_periods` och säkerhetskopiera före produktionsuppgradering.
+
 # Resursplanering
 
 Webbapplikation för projekt, uppdrag, aktiviteter, bemanning, beläggning, personliga planeringar, Gantt-scheman samt import och export.

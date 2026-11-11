@@ -13,6 +13,21 @@ const number=(v:unknown)=>v===""||v==null?null:Number(v);
 const priority=(v:unknown)=>{const n=Number(v??3);if(!Number.isInteger(n)||n<1||n>5)throw Error("Prioritet ska vara 1–5 (1 är högst).");return n};
 const requiredActivityDescription=(v:unknown)=>{const value=text(v);if(!value)throw new Error("Aktiviteten måste ha en beskrivning.");if(value.length>500)throw new Error("Aktivitetsbeskrivningen får vara högst 500 tecken.");return value};
 
+async function checkedProjectParent(d:D1Database,requested:unknown,projectId:number|null){
+ const parentId=requested===null||requested===undefined||requested===""?null:Number(requested);
+ if(parentId===null)return null;
+ if(!Number.isSafeInteger(parentId)||parentId<=0)throw Error("Ogiltigt överordnat projekt.");
+ let current:number|null=parentId;
+ const seen=new Set<number>();
+ while(current!==null){
+  if(current===projectId||seen.has(current))throw Error("Projekt kan inte vara överordnat sig självt eller bilda en cirkel.");
+  seen.add(current);
+  const row:{parentProjectId:number|null}|null=await d.prepare("SELECT parent_project_id parentProjectId FROM projects WHERE id=?").bind(current).first<{parentProjectId:number|null}>();
+  if(!row)throw Error("Överordnat projekt finns inte.");
+  current=row.parentProjectId;
+ }
+ return parentId;
+}
 async function seedIfEmpty(d:D1Database){const c=await d.prepare("SELECT COUNT(*) count FROM employees").first<{count:number}>();if((c?.count??0)>0)return;await d.batch([
   d.prepare("INSERT INTO employees (name,email,role,manager_id,capacity_percent) VALUES (?,?,?,?,?)").bind("Anna Lind","anna@example.se","Gruppchef",null,100),d.prepare("INSERT INTO employees (name,email,role,manager_id,capacity_percent) VALUES (?,?,?,?,?)").bind("Erik Holm","erik@example.se","Projektledare",1,100),d.prepare("INSERT INTO employees (name,email,role,manager_id,capacity_percent) VALUES (?,?,?,?,?)").bind("Sara Berg","sara@example.se","Systemingenjör",1,100),d.prepare("INSERT INTO employees (name,email,role,manager_id,capacity_percent) VALUES (?,?,?,?,?)").bind("Johan Nyström","johan@example.se","Tekniker",1,80),
   d.prepare("INSERT INTO projects (code,name,color) VALUES (?,?,?)").bind("P-1042","Modernisering styrsystem","#2563eb"),d.prepare("INSERT INTO projects (code,name,color) VALUES (?,?,?)").bind("P-1087","Nätverkssegmentering","#0f766e"),d.prepare("INSERT INTO projects (code,name,color) VALUES (?,?,?)").bind("P-1110","Underhållsrevision","#ca8a04"),
@@ -21,7 +36,7 @@ async function seedIfEmpty(d:D1Database){const c=await d.prepare("SELECT COUNT(*
 
 async function snapshot(d:D1Database){const [e,p,w,a,s,m,periods,formItems,weekMoves,projectStates,importRuns,orders,groups,groupMembers,projectLeaders,teamLeaders,workPackageLeaders,assignmentRequests,projectProposals,activityPriorityHistory]=await Promise.all([
  d.prepare("SELECT id,name,email,role,manager_id managerId,capacity_percent capacityPercent FROM employees ORDER BY name").all<Row>(),
- d.prepare("SELECT id,code,name,color,description,status,priority FROM projects ORDER BY code").all<Row>(),
+ d.prepare("SELECT id,code,name,color,description,status,priority,parent_project_id parentProjectId FROM projects ORDER BY code").all<Row>(),
  d.prepare("SELECT id,project_id projectId,code,name,description FROM work_packages ORDER BY project_id,code").all<Row>(),
  d.prepare("SELECT id,project_id projectId,work_package_id workPackageId,parent_activity_id parentActivityId,code,name,description,start_date startDate,end_date endDate,estimated_hours estimatedHours,status,priority FROM activities ORDER BY start_date,name").all<Row>(),
  d.prepare("SELECT s.id,s.activity_id activityId,s.employee_id employeeId,s.effort_percent effortPercent,s.start_date startDate,s.end_date endDate,s.completed_at completedAt,s.work_status workStatus,s.original_end_date originalEndDate,s.status_updated_at statusUpdatedAt FROM assignments s ORDER BY s.start_date,s.id").all<Row>(),
@@ -80,7 +95,8 @@ async function restore(d:D1Database,b:Backup){
   d.prepare("DELETE FROM projects"),d.prepare("DELETE FROM employees")
  ];
  for(const x of b.data.employees)q.push(d.prepare("INSERT INTO employees(id,name,email,role,manager_id,capacity_percent) VALUES(?,?,?,?,?,?)").bind(x.id,x.name,x.email,x.role,x.managerId??null,x.capacityPercent));
- for(const x of b.data.projects)q.push(d.prepare("INSERT INTO projects(id,code,name,color,description,status,priority) VALUES(?,?,?,?,?,?,?)").bind(x.id,x.code,x.name,x.color,x.description??null,x.status??"Aktivt",priority(x.priority)));
+ for(const x of b.data.projects)q.push(d.prepare("INSERT INTO projects(id,code,name,color,description,status,priority,parent_project_id) VALUES(?,?,?,?,?,?,?,NULL)").bind(x.id,x.code,x.name,x.color,x.description??null,x.status??"Aktivt",priority(x.priority)));
+ for(const x of b.data.projects)if(x.parentProjectId!=null)q.push(d.prepare("UPDATE projects SET parent_project_id=? WHERE id=?").bind(x.parentProjectId,x.id));
  for(const x of b.data.workPackages||[])q.push(d.prepare("INSERT INTO work_packages(id,project_id,code,name,description) VALUES(?,?,?,?,?)").bind(x.id,x.projectId,x.code,x.name,x.description??null));
  for(const x of b.data.activities)q.push(d.prepare("INSERT INTO activities(id,project_id,work_package_id,parent_activity_id,code,name,description,start_date,end_date,estimated_hours,status,priority) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)").bind(x.id,x.projectId,x.workPackageId??null,x.parentActivityId??null,x.code??null,x.name,x.description??null,x.startDate,x.endDate,x.estimatedHours??null,x.status,priority(x.priority)));
  for(const x of b.data.activityPriorityHistory||[])q.push(d.prepare("INSERT INTO activity_priority_history(id,activity_id,effective_from,priority,changed_by,source,created_at) VALUES(?,?,?,?,?,?,?)").bind(x.id,x.activityId,x.effectiveFrom,priority(x.priority),x.changedBy??null,x.source||"excel",x.createdAt||new Date().toISOString()));
@@ -128,7 +144,9 @@ export async function POST(request:Request){try{const d=db();const user=await se
    return Response.json({error:"Ogiltig projektkod, namn, beskrivning eller färg."},{status:400});
   if(await d.prepare("SELECT id FROM projects WHERE code=? COLLATE NOCASE").bind(code).first())
    return Response.json({error:"Projektkoden används redan."},{status:409});
-  const created=await d.prepare("INSERT INTO projects (code,name,color,description,status,priority) VALUES (?,?,?,?,?,?)").bind(code,name,color,description||null,"Aktivt",priority(b.priority)).run();
+  const parentId=await checkedProjectParent(d,b.parentProjectId,null);
+  const status=text(b.status)||"Aktivt";if(!["Inkommande","Aktivt","Pausat","Avslutat"].includes(status))throw Error("Ogiltig projektstatus.");
+  const created=await d.prepare("INSERT INTO projects (code,name,color,description,status,priority,parent_project_id) VALUES (?,?,?,?,?,?,?)").bind(code,name,color,description||null,status,priority(b.priority),parentId).run();
   if(user.isGroupManager&&user.employeeId){
    const id=Number(created.meta.last_row_id);
    await d.batch([
@@ -137,7 +155,13 @@ export async function POST(request:Request){try{const d=db();const user=await se
    ]);
   }
  }
- else if(action==="updateProject")await d.prepare("UPDATE projects SET code=?,name=?,color=?,description=?,status=?,priority=? WHERE id=?").bind(text(b.code),text(b.name),text(b.color)||"#2563eb",text(b.description)||null,text(b.status)||"Aktivt",priority(b.priority),Number(b.id)).run();
+ else if(action==="updateProject"){
+  const id=Number(b.id);
+  if(!Number.isSafeInteger(id)||id<=0||!await d.prepare("SELECT id FROM projects WHERE id=?").bind(id).first())return Response.json({error:"Projektet saknas."},{status:404});
+  const parentId=await checkedProjectParent(d,b.parentProjectId,id);
+  const status=text(b.status)||"Aktivt";if(!["Inkommande","Aktivt","Pausat","Avslutat"].includes(status))throw Error("Ogiltig projektstatus.");
+  await d.prepare("UPDATE projects SET code=?,name=?,color=?,description=?,status=?,priority=?,parent_project_id=? WHERE id=?").bind(text(b.code),text(b.name),text(b.color)||"#2563eb",text(b.description)||null,status,priority(b.priority),parentId,id).run();
+ }
  else if(action==="workPackage")await d.prepare("INSERT INTO work_packages (project_id,code,name,description) VALUES (?,?,?,?)").bind(Number(b.projectId),text(b.code),text(b.name),text(b.description)||null).run();
  else if(action==="updateWorkPackage")await d.prepare("UPDATE work_packages SET project_id=?,code=?,name=?,description=? WHERE id=?").bind(Number(b.projectId),text(b.code),text(b.name),text(b.description)||null,Number(b.id)).run();
  else if(action==="activity"){

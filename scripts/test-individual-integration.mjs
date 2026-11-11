@@ -1015,6 +1015,112 @@ try{
  const protectedSqlite=new DatabaseSync(await findSqlite(join(dir,"data")),{readOnly:true});
  try{check("Admin identity tests leave SQLite foreign keys consistent",()=>assert.equal(protectedSqlite.prepare("PRAGMA foreign_key_check").all().length,0))}
  finally{protectedSqlite.close()}
+ // A single activity may be planned for several separate effort periods.
+ const periodRows=[["2026-11-16","2026-12-18",50],["2027-01-11","2027-02-26",80]]
+  .map(([periodStart,periodEnd,effortPercent])=>({
+   uid:"ny-period-e2e",week:"2026-W46",firstWeek:"2026-W46",
+   name:"Planera två insatsperioder",kind:"Projekt",link:"E2E Periodplanering",
+   projectCode:"P-PERIOD-TEST",hours:120,status:"Planerad",priority:"3",
+   dueDate:"",comment:"Kontrollerar olika beläggning",reason:"",
+   periodStart,periodEnd,effortPercent
+  }));
+ const periodImport=await request("/api/individual",{
+  name:"E2E Periodperson",email:"ci-period-person@example.se",activities:periodRows,members:[]
+ });
+ check("Two Excel period rows create only one activity",()=>assert.equal(periodImport.created,1));
+ const roundtrip=await sheet("ci-period-person@example.se");
+ const exportedPeriods=roundtrip.activities.filter(a=>a.name==="Planera två insatsperioder");
+ check("Weekly export preserves two effort periods under one activity ID",()=>{
+  assert.equal(exportedPeriods.length,2);
+  assert.equal(new Set(exportedPeriods.map(x=>x.uid)).size,1);
+  assert.deepEqual(exportedPeriods.map(x=>[x.periodStart,x.periodEnd,x.effortPercent]),[
+   ["2026-11-16","2026-12-18",50],["2027-01-11","2027-02-26",80]
+  ]);
+ });
+ await request("/api/individual",roundtrip);
+ const afterPeriodReimport=await sheet("ci-period-person@example.se");
+ check("Reimporting multiple rows retains one activity and two effort periods",()=>{
+  const rows=afterPeriodReimport.activities.filter(a=>a.name==="Planera två insatsperioder");
+  assert.equal(rows.length,2);
+  assert.equal(new Set(rows.map(x=>x.uid)).size,1);
+  assert.deepEqual(rows.map(x=>x.effortPercent),[50,80]);
+ });
+ const overlapping=structuredClone(roundtrip);
+ const periodRowsOverlap=overlapping.activities.filter(a=>a.name==="Planera två insatsperioder");
+ periodRowsOverlap[1].periodStart="2026-12-01";
+ const overlapResponse=await fetch(base+"/api/individual",{
+  method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(overlapping)
+ });
+ check("Overlapping Excel effort periods are rejected",()=>assert.equal(overlapResponse.status,400));
+
+ // Regression: editing an exported 40% period to 60% must not erase the
+ // historical 40% occupancy. The same effective day is idempotent.
+ const dateToday=new Date().toISOString().slice(0,10);
+ const preceding=new Date(dateToday+"T00:00:00Z");
+ preceding.setUTCDate(preceding.getUTCDate()-1);
+ const dayBefore=preceding.toISOString().slice(0,10);
+ const historicalStart=new Date(dateToday+"T00:00:00Z");
+ historicalStart.setUTCDate(historicalStart.getUTCDate()-21);
+ const beginning=historicalStart.toISOString().slice(0,10);
+ const futureEnd=new Date(dateToday+"T00:00:00Z");
+ futureEnd.setUTCDate(futureEnd.getUTCDate()+120);
+ const finish=futureEnd.toISOString().slice(0,10);
+ const occupancyRow={uid:"ny-effort-split-e2e",week:"2026-W46",firstWeek:"2026-W46",
+  name:"Historiktest insats 40 till 60",kind:"Projekt",link:"E2E Periodplanering",
+  projectCode:"P-PERIOD-TEST",hours:180,status:"Planerad",priority:"3",
+  dueDate:"",comment:"Historisk beläggning",reason:"",
+  periodStart:beginning,periodEnd:finish,effortPercent:40};
+ const occupancyEmail="ci-effort-history@example.se";
+ const firstOccupancy=await request("/api/individual",{
+  name:"CI historik",email:occupancyEmail,activities:[occupancyRow],members:[],savedAt:dateToday
+ });
+ check("New activity with original 40 percent effort created",()=>assert.equal(firstOccupancy.created,1));
+ const beforeFile=await sheet(occupancyEmail);
+ const originalRows=beforeFile.activities.filter(x=>x.name===occupancyRow.name);
+ assert.equal(originalRows.length,1);
+ const changedWorkbook={...beforeFile,savedAt:dateToday,
+  activities:beforeFile.activities.map(x=>x.name===occupancyRow.name?{...x,effortPercent:60}:x)};
+ const changedOccupancy=await request("/api/individual",changedWorkbook);
+ check("Changing effort updates existing activity instead of adding another",()=>{
+  assert.equal(changedOccupancy.created,0);
+  assert.equal(changedOccupancy.updated,1);
+ });
+ const afterFile=await sheet(occupancyEmail);
+ const changedRows=afterFile.activities.filter(x=>x.name===occupancyRow.name);
+ check("40 percent ends the day before saved Excel, 60 percent starts on saved date",()=>{
+  assert.equal(changedRows.length,2);
+  assert.deepEqual(changedRows.map(x=>[x.periodStart,x.periodEnd,x.effortPercent]),[
+   [beginning,dayBefore,40],[dateToday,finish,60]
+  ]);
+  assert.equal(new Set(changedRows.map(x=>x.uid)).size,1);
+ });
+ await request("/api/individual",{...afterFile,savedAt:dateToday});
+ const repeatRows=(await sheet(occupancyEmail)).activities.filter(x=>x.name===occupancyRow.name);
+ check("Reimport unchanged 40/60 effort schedule does not duplicate periods",()=>{
+  assert.deepEqual(repeatRows.map(x=>[x.periodStart,x.periodEnd,x.effortPercent]),
+   changedRows.map(x=>[x.periodStart,x.periodEnd,x.effortPercent]));
+ });
+ // A second correction on the same save day must replace only the current
+ // portion, never touch the preserved 40% history.
+ const correctedAgain={...afterFile,savedAt:dateToday,
+  activities:afterFile.activities.map(x=>x.name===occupancyRow.name&&x.periodStart===dateToday?{...x,effortPercent:70}:x)};
+ await request("/api/individual",correctedAgain);
+ const thirdRows=(await sheet(occupancyEmail)).activities.filter(x=>x.name===occupancyRow.name);
+ check("Second same-day effort correction preserves older 40% history",()=>{
+  assert.deepEqual(thirdRows.map(x=>[x.periodStart,x.periodEnd,x.effortPercent]),[
+   [beginning,dayBefore,40],[dateToday,finish,70]
+  ]);
+ });
+ const stateAfter=await request();
+ const historicalAssignment=stateAfter.assignments.find(x=>x.employeeId===stateAfter.employees.find(y=>y.email===occupancyEmail)?.id&&x.activityId===stateAfter.activities.find(y=>y.name===occupancyRow.name)?.id);
+ check("Assignment keeps original historical start after effort changes",()=>{
+  assert.ok(historicalAssignment);
+  assert.equal(historicalAssignment.startDate,beginning);
+  const matching=stateAfter.assignmentPeriods.filter(x=>x.assignmentId===historicalAssignment.id).sort((a,b)=>a.startDate.localeCompare(b.startDate));
+  assert.deepEqual(matching.map(x=>[x.startDate,x.endDate,x.effortPercent]),[
+    [beginning,dayBefore,40],[dateToday,finish,70]
+  ]);
+ });
  console.log("\nSUCCESS: integration tests passed; only isolated temp database was modified.");
 }catch(err){
  console.error("\nFAILED:",err);
