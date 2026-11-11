@@ -13,10 +13,10 @@ const periods=[
  {assignmentId:2,startDate:"2026-10-01",endDate:"2026-12-31",effortPercent:40}
 ];
 const project=new Set([11,12]);
-const old=projectEffortOnDay(project,assignments,periods,"2026-11-10");
-assert.deepEqual([...old.entries()],[[1,70],[2,25]]);
-assert.equal([...old.values()].reduce((a,b)=>a+b,0),95);
-const updated=projectEffortOnDay(project,assignments,periods,"2026-11-11");
+const old=projectEffortOnDay(project,assignments,periods,"2026-11-10","2026-11-11");
+assert.deepEqual([...old.entries()],[[1,70],[2,25],[3,90]],"Historic effort must remain visible even if assignment is paused today");
+assert.equal([...old.values()].reduce((a,b)=>a+b,0),185);
+const updated=projectEffortOnDay(project,assignments,periods,"2026-11-11","2026-11-11");
 assert.deepEqual([...updated.entries()],[[1,90],[2,25]]);
 assert.equal([...updated.values()].reduce((a,b)=>a+b,0),115);
 assert.equal(projectEffortOnDay(new Set([13]),assignments,periods,"2026-11-11").get(1),60);
@@ -26,7 +26,7 @@ const month=projectEffortForPeriod(project,assignments,periods,"2026-11-01","202
 assert.ok(month.get(1)>70&&month.get(1)<90,"Month must weight historic 30% and future 50%, plus 40% second activity");
 assert.equal(month.get(2),25);
 const history=projectEffortForPeriod(project,assignments,periods,"2026-10-05","2026-10-09","2026-11-11");
-assert.deepEqual([...history.entries()],[[1,70],[2,25]]);
+assert.deepEqual([...history.entries()],[[1,70],[2,25],[3,90]],"Monthly history must not be erased by later pause");
 const future=projectEffortForPeriod(project,assignments,periods,"2026-12-07","2026-12-11","2026-11-11");
 assert.deepEqual([...future.entries()],[[1,90],[2,25]]);
 const completed=[{...assignments[0],completedAt:"2026-11-10",workStatus:"Klar"}];
