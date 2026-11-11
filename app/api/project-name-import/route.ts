@@ -5,8 +5,8 @@ const validCode=/^[A-Z0-9][A-Z0-9._-]{0,39}$/;
 
 export async function POST(request:Request){
  try{
-  if(!env.DB)return Response.json({error:"Databasen saknas."},{status:503});
-  const user=await sessionIdentity(request,env.DB);
+  const d=env.DB;if(!d)return Response.json({error:"Databasen saknas."},{status:503});
+  const user=await sessionIdentity(request,d);
   if(!user)return unauthorized();
   if(!user.isAdmin||!sameOrigin(request))return forbidden();
   const input=await request.json() as {changes?:unknown};
@@ -23,17 +23,17 @@ export async function POST(request:Request){
    if(!validCode.test(code)||!newName||newName.length>150||!oldName||seen.has(code))
     return Response.json({error:"Ogiltig eller upprepad projektkod/namn: "+code},{status:400});
    seen.add(code);
-   const row=await env.DB.prepare("SELECT id,name FROM projects WHERE code=? COLLATE NOCASE")
+   const row=await d.prepare("SELECT id,name FROM projects WHERE code=? COLLATE NOCASE")
     .bind(code).first<{id:number;name:string}>();
    if(!row||row.name!==oldName)return Response.json({error:"Projektet "+code+" har ändrats eller saknas. Läs in aktuell projektlista igen."},{status:409});
    if(oldName!==newName)changes.push({id:row.id,code,oldName,newName});
   }
   if(!changes.length)return Response.json({updated:0});
   // Each update checks original name, so any concurrent rename aborts the batch.
-  const statements=changes.map(x=>env.DB.prepare(
+  const statements=changes.map(x=>d.prepare(
    "UPDATE projects SET name=? WHERE id=? AND code=? AND name=?"
   ).bind(x.newName,x.id,x.code,x.oldName));
-  const results=await env.DB.batch(statements);
+  const results=await d.batch(statements);
   if(results.some(x=>x.meta.changes!==1))
    throw Error("En eller flera uppdateringar kunde inte verifieras.");
   return Response.json({updated:changes.length});
