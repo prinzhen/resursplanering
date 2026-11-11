@@ -15,6 +15,7 @@ RUN bash -n scripts/update-production-deletefix.sh
 RUN bash -n scripts/update-production-timereconciliation.sh
 RUN pnpm build
 RUN pnpm exec tsc --noEmit
+RUN node scripts/test-project-effort.mjs
 RUN node scripts/test-chef-filter.mjs
 RUN node scripts/test-effort-history.mjs
 RUN node scripts/test-individual-xlsx-layout.mjs
