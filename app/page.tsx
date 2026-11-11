@@ -49,7 +49,10 @@ function workload(data:Data,employeeId:number,start:string,end:string){
  const total=workingDays(start,end);if(!total)return 0;
  let weighted=0;
  for(const a of data.assignments){
-  if(a.employeeId!==employeeId||["Fryst","Pausad"].includes(a.workStatus||""))continue;
+  // Current status must not erase recorded planning from past months.
+  // For today/future, continue to exclude paused/frozen assignments.
+  const historical=end<new Date().toISOString().slice(0,10);
+  if(a.employeeId!==employeeId||(!historical&&["Fryst","Pausad"].includes(a.workStatus||"")))continue;
   for(const p of assignmentPeriods(a,data)){
    const effectiveEnd=a.completedAt&&a.completedAt<p.endDate?a.completedAt:p.endDate;
    const first=p.startDate>start?p.startDate:start,last=effectiveEnd<end?effectiveEnd:end;
