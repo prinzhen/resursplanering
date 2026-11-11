@@ -2,7 +2,7 @@
  * No external CDN and no macros. The writer uses ZIP STORE; the reader accepts
  * STORE and DEFLATE, as produced by LibreOffice and Excel.
  */
-export type FormActivity={uid:string;week:string;name:string;kind:string;link:string;projectCode:string;hours:number;status:string;priority:string;dueDate:string;comment:string;firstWeek:string;reason:string};
+export type FormActivity={uid:string;week:string;name:string;kind:string;link:string;projectCode:string;hours:number;status:string;priority:string;dueDate:string;comment:string;firstWeek:string;reason:string;periodStart?:string;periodEnd?:string;effortPercent?:number|null};
 export type FormMember={code:string;name:string;state:string};
 export type FormValues={name:string;email:string;activities:FormActivity[];members:FormMember[]};
 const utf8=new TextEncoder(),utf8d=new TextDecoder();
@@ -106,8 +106,12 @@ export async function readIndividualXlsx(file:File):Promise<FormValues>{
   const rawHours=cell("F"+r).replace(",",".");const hours=rawHours?Number(rawHours):0;
   if(!Number.isFinite(hours))throw Error("Ogiltigt antal timmar på rad "+r);
   const d=cell("I"+r);
-  const dueDate=d&&/^\d{5}(\.\d+)?$/.test(d)?new Date(Date.UTC(1899,11,30)+Number(d)*86400000).toISOString().slice(0,10):d;
-  activities.push({uid:cell("M"+r),week:cell("A"+r),name,kind:cell("C"+r)||"Övrigt",link:cell("D"+r),projectCode:cell("E"+r),hours,status:cell("G"+r)||"Planerad",priority:cell("H"+r),dueDate,comment:cell("J"+r),firstWeek:cell("K"+r),reason:cell("L"+r)});
+  const excelDate=(value:string)=>value&&/^\d{5}(\.\d+)?$/.test(value)?new Date(Date.UTC(1899,11,30)+Number(value)*86400000).toISOString().slice(0,10):value;
+  const dueDate=excelDate(d);
+  const effortRaw=cell("P"+r).replace(",",".").replace(/%$/,"").trim();
+  const effortPercent=effortRaw===""?null:Number(effortRaw);
+  if(effortPercent!==null&&(!Number.isFinite(effortPercent)||effortPercent<0||effortPercent>200))throw Error("Ogiltig förväntad insats (0–200 %) på rad "+r);
+  activities.push({uid:cell("M"+r),week:cell("A"+r),name,kind:cell("C"+r)||"Övrigt",link:cell("D"+r),projectCode:cell("E"+r),hours,status:cell("G"+r)||"Planerad",priority:cell("H"+r),dueDate,comment:cell("J"+r),firstWeek:cell("K"+r),reason:cell("L"+r),periodStart:excelDate(cell("N"+r)),periodEnd:excelDate(cell("O"+r)),effortPercent});
  }
  if(header===8){for(let r=69;r<=72;r++){if(cell("B"+r)||cell("A"+r))throw Error("Aktivitet utanför formulärets 60 rader (rad "+r+"). Placera aktiviteter på raderna 9–68.");}}
  const members:FormMember[]=[];
@@ -144,8 +148,8 @@ export function createIndividualXlsx(values:FormValues){
  rows.push(row(1,{1:"MIN PLANERING · AKTIVITETER & UPPFÖLJNING"},1));
  rows.push(row(4,{1:"NAMN",2:values.name,5:"E-POST",6:values.email,10:"UPPDATERAD",11:new Date().toISOString().slice(0,10)},2));
  rows.push(row(6,{1:"Välj vecka i listan eller skriv fritt, exempelvis 44, v44 eller 2017 8."},3));
- rows.push(row(8,{1:"Vecka",2:"Vad ska jag göra?",3:"Typ av arbete",4:"Projekt / verksamhet",5:"Projektkod",6:"Planerade timmar",7:"Status",8:"Prioritet",9:"Klart senast",10:"Kommentar / behov",11:"Först planerad",12:"Orsak om flyttad",13:"Aktivitets-ID"},2));
- for(let i=0;i<60;i++){const a=values.activities[i];rows.push(row(i+9,a?{1:displayWeek(a.week,base),2:a.name,3:a.kind,4:a.link,5:a.projectCode,6:a.hours,7:a.status,8:a.priority,9:a.dueDate,10:a.comment,11:displayWeek(a.firstWeek,base),12:a.reason,13:a.uid}:{},i%2?4:5))}
+ rows.push(row(8,{1:"Vecka",2:"Vad ska jag göra?",3:"Typ av arbete",4:"Projekt / verksamhet",5:"Projektkod",6:"Planerade timmar",7:"Status",8:"Prioritet",9:"Klart senast",10:"Kommentar / behov",11:"Först planerad",12:"Orsak om flyttad",13:"Aktivitets-ID",14:"Start period",15:"Slut period",16:"Förväntad insats (%)"},2));
+ for(let i=0;i<60;i++){const a=values.activities[i];rows.push(row(i+9,a?{1:displayWeek(a.week,base),2:a.name,3:a.kind,4:a.link,5:a.projectCode,6:a.hours,7:a.status,8:a.priority,9:a.dueDate,10:a.comment,11:displayWeek(a.firstWeek,base),12:a.reason,13:a.uid,14:a.periodStart,15:a.periodEnd,16:a.effortPercent??null}:{},i%2?4:5))}
  rows.push(row(73,{1:"PROJEKTMEDVERKAN – även utan aktiviteter"},1));
  rows.push(row(76,{1:"Projektkod",2:"Projektnamn",3:"Medverkan"},2));
  for(let i=0;i<34;i++){const m=values.members[i];rows.push(row(i+77,m?{1:m.code,2:m.name,3:m.state}:{},i%2?4:5))}
@@ -169,7 +173,7 @@ export function createIndividualXlsx(values:FormValues){
  rows.sort((a,b)=>Number(/<row r="(\d+)"/.exec(a)?.[1]||0)-Number(/<row r="(\d+)"/.exec(b)?.[1]||0));
  const worksheet='<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
  +'<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetViews><sheetView workbookViewId="0"><pane ySplit="8" topLeftCell="A9" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews>'
- +'<cols>'+[[1,28],[2,40],[3,18],[4,28],[5,19],[6,18],[7,18],[8,15],[9,18],[10,32],[11,27],[12,31],[13,19]].map(([n,w])=>'<col min="'+n+'" max="'+n+'" width="'+w+'" customWidth="1"/>').join('')+'<col min="24" max="24" hidden="1"/></cols>'
+ +'<cols>'+[[1,28],[2,40],[3,18],[4,28],[5,19],[6,18],[7,18],[8,15],[9,18],[10,32],[11,27],[12,31],[13,23],[14,19],[15,19],[16,25]].map(([n,w])=>'<col min="'+n+'" max="'+n+'" width="'+w+'" customWidth="1"/>').join('')+'<col min="24" max="24" hidden="1"/></cols>'
  +'<sheetData>'+rows.join("")+'</sheetData>'
  +'<mergeCells count="3"><mergeCell ref="A1:M2"/><mergeCell ref="A6:M6"/><mergeCell ref="A73:M74"/></mergeCells>'
  +'<dataValidations count="5">'+validations+'</dataValidations></worksheet>';
