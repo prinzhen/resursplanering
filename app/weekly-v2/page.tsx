@@ -97,7 +97,7 @@ export default function WeeklyV2Page(){
    const result=await response.json() as {error?:string;preview:{created:number;updated:number;unchanged:number};committed:boolean};
    if(!response.ok)throw Error(result.error||"Importen avbröts");
    setPreview(result.preview);
-   if(commit){setMessage("Sparade "+(result.preview.created+result.preview.updated)+" planeringsposter. Rapporterad tid och äldre beläggningsperioder är oförändrade.");
+   if(commit){setMessage("Sparade "+(result.preview.created+result.preview.updated)+" planeringsposter och synkroniserade Gantt-datumen. Rapporterad tid är oförändrad.");
     await fetchRows(person.email);
    }else{setMessage("Förhandsgranskning: "+result.preview.created+" nya, "+result.preview.updated+" ändrade, "+result.preview.unchanged+" oförändrade.")}
   }catch(e){setError(e instanceof Error?e.message:String(e))}
@@ -121,7 +121,7 @@ export default function WeeklyV2Page(){
     <button disabled={loading||!rows.length} onClick={()=>importRows(false)} className="rounded-lg border border-blue-400 px-4 py-2 disabled:opacity-50">Förhandsgranska ändringar</button>
     <button disabled={loading||!preview||preview.created+preview.updated===0} onClick={()=>importRows(true)} className="rounded-lg bg-emerald-700 px-4 py-2 text-white disabled:opacity-50">Godkänn och spara planeringsposter</button>
    </div>
-   <p className="mt-3 text-sm text-amber-800">V2-importen sparar separata planeringsposter och revisionshistorik. Den ändrar inte registrerad tid eller befintliga beläggningsperioder. En ny aktivitet måste först skapas i planeringsverktyget; Excel-raden måste ha ett befintligt aktivitets-ID och dold radnyckel.</p>
+   <p className="mt-3 text-sm text-amber-800">En aktivitet visas som en rad, även vid tio veckors varaktighet. Ändrad vecka/dag flyttar både start och slut; ändrad varaktighet ändrar bara slut. Vid godkänd import uppdateras Gantt och enkla resursperioder. Redan rapporterad tid ändras aldrig. För aktiviteter med särskilda resursperioder krävs manuell granskning. Nya aktiviteter skapas fortfarande först i planeringsverktyget.</p>
   </section>
   <section className="rounded-xl border bg-white p-4 space-y-3">
    <h2 className="font-semibold">Välj planeringsvecka</h2>
