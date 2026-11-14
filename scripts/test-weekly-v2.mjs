@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import {createWeeklyV2Xlsx,WEEKLY_COLUMNS,parseDurationDays,durationLabel,normalizeISOWeek,rowCalendarRange,estimatedHours,splitPeriodIntoWeeks,currentWeekKey,shiftISOWeek,weekOptions,weekKeyForDate} from "../lib/weekly-xlsx-v2.ts";
+import {createWeeklyV2Xlsx,WEEKLY_COLUMNS,parseDurationDays,durationLabel,normalizeISOWeek,rowCalendarRange,estimatedHours,splitPeriodIntoWeeks,currentWeekKey,shiftISOWeek,weekOptions,weekKeyForDate,formatWeekLabel,parseWeekLabel} from "../lib/weekly-xlsx-v2.ts";
 
 assert.deepEqual(WEEKLY_COLUMNS,[
 "Vecka","Dag","Vad jag skall göra","Varaktighet","Insats",
@@ -20,6 +20,18 @@ assert.equal(shiftISOWeek("2026-V53",1),"2027-V01");
 assert.equal(shiftISOWeek("2027-V01",-1),"2026-V53");
 assert.equal(weekOptions("2026-V46",2,2)[0],"2026-V46","Dropdown must begin with current week");
 assert.deepEqual(weekOptions("2026-V46",2,2),["2026-V46","2026-V45","2026-V47","2026-V44","2026-V48"],"Dropdown offers past and future immediately");
+assert.equal(formatWeekLabel("2026-V46","2026-V46"),"v.46 (aktuell vecka)");
+assert.equal(formatWeekLabel("2026-V45","2026-V46"),"v.45 (föregående vecka)");
+assert.equal(formatWeekLabel("2026-V47","2026-V46"),"v.47 (kommande vecka)");
+assert.equal(formatWeekLabel("2027-V01","2026-V53"),"2027 v.01 (kommande vecka)");
+assert.equal(formatWeekLabel("2026-V53","2027-V01"),"2026 v.53 (föregående vecka)");
+assert.equal(parseWeekLabel("v.46 (aktuell vecka)",2026),"2026-V46");
+assert.equal(parseWeekLabel("v.45 (föregående vecka)",2026),"2026-V45");
+assert.equal(parseWeekLabel("2027 v.01 (kommande vecka)",2026),"2027-V01");
+assert.equal(parseWeekLabel("2026-V46",2027),"2026-V46","Old canonical files remain supported");
+assert.equal(parseWeekLabel("v.46",2026),"2026-V46","Short label resolves to XLSX export year");
+assert.throws(()=>parseWeekLabel("v.53",2027),"Invalid week must reject");
+
 
 assert.deepEqual(rowCalendarRange("2026-V40","Torsdag","3 dagar"),{start:"2026-10-01",end:"2026-10-03"});
 assert.equal(estimatedHours({week:"2026-V47",day:"",duration:"3 veckor",effort:50}),60);
@@ -39,7 +51,7 @@ const row={week:"2026-V47",day:"Torsdag",task:"Systemdesign",duration:"3 dagar",
 workType:"Projekt",hours:12,status:"Planerad",priority:"3",deadline:"2026-12-01",
 projectCode:"N.001",projectName:"Exempel",firstWeek:"2026-V46",comment:"Behov",
 moveReason:"",activityId:"activity-42",rowKey:"row-42"};
-const blob=createWeeklyV2Xlsx([row]);
+const blob=createWeeklyV2Xlsx([row],"2026-V46");
 const bytes=new Uint8Array(await blob.arrayBuffer()), view=new DataView(bytes.buffer);
 const decoder=new TextDecoder();
 let sheet="";
@@ -58,10 +70,15 @@ for(let i=0;i<WEEKLY_COLUMNS.length;i++){
  assert.ok(sheet.includes(WEEKLY_COLUMNS[i]),"Missing header "+WEEKLY_COLUMNS[i]);
 }
 assert.ok(sheet.includes('r="Q2"'),"Missing stable hidden planning row key");
-assert.ok(sheet.includes('min="17" max="19" hidden="1"'),"Metadata and week-list columns must be hidden");
+assert.ok(sheet.includes('min="17" max="20" hidden="1"'),"Metadata, year and week-list columns must be hidden");
 assert.ok(sheet.includes('sqref="A2:A5001 M2:M5001"'),"Dropdown required for ISO week and first planned week");
 assert.ok(sheet.includes('$S$2:$S$262'),"Scrollable week list must be in hidden column S");
 assert.ok(sheet.includes('r="S2"'),"Week list must start at current week");
+assert.ok(sheet.includes('r="T1"'),"Export year must be preserved in hidden metadata");
+assert.ok(sheet.includes("v.46 (aktuell vecka)"),"Current week must have visible relative label");
+assert.ok(sheet.includes("v.45 (föregående vecka)"),"Previous week must have visible relative label");
+assert.ok(sheet.includes("v.47 (kommande vecka)"),"Next week must have visible relative label");
+
 assert.ok(sheet.includes('r="S262"'),"Week list must cover past/future years");
 assert.ok(sheet.includes('r="A1"'),"Visible header stays unchanged");
 const longer={...row,duration:"1 vecka 2 dagar",projectCode:"INTERNAL-VERK"};
