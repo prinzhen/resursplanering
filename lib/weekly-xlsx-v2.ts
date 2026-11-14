@@ -49,8 +49,12 @@ export function shiftISOWeek(week:string,offset:number):string{
 }
 export function weekOptions(current:string,past=104,future=156):string[]{
  const all=[current];
- for(let i=1;i<=future;i++)all.push(shiftISOWeek(current,i));
- for(let i=1;i<=past;i++)all.push(shiftISOWeek(current,-i));
+ // Alternate backwards and forwards: current, previous, next, previous-2,
+ // next+2. Both directions remain easily reachable in Excel's dropdown.
+ for(let i=1;i<=Math.max(past,future);i++){
+  if(i<=past)all.push(shiftISOWeek(current,-i));
+  if(i<=future)all.push(shiftISOWeek(current,i));
+ }
  return all;
 }
 export function weekMonday(week:string):Date{
