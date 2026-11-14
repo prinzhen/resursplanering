@@ -60,6 +60,8 @@ export async function POST(req:Request){
    if(activitiesSeen.has(activityId))throw Error("Samma aktivitet finns på flera rader. Exportera den nya mallen med en rad per aktivitet.");
    activitiesSeen.add(activityId);
    const value=parse(row,employeeId,activityId);
+   if(value.rowKey!=="plan-"+employeeId+"-"+activityId)
+    throw Error("Filens radnyckel kommer från en äldre flerradsmall. Exportera en ny XLSX med en rad per aktivitet.");
    const dates=scheduleDates(row);
    const original=await d.prepare("SELECT start_date startDate,end_date endDate FROM activities WHERE id=?").bind(activityId).first<{startDate:string;endDate:string}>();
    if(!original)throw Error("Aktiviteten saknas.");
@@ -107,6 +109,10 @@ export async function POST(req:Request){
   if(!body.commit)return Response.json({preview,committed:false});
   const q:D1PreparedStatement[]=[];
   for(const {value:x,before,action,updateDates,oldStart,oldEnd,newStart,newEnd,assignmentIds} of changes){
+   // Consolidate legacy per-week rows for this person/activity while retaining
+   // the immutable audit history under their former row keys.
+   q.push(d.prepare("DELETE FROM weekly_plan_rows WHERE employee_id=? AND activity_id=? AND row_key<>?")
+    .bind(x.employeeId,x.activityId,x.rowKey));
    if(action==="unchanged"&&!updateDates)continue;
    if(updateDates){
     q.push(d.prepare("UPDATE activities SET start_date=?,end_date=? WHERE id=? AND start_date=? AND end_date=?")
