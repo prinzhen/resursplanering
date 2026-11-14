@@ -39,7 +39,7 @@ try{
   workType:"Projekt",hours:8,status:"Planerad",priority:"3",deadline:"2026-12-01",
   projectCode:snap.result.projects.find(x=>x.id===activity.projectId).code,projectName:"",
   firstWeek:"2026-V47",comment:"test",moveReason:"",activityId:"activity-"+activity.id,
-  rowKey:"ci-weekly-"+erik.id+"-"+activity.id,rowRevision:0};
+  rowKey:"plan-"+erik.id+"-"+activity.id,rowRevision:0};
  const payload={employeeId:erik.id,rows:[row]};
  let response=await call("/api/weekly-v2",{...payload,commit:false});
  assert.equal(response.status,200,JSON.stringify(response.result));
