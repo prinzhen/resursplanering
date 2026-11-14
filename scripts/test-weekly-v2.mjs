@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import {createWeeklyV2Xlsx,WEEKLY_COLUMNS,parseDurationDays,durationLabel,normalizeISOWeek,rowCalendarRange,estimatedHours} from "../lib/weekly-xlsx-v2.ts";
+import {createWeeklyV2Xlsx,WEEKLY_COLUMNS,parseDurationDays,durationLabel,normalizeISOWeek,rowCalendarRange,estimatedHours,splitPeriodIntoWeeks} from "../lib/weekly-xlsx-v2.ts";
 
 assert.deepEqual(WEEKLY_COLUMNS,[
 "Vecka","Dag","Vad jag skall göra","Varaktighet","Insats",
@@ -17,6 +17,15 @@ assert.equal(estimatedHours({week:"2026-V47",day:"",duration:"3 veckor",effort:5
 assert.equal(estimatedHours({week:"2026-V47",day:"Måndag",duration:"1 dag",effort:100}),8);
 assert.equal(estimatedHours({week:"2026-V47",day:"Lördag",duration:"2 dagar",effort:100}),0);
 assert.throws(()=>estimatedHours({week:"2026-V47",day:"",duration:"1 dag",effort:101}));
+assert.deepEqual(splitPeriodIntoWeeks("2026-11-16","2026-12-06",50),[
+ {week:"2026-V47",day:"Måndag",hours:20},
+ {week:"2026-V48",day:"",hours:20},
+ {week:"2026-V49",day:"",hours:20}
+]);
+assert.deepEqual(splitPeriodIntoWeeks("2026-12-31","2027-01-04",100),[
+ {week:"2026-V53",day:"Torsdag",hours:16},
+ {week:"2027-V01",day:"",hours:8}
+]);
 const row={week:"2026-V47",day:"Torsdag",task:"Systemdesign",duration:"3 dagar",effort:50,
 workType:"Projekt",hours:12,status:"Planerad",priority:"3",deadline:"2026-12-01",
 projectCode:"N.001",projectName:"Exempel",firstWeek:"2026-V46",comment:"Behov",
