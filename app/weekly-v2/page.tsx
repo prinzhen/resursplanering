@@ -2,6 +2,7 @@
 import {useEffect,useMemo,useState} from "react";
 import {createWeeklyV2Xlsx,readWeeklyV2Xlsx,normalizeISOWeek,durationLabel,splitPeriodIntoWeeks,currentWeekKey,shiftISOWeek,weekMonday,WEEK_DAYS,type WeeklyV2Row} from "@/lib/weekly-xlsx-v2";
 import type {FormValues} from "@/lib/individual-xlsx";
+import {rowFromDates,scheduleDates,hoursForSchedule} from "@/lib/activity-calendar";
 
 type Person={id:number;name:string;email:string};
 const parseOldWeek=(value:string)=>{const m=/^(\d{4})-[VW](\d{1,2})/i.exec(value.trim());return m?normalizeISOWeek(m[1]+"-V"+m[2]):"";};
@@ -17,33 +18,29 @@ function weekFromDate(date:string):string{
  const number=1+Math.round((d.getTime()-first.getTime())/604800000);
  return normalizeISOWeek(year+"-V"+number);
 }
+/** One exported row per employee/activity, even when legacy allocations contain many periods. */
 function asWeeklyRows(data:FormValues,employeeId:number,identities:Array<{uid:string;activityId:number}>):WeeklyV2Row[]{
  const byUid=new Map(identities.map(x=>[x.uid,x.activityId]));
- return data.activities.flatMap((a):WeeklyV2Row[]=>{
-  const days=rangeDuration(a.periodStart||"",a.periodEnd||"");
-  const dateBased=!!a.periodStart&&!!a.periodEnd&&days!==null&&a.effortPercent!==null&&a.effortPercent!==undefined;
-  const periods=dateBased?splitPeriodIntoWeeks(a.periodStart!,a.periodEnd!,a.effortPercent!):
-    [{week:parseOldWeek(a.week)||currentWeekKey(),day:"",hours:a.hours}];
-  const activityId=byUid.get(a.uid),id=activityId?"activity-"+activityId:a.uid;
-  return periods.map((p):WeeklyV2Row=>{
-   // Every exported week has its OWN calendar duration. Do not reapply the
-   // original multi-month duration to every single week when importing.
-   const monday=weekMonday(p.week),sunday=new Date(monday);
-   sunday.setUTCDate(sunday.getUTCDate()+6);
-   const mondayText=monday.toISOString().slice(0,10),sundayText=sunday.toISOString().slice(0,10);
-   const begin=dateBased&&a.periodStart!>mondayText?a.periodStart!:mondayText;
-   const finish=dateBased&&a.periodEnd!<sundayText?a.periodEnd!:sundayText;
-   const weekDays=dateBased?rangeDuration(begin,finish)!:days??7;
-   const day=dateBased?WEEK_DAYS[((new Date(begin+"T00:00:00Z").getUTCDay()+6)%7)+1]:p.day;
-   const periodSource=(a.periodStart||a.week).replace(/[^a-zA-Z0-9-]/g,"");
-   const projectCode=a.projectCode||(a.kind==="Verksamhet"?"INTERNAL-VERK":a.kind==="Övrigt"?"INTERNAL-OVR":"");
-   return {week:p.week,day:dateBased?day:p.day,task:a.name,duration:durationLabel(weekDays),
-    effort:a.effortPercent??null,workType:a.kind,hours:p.hours,status:a.status,priority:a.priority,
-    deadline:a.dueDate||"",projectCode,projectName:a.link,
-    firstWeek:parseOldWeek(a.firstWeek)||p.week,comment:a.comment,moveReason:a.reason,
-    activityId:id,rowKey:activityId?"legacy-"+employeeId+"-"+activityId+"-"+periodSource+"-"+p.week:"",
-    rowRevision:0};
-  });
+ const groups=new Map<string,FormValues["activities"]>();
+ for(const a of data.activities){
+  const list=groups.get(a.uid)||[];list.push(a);groups.set(a.uid,list);
+ }
+ return [...groups.entries()].map(([uid,periods]):WeeklyV2Row=>{
+  const first=periods[0],activityId=byUid.get(uid);
+  const starts=periods.map(p=>p.periodStart).filter((x):x is string=>!!x&&/^\d{4}-\d{2}-\d{2}$/.test(x));
+  const ends=periods.map(p=>p.periodEnd).filter((x):x is string=>!!x&&/^\d{4}-\d{2}-\d{2}$/.test(x));
+  const start=starts.sort()[0],end=ends.sort().at(-1);
+  const dates=start&&end&&end>=start?rowFromDates(start,end):
+   {week:parseOldWeek(first.week)||currentWeekKey(),day:"",duration:"1 vecka"};
+  const effort=periods.at(-1)?.effortPercent??first.effortPercent??null;
+  const projectCode=first.projectCode||(first.kind==="Verksamhet"?"INTERNAL-VERK":first.kind==="Övrigt"?"INTERNAL-OVR":"");
+  return {...dates,task:first.name,effort,workType:first.kind,
+   hours:first.hours??null,status:first.status,priority:first.priority,
+   deadline:first.dueDate||"",projectCode,projectName:first.link,
+   firstWeek:parseOldWeek(first.firstWeek)||dates.week,comment:first.comment,moveReason:first.reason,
+   activityId:activityId?"activity-"+activityId:uid,
+   rowKey:activityId?"plan-"+employeeId+"-"+activityId:"",
+   rowRevision:0};
  });
 }
 export default function WeeklyV2Page(){
@@ -57,7 +54,12 @@ export default function WeeklyV2Page(){
   for(let i=-104;i<=156;i++)list.push(shiftISOWeek(currentWeekKey(),i));
   return list;
  },[]);
- const visibleRows=useMemo(()=>showAllWeeks?rows:rows.filter(r=>r.week===selectedWeek),[rows,selectedWeek,showAllWeeks]);
+ const visibleRows=useMemo(()=>showAllWeeks?rows:rows.filter(r=>{
+  try{const {start,end}=scheduleDates(r);const monday=weekMonday(selectedWeek);
+   const sunday=new Date(monday);sunday.setUTCDate(sunday.getUTCDate()+6);
+   return start<=sunday.toISOString().slice(0,10)&&end>=monday.toISOString().slice(0,10);
+  }catch{return r.week===selectedWeek}
+ }),[rows,selectedWeek,showAllWeeks]);
  useEffect(()=>{fetch("/api/data",{cache:"no-store"}).then(async r=>{
   if(r.status===401){window.location.assign("/login");return null}
   if(!r.ok)throw Error("Kunde inte läsa medarbetare");
@@ -83,9 +85,11 @@ export default function WeeklyV2Page(){
     deadline:w.deadline||"",projectCode:w.projectCode,projectName:w.projectName,firstWeek:w.firstWeek,
     comment:w.comment,moveReason:w.moveReason,activityId:"activity-"+w.activityId,rowKey:w.rowKey,rowRevision:w.revision}));
    const savedByKey=new Map(stored.map(x=>[x.rowKey,x]));
-   const keys=new Set(next.map(x=>x.rowKey));
-   setRows([...next.map(x=>savedByKey.get(x.rowKey||'')||x),...stored.filter(x=>!keys.has(x.rowKey))]);
-   setMessage("Läste "+next.length+" befintliga periodrader och "+stored.length+" sparade v2-rader.");
+   const byActivity=new Map(stored.map(x=>[x.activityId,x]));
+   const chosen=next.map(x=>savedByKey.get(x.rowKey||"")||byActivity.get(x.activityId)||x);
+   const chosenIds=new Set(chosen.map(x=>x.activityId));
+   setRows([...chosen,...stored.filter(x=>!chosenIds.has(x.activityId))]);
+   setMessage("Läste "+next.length+" aktiviteter på "+next.length+" rader. Befintliga aktivitetsperioder har slagits ihop i visningen.");
   }catch(e){setError(e instanceof Error?e.message:String(e))}finally{setLoading(false)}
  };
  const save=(items:WeeklyV2Row[],name:string)=>{
@@ -158,11 +162,11 @@ export default function WeeklyV2Page(){
     <button onClick={()=>{setSelectedWeek(currentWeekKey());setShowAllWeeks(false)}} className="rounded-lg border px-4 py-2">Aktuell vecka</button>
     <label className="ml-2 flex items-center gap-2 text-sm"><input type="checkbox" checked={showAllWeeks} onChange={e=>setShowAllWeeks(e.target.checked)}/> Visa alla veckor</label>
    </div>
-   <p className="text-sm text-slate-600">Veckoväljaren startar på aktuell vecka. Du kan bläddra bakåt eller framåt även över årsskiften. Personexporten omfattar alltid alla veckor.</p>
+   <p className="text-sm text-slate-600">Veckoväljaren startar på aktuell vecka. En aktivitet visas under alla veckor som dess start och varaktighet täcker – men exporteras bara på en rad.</p>
   </section>
   <section className="overflow-x-auto rounded-xl border bg-white p-4"><h2 className="mb-3 font-semibold">Förhandsgranskning ({visibleRows.length} av {rows.length} rader)</h2><table className="w-full min-w-[950px] text-left text-sm">
-   <thead><tr className="border-b bg-slate-100"><th className="p-2">Vecka</th><th className="p-2">Dag</th><th className="p-2">Aktivitet</th><th className="p-2">Varaktighet</th><th className="p-2">Insats</th><th className="p-2">Timmar</th><th className="p-2">Projekt</th></tr></thead>
-   <tbody>{visibleRows.map((r,i)=><tr className="border-b" key={i}><td className="p-2">{r.week}</td><td className="p-2">{r.day||"Ej vald"}</td><td className="p-2">{r.task}</td><td className="p-2">{r.duration}</td><td className="p-2">{r.effort===null?"–":r.effort+" %"}</td><td className="p-2">{r.hours??"–"}</td><td className="p-2">{r.projectCode}</td></tr>)}</tbody></table>
+   <thead><tr className="border-b bg-slate-100"><th className="p-2">Vecka</th><th className="p-2">Dag</th><th className="p-2">Aktivitet</th><th className="p-2">Varaktighet</th><th className="p-2">Insats</th><th className="p-2">Startdatum</th><th className="p-2">Slutdatum</th><th className="p-2">Timmar</th><th className="p-2">Projekt</th></tr></thead>
+   <tbody>{visibleRows.map((r,i)=><tr className="border-b" key={i}><td className="p-2">{r.week}</td><td className="p-2">{r.day||"Ej vald"}</td><td className="p-2">{r.task}</td><td className="p-2">{r.duration}</td><td className="p-2">{r.effort===null?"–":r.effort+" %"}</td><td className="p-2">{scheduleDates(r).start}</td><td className="p-2">{scheduleDates(r).end}</td><td className="p-2">{r.hours??hoursForSchedule(r)??"–"}</td><td className="p-2">{r.projectCode}</td></tr>)}</tbody></table>
   </section>
  </div></main>;
 }
