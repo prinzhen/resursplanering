@@ -8,8 +8,8 @@ export async function GET(request: Request) {
     const url = new URL(request.url);
     const employee = url.searchParams.get("employeeId");
     const week = url.searchParams.get("week");
-    if (employee && (!/^\\d+$/.test(employee) || Number(employee) <= 0)) return Response.json({error:"Ogiltigt medarbetar-ID"},{status:400});
-    if (week && !/^\\d{4}-V\\d{2}$/.test(week)) return Response.json({error:"Ogiltigt veckonummer"},{status:400});
+    if (employee && (!/^\d+$/.test(employee) || Number(employee) <= 0)) return Response.json({error:"Ogiltigt medarbetar-ID"},{status:400});
+    if (week && !/^\d{4}-V\d{2}$/.test(week)) return Response.json({error:"Ogiltigt veckonummer"},{status:400});
     const conditions: string[] = [];
     const values: Array<number|string> = [];
     if (employee) { conditions.push("w.employee_id=?"); values.push(Number(employee)); }
