@@ -96,14 +96,14 @@ export default function WeeklyV2Page(){
   try{
    const blob=createWeeklyV2Xlsx(items);
    const url=URL.createObjectURL(blob),a=document.createElement("a");
-   a.href=url;a.download=name;document.body.append(a);a.click();a.remove();
+   a.href=url;a.download=name;document.body.appendChild(a);a.click();a.remove();
    setTimeout(()=>URL.revokeObjectURL(url),2000);
    setMessage("Exporterade "+items.length+" planeringsrader.");
   }catch(e){setError("Exporten misslyckades: "+(e instanceof Error?e.message:String(e)))}
  };
  const saveBlank=()=>{setError("");try{
   const blob=createWeeklyV2Xlsx([]),url=URL.createObjectURL(blob),a=document.createElement("a");
-  a.href=url;a.download="veckoplanering-v2-mall.xlsx";document.body.append(a);a.click();a.remove();
+  a.href=url;a.download="veckoplanering-v2-mall.xlsx";document.body.appendChild(a);a.click();a.remove();
   setTimeout(()=>URL.revokeObjectURL(url),2000);
  }catch(e){setError("Kunde inte skapa mallen: "+String(e))}
  };
