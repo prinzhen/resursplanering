@@ -67,6 +67,10 @@ try{
  const longActivity=longSnap.result.activities.find(x=>x.id===activity.id);
  assert.equal(longActivity.startDate,"2026-11-26","Duration edit cannot change start date");
  assert.equal(longActivity.endDate,"2027-02-03","10 calendar weeks has inclusive end date");
+ const currentExport=await call("/api/weekly-v2?employeeId="+erik.id);
+ const mapped=currentExport.result.identities.find(x=>x.activityId===activity.id);
+ assert.equal(mapped.startDate,"2026-11-26","Subsequent export must read moved Gantt start");
+ assert.equal(mapped.endDate,"2027-02-03","Subsequent export must read extended Gantt end");
  assert.equal(longSnap.result.weeklyPlanRows.find(x=>x.activityId===activity.id).revision,3);
 
  assert.equal(after.result.weeklyPlanRows.length,1);
