@@ -12,7 +12,7 @@ export type WeeklyV2Row = {
   workType:string; hours:number|null; status:string; priority:string;
   deadline:string; projectCode:string; projectName:string;
   firstWeek:string; comment:string; moveReason:string; activityId:string;
-  rowKey?:string;
+  rowKey?:string; rowRevision?:number;
 };
 export const WEEK_DAYS = ["","Måndag","Tisdag","Onsdag","Torsdag","Fredag","Lördag","Söndag"] as const;
 const enc=(s:unknown)=>String(s??"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
@@ -89,7 +89,7 @@ export function createWeeklyV2Xlsx(rows:WeeklyV2Row[]):Blob{
    row.comment,row.moveReason,row.activityId];
   const ref=i+2;
   body.push('<row r="'+ref+'">'+values.map((v,n)=>cell(column(n)+ref,v)).join("")+
-   cell("Q"+ref,row.rowKey||"")+'</row>');
+   cell("Q"+ref,row.rowKey||"")+cell("R"+ref,row.rowRevision??0)+'</row>');
  });
  const validation=[
   '<dataValidation type="list" allowBlank="1" sqref="B2:B5001"><formula1>"Måndag,Tisdag,Onsdag,Torsdag,Fredag,Lördag,Söndag"</formula1></dataValidation>',
@@ -97,7 +97,7 @@ export function createWeeklyV2Xlsx(rows:WeeklyV2Row[]):Blob{
   '<dataValidation type="list" allowBlank="1" sqref="I2:I5001"><formula1>"1,2,3,4,5"</formula1></dataValidation>',
  ].join("");
  const cols=WEEKLY_COLUMNS.map((v,i)=>'<col min="'+(i+1)+'" max="'+(i+1)+'" width="'+Math.min(45,Math.max(17,v.length+4))+'" customWidth="1"/>').join("");
- const sheet='<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetViews><sheetView workbookViewId="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews><cols>'+cols+'<col min="17" max="17" hidden="1"/></cols><sheetData>'+body.join("")+'</sheetData><autoFilter ref="A1:P'+Math.max(1,rows.length+1)+'"/><dataValidations count="3">'+validation+'</dataValidations></worksheet>';
+ const sheet='<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetViews><sheetView workbookViewId="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews><cols>'+cols+'<col min="17" max="18" hidden="1"/></cols><sheetData>'+body.join("")+'</sheetData><autoFilter ref="A1:P'+Math.max(1,rows.length+1)+'"/><dataValidations count="3">'+validation+'</dataValidations></worksheet>';
  const styles='<?xml version="1.0" encoding="UTF-8"?><styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><fonts count="2"><font><sz val="11"/></font><font><b/><sz val="11"/><color rgb="FFFFFFFF"/></font></fonts><fills count="3"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FF1E40AF"/></patternFill></fill></fills><borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="2"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="0" fontId="1" fillId="2" borderId="0" xfId="0"/></cellXfs></styleSheet>';
  return zip({
   "[Content_Types].xml":'<?xml version="1.0" encoding="UTF-8"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/></Types>',
@@ -125,7 +125,7 @@ export async function readWeeklyV2Xlsx(file:File):Promise<WeeklyV2Row[]>{
   const row:WeeklyV2Row={week:str("A"),day:str("B"),task:name,duration:str("D"),
    effort:num(str("E")),workType:str("F"),hours:num(str("G")),status:str("H"),
    priority:str("I"),deadline:str("J"),projectCode:str("K"),projectName:str("L"),
-   firstWeek:str("M"),comment:str("N"),moveReason:str("O"),activityId:str("P"),rowKey:str("Q")};
+   firstWeek:str("M"),comment:str("N"),moveReason:str("O"),activityId:str("P"),rowKey:str("Q"),rowRevision:Number(str("R")||0)};
   validateWeeklyV2(row);out.push(row);
  }
  return out;
