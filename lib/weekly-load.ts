@@ -1,4 +1,4 @@
-import {normalizeISOWeek} from "./weekly-xlsx-v2";
+import {normalizeISOWeek} from "./weekly-xlsx-v2.ts";
 
 export type WeeklyLoadRow={
  activityId:number;employeeId:number;week:string;weekday:number|null;
