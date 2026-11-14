@@ -1,0 +1,16 @@
+import assert from "node:assert/strict";
+import {dateWeek,weeklyOverridePercent} from "../lib/weekly-load.ts";
+assert.equal(dateWeek("2027-01-01"),"2026-V53");
+const weeks=[{activityId:7,employeeId:3,week:"2026-V47",weekday:null,durationDays:21,effort:50,hours:20}];
+assert.equal(weeklyOverridePercent(weeks,7,3,"2026-11-16"),50);
+assert.equal(weeklyOverridePercent(weeks,7,3,"2026-11-20"),50);
+assert.equal(weeklyOverridePercent(weeks,7,3,"2026-11-21"),0);
+assert.equal(weeklyOverridePercent(weeks,7,3,"2026-11-23"),undefined,"Legacy loading remains where no weekly plan exists");
+const dayRows=[{...weeks[0],weekday:4,hours:8}];
+assert.equal(weeklyOverridePercent(dayRows,7,3,"2026-11-19"),100);
+assert.equal(weeklyOverridePercent(dayRows,7,3,"2026-11-18"),0);
+const combined=[...dayRows,{...weeks[0],weekday:null,hours:10}];
+assert.equal(weeklyOverridePercent(combined,7,3,"2026-11-19"),125);
+assert.equal(weeklyOverridePercent(combined,7,3,"2026-11-18"),25);
+assert.equal(weeklyOverridePercent(combined,7,99,"2026-11-19"),undefined,"Other employee must not be affected");
+console.log("PASS weekly utilization override: partial days, no double count, non-overridden fallback");

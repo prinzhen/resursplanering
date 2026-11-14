@@ -1,0 +1,33 @@
+name: Weekly planning XLSX v2
+
+on:
+  push:
+    branches:
+      - feature/weekly-xlsx-v2-production-base
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Enable pnpm
+        run: |
+          npm install --global corepack@latest
+          corepack enable
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Check XLSX layout and time rules
+        run: node scripts/test-weekly-v2.mjs
+      - name: Build application
+        run: pnpm build
+      - name: Typecheck
+        run: pnpm exec tsc --noEmit
+      - name: Existing XLSX compatibility test
+        run: node scripts/test-individual-xlsx-layout.mjs
