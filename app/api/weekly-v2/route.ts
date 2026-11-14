@@ -92,7 +92,8 @@ export async function POST(req:Request){
     }
     if(before){
      const old=scheduleDates({week:before.week,day:WEEK_DAYS[before.weekday??0]||"",duration:before.durationDays+" dagar"});
-     if(old.start!==original.startDate||old.end!==original.endDate)
+     if((old.start!==original.startDate||old.end!==original.endDate)&&
+        (dates.start!==original.startDate||dates.end!==original.endDate))
       throw Error("Gantt-datumen har ändrats efter senaste Excelimport. Exportera och granska på nytt.");
     }
    }
