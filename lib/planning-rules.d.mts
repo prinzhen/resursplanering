@@ -1,0 +1,13 @@
+export const HOURS_PER_DAY: number;
+export const HOURS_PER_WEEK: number;
+export const WORKDAYS_PER_WEEK: number;
+export const WEEKLY_HEADERS: readonly string[];
+export const PROJECT_HEADERS: readonly string[];
+export function isoWeek(value: string | Date): string;
+export function weekStart(value: string): Date;
+export function weekDayDate(week: string, day: string): string;
+export function parseDuration(value: string | number): number;
+export function formatDuration(days: number): string;
+export function workingDays(start: string, end: string, excludeDates?: string[]): number;
+export function plannedHours(start: string, end: string, effortPercent: number, options?: {excludeDates?: string[], hoursPerDay?: number, capacityPercent?: number}): number;
+export function validateWeeklyRow(row: Record<string, unknown>): {week: string; day: string | null; durationDays: number; effortPercent: number; plannedHours: number | null};
