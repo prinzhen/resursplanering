@@ -1,4 +1,4 @@
-import { integer, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
+import { integer, real, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
 
 export const employees = sqliteTable("employees", {
   id: integer("id").primaryKey({ autoIncrement: true }),
@@ -40,8 +40,8 @@ export const weeklyPlans = sqliteTable("weekly_plans", {
   isoWeek: text("iso_week").notNull(),
   weekday: integer("weekday"),
   durationDays: integer("duration_days").notNull(),
-  effortPercent: integer("effort_percent", { mode: "number" }).notNull().default(100),
-  plannedHours: integer("planned_hours", { mode: "number" }).notNull().default(0),
+  effortPercent: real("effort_percent").notNull().default(100),
+  plannedHours: real("planned_hours").notNull().default(0),
   workType: text("work_type").notNull().default(""),
   status: text("status").notNull().default("Planerad"),
   priority: text("priority").notNull().default("Normal"),
