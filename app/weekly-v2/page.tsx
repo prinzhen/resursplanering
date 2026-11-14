@@ -1,6 +1,6 @@
 "use client";
 import {useEffect,useState} from "react";
-import {createWeeklyV2Xlsx,readWeeklyV2Xlsx,normalizeISOWeek,durationLabel,WEEK_DAYS,type WeeklyV2Row} from "@/lib/weekly-xlsx-v2";
+import {createWeeklyV2Xlsx,readWeeklyV2Xlsx,normalizeISOWeek,durationLabel,splitPeriodIntoWeeks,WEEK_DAYS,type WeeklyV2Row} from "@/lib/weekly-xlsx-v2";
 import type {FormValues} from "@/lib/individual-xlsx";
 
 type Person={id:number;name:string;email:string};
@@ -19,16 +19,21 @@ function weekFromDate(date:string):string{
 }
 function asWeeklyRows(data:FormValues,employeeId:number,identities:Array<{uid:string;activityId:number}>):WeeklyV2Row[]{
  const byUid=new Map(identities.map(x=>[x.uid,x.activityId]));
- return data.activities.map((a,i)=>{
+ return data.activities.flatMap((a):WeeklyV2Row[]=>{
   const days=rangeDuration(a.periodStart||"",a.periodEnd||"");
-  const week=a.periodStart&&days?weekFromDate(a.periodStart):parseOldWeek(a.week);
-  const day=a.periodStart&&days?WEEK_DAYS[((new Date(a.periodStart+"T00:00:00Z").getUTCDay()+6)%7)+1]:"";
-  const activityId=byUid.get(a.uid);const id=activityId?`activity-${activityId}`:a.uid;
-  const source=(a.periodStart||a.week).replace(/[^a-zA-Z0-9-]/g,"");
-  return {week,day,task:a.name,duration:durationLabel(days??7),effort:a.effortPercent??null,
-   workType:a.kind,hours:a.hours,status:a.status,priority:a.priority,deadline:a.dueDate,
-   projectCode:a.projectCode,projectName:a.link,firstWeek:parseOldWeek(a.firstWeek)||week,
-   comment:a.comment,moveReason:a.reason,activityId:id,rowKey:activityId?`legacy-${employeeId}-${activityId}-${source}`:"",rowRevision:0};
+  const dateBased=!!a.periodStart&&!!a.periodEnd&&days!==null&&a.effortPercent!==null&&a.effortPercent!==undefined;
+  const periods=dateBased?splitPeriodIntoWeeks(a.periodStart!,a.periodEnd!,a.effortPercent!):
+    [{week:parseOldWeek(a.week),day:"",hours:a.hours}];
+  const activityId=byUid.get(a.uid),id=activityId?"activity-"+activityId:a.uid;
+  return periods.map((p):WeeklyV2Row=>{
+   const periodSource=(a.periodStart||a.week).replace(/[^a-zA-Z0-9-]/g,"");
+   return {week:p.week,day:p.day,task:a.name,duration:durationLabel(days??7),
+    effort:a.effortPercent??null,workType:a.kind,hours:p.hours,status:a.status,priority:a.priority,
+    deadline:a.dueDate,projectCode:a.projectCode,projectName:a.link,
+    firstWeek:parseOldWeek(a.firstWeek)||p.week,comment:a.comment,moveReason:a.reason,
+    activityId:id,rowKey:activityId?"legacy-"+employeeId+"-"+activityId+"-"+periodSource+"-"+p.week:"",
+    rowRevision:0};
+  });
  });
 }
 export default function WeeklyV2Page(){
