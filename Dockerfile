@@ -10,6 +10,7 @@ RUN pnpm install --frozen-lockfile
 COPY . .
 RUN bash -n scripts/install-team-test-3200.sh
 RUN bash -n scripts/install-weekly-v2-test-3200.sh
+RUN bash -n scripts/update-weekly-v2-test-3200.sh
 RUN bash -n scripts/promote-test-to-production.sh
 RUN bash -n scripts/disable-nginx-basic-auth.sh && bash -n installera.sh
 RUN bash -n scripts/update-production-deletefix.sh
