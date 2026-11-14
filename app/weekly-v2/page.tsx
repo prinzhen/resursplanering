@@ -48,9 +48,8 @@ export default function WeeklyV2Page(){
     deadline:w.deadline||"",projectCode:w.projectCode,projectName:w.projectName,firstWeek:w.firstWeek,
     comment:w.comment,moveReason:w.moveReason,activityId:"activity-"+w.activityId,rowKey:w.rowKey,rowRevision:w.revision}));
    const savedByKey=new Map(stored.map(x=>[x.rowKey,x]));
-   const byActivity=new Map(stored.map(x=>[x.activityId,x]));
    const chosen=next.map(x=>{
-    const saved=savedByKey.get(x.rowKey||"")||byActivity.get(x.activityId);
+    const saved=savedByKey.get(x.rowKey||"");
     if(!saved)return x;
     // Gantt is canonical for start/end: if a task was moved in the web UI
     // since last Excel export, retain the newer dates from the project.
