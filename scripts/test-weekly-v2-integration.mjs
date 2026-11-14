@@ -59,6 +59,11 @@ try{
  assert.deepEqual(after.result.assignmentPeriods,snap.result.assignmentPeriods,"Forecast must never overwrite historical assignment periods");
  assert.equal(after.result.weeklyPlanRows.length,1);
  assert.equal(after.result.weeklyPlanRowHistory.length,2,"Audit must include insert and update in admin snapshot");
+ const restoration=await call("/api/data",{action:"restore",backup:{version:4,data:after.result}});
+ assert.equal(restoration.status,200,JSON.stringify(restoration.result));
+ assert.equal(restoration.result.weeklyPlanRows.length,1,"Backup restore preserves weekly rows");
+ assert.equal(restoration.result.weeklyPlanRowHistory.length,2,"Backup restore preserves audit revision history");
+ assert.equal(restoration.result.weeklyPlanRows[0].revision,2);
  console.log("PASS weekly-v2 integration: auth, preview, commit, audit revision, stale conflict, idempotency, load history");
 } catch(e){console.error(e);console.error(logs);process.exitCode=1}
 finally{try{process.kill(-server.pid,"SIGTERM")}catch{server.kill("SIGTERM")}
