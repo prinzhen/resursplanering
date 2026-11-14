@@ -1,4 +1,4 @@
-import {zip,unzip,parseSheet} from "./individual-xlsx";
+import {zip,unzip,parseSheet} from "./individual-xlsx.ts";
 
 export const WEEKLY_COLUMNS = [
   "Vecka","Dag","Vad jag skall göra","Varaktighet","Insats",
