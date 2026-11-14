@@ -55,6 +55,33 @@ export function rowCalendarRange(week:string,day:string,duration:string|number){
  const end=new Date(start);end.setUTCDate(end.getUTCDate()+parseDurationDays(duration)-1);
  return {start:isodate(start),end:isodate(end)};
 }
+/** Split a dated assignment segment into ISO calendar weeks with 8h/day / 40h/week. */
+export function splitPeriodIntoWeeks(startISO:string,endISO:string,effort:number){
+ if(!/^\d{4}-\d{2}-\d{2}$/.test(startISO)||!/^\d{4}-\d{2}-\d{2}$/.test(endISO))
+  throw Error("Start/slut ska vara ÅÅÅÅ-MM-DD");
+ const start=new Date(startISO+"T00:00:00Z"),end=new Date(endISO+"T00:00:00Z");
+ if(Number.isNaN(start.getTime())||Number.isNaN(end.getTime())||start.toISOString().slice(0,10)!==startISO||
+    end.toISOString().slice(0,10)!==endISO||end<start)throw Error("Ogiltig planeringsperiod");
+ if(!Number.isFinite(effort)||effort<0||effort>100)throw Error("Insats måste vara 0–100 %");
+ const intervals:{week:string;day:string;hours:number}[]=[];
+ let cursor=new Date(start);
+ cursor.setUTCDate(cursor.getUTCDate()-((cursor.getUTCDay()+6)%7));
+ for(;cursor<=end;cursor.setUTCDate(cursor.getUTCDate()+7)){
+  const monday=new Date(cursor);
+  const week=(()=>{const d=new Date(monday);d.setUTCDate(d.getUTCDate()+3);
+   const y=d.getUTCFullYear(),jan4=new Date(Date.UTC(y,0,4));
+   jan4.setUTCDate(jan4.getUTCDate()-((jan4.getUTCDay()+6)%7));
+   return normalizeISOWeek(y+"-V"+(1+Math.round((d.getTime()-jan4.getTime())/604800000)));
+  })();
+  let days=0;
+  for(let n=0;n<7;n++){const d=new Date(monday);d.setUTCDate(d.getUTCDate()+n);
+   if(d>=start&&d<=end&&n<5)days++}
+  const isFirst=monday<=start&&start.getTime()<monday.getTime()+604800000;
+  const day=isFirst?WEEK_DAYS[((start.getUTCDay()+6)%7)+1]:"";
+  if(days||isFirst)intervals.push({week,day,hours:Math.round(days*8*effort)/100});
+ }
+ return intervals;
+}
 export function estimatedHours(row:Pick<WeeklyV2Row,"week"|"day"|"duration"|"effort">):number{
  if(row.effort===null)return 0;
  if(!Number.isFinite(row.effort)||row.effort<0||row.effort>100)throw Error("Insats ska anges 0–100 %.");
