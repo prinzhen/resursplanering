@@ -3,9 +3,9 @@
 set -Eeuo pipefail
 umask 077
 [[ $EUID -eq 0 ]] || { echo "Kör med sudo." >&2; exit 1; }
-BRANCH="feature/weekly-xlsx-v2-production-base"
-RELEASE_SHA="2951aa3b8e30b7a84bc996f2901646c889b40bac"
-PRODUCTION_SHA="7c2c7bea2d20d0e1494c727619dcdadb0204e441"
+BRANCH="feature/weekly-xlsx-v2-bf8e928-base"
+RELEASE_SHA="90ba2336e5fdcbe6a4aeea56e456bd759246fb3e"
+PRODUCTION_SHA="bf8e928c4f63c30d7b46be530479bd61ee83a9aa"
 SOURCE="/var/lib/resursplanering/data"
 if [[ -v SOURCE_DATA_DIR ]]; then SOURCE="$SOURCE_DATA_DIR"; fi
 ROOT="/opt/resursplanering-weekly-v2"
