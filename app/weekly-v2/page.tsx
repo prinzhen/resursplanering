@@ -19,17 +19,17 @@ function weekFromDate(date:string):string{
  return normalizeISOWeek(year+"-V"+number);
 }
 /** One exported row per employee/activity, even when legacy allocations contain many periods. */
-function asWeeklyRows(data:FormValues,employeeId:number,identities:Array<{uid:string;activityId:number}>):WeeklyV2Row[]{
- const byUid=new Map(identities.map(x=>[x.uid,x.activityId]));
+function asWeeklyRows(data:FormValues,employeeId:number,identities:Array<{uid:string;activityId:number;startDate:string;endDate:string}>):WeeklyV2Row[]{
+ const byUid=new Map(identities.map(x=>[x.uid,x]));
  const groups=new Map<string,FormValues["activities"]>();
  for(const a of data.activities){
   const list=groups.get(a.uid)||[];list.push(a);groups.set(a.uid,list);
  }
  return [...groups.entries()].map(([uid,periods]):WeeklyV2Row=>{
-  const first=periods[0],activityId=byUid.get(uid);
+  const first=periods[0],identity=byUid.get(uid),activityId=identity?.activityId;
   const starts=periods.map(p=>p.periodStart).filter((x):x is string=>!!x&&/^\d{4}-\d{2}-\d{2}$/.test(x));
   const ends=periods.map(p=>p.periodEnd).filter((x):x is string=>!!x&&/^\d{4}-\d{2}-\d{2}$/.test(x));
-  const start=starts.sort()[0],end=ends.sort().at(-1);
+  const start=identity?.startDate||starts.sort()[0],end=identity?.endDate||ends.sort().at(-1);
   const dates=start&&end&&end>=start?rowFromDates(start,end):
    {week:parseOldWeek(first.week)||currentWeekKey(),day:"",duration:"1 vecka"};
   const effort=periods.at(-1)?.effortPercent??first.effortPercent??null;
@@ -77,7 +77,7 @@ export default function WeeklyV2Page(){
    const body=await r.json() as FormValues&{error?:string};if(!r.ok)throw Error(body.error||"API-fel");
    const person=people.find(p=>p.email===email);if(!person)throw Error("Välj en medarbetare.");
    const response=await fetch("/api/weekly-v2?employeeId="+person.id,{cache:"no-store"});
-   const current=await response.json() as {rows:Array<{rowKey:string;employeeId:number;activityId:number;week:string;weekday:number|null;durationDays:number;effort:number|null;hours:number|null;workType:string;status:string;priority:number|null;deadline:string|null;firstWeek:string;comment:string;moveReason:string;revision:number;task:string;projectCode:string;projectName:string}>;identities:Array<{uid:string;activityId:number}>;error?:string};
+   const current=await response.json() as {rows:Array<{rowKey:string;employeeId:number;activityId:number;week:string;weekday:number|null;durationDays:number;effort:number|null;hours:number|null;workType:string;status:string;priority:number|null;deadline:string|null;firstWeek:string;comment:string;moveReason:string;revision:number;task:string;projectCode:string;projectName:string}>;identities:Array<{uid:string;activityId:number;startDate:string;endDate:string}>;error?:string};
    if(!response.ok)throw Error(current.error||"Kunde inte läsa sparade planeringsrader");
    const next=asWeeklyRows(body,person.id,current.identities);
    const stored=current.rows.map(w=>({week:w.week,day:WEEK_DAYS[w.weekday??0]||"",task:w.task,duration:durationLabel(w.durationDays),
@@ -86,7 +86,16 @@ export default function WeeklyV2Page(){
     comment:w.comment,moveReason:w.moveReason,activityId:"activity-"+w.activityId,rowKey:w.rowKey,rowRevision:w.revision}));
    const savedByKey=new Map(stored.map(x=>[x.rowKey,x]));
    const byActivity=new Map(stored.map(x=>[x.activityId,x]));
-   const chosen=next.map(x=>savedByKey.get(x.rowKey||"")||byActivity.get(x.activityId)||x);
+   const chosen=next.map(x=>{
+    const saved=savedByKey.get(x.rowKey||"")||byActivity.get(x.activityId);
+    if(!saved)return x;
+    // Gantt is canonical for start/end: if a task was moved in the web UI
+    // since last Excel export, retain the newer dates from the project.
+    const currentDates=scheduleDates(x),storedDates=scheduleDates(saved);
+    if(currentDates.start!==storedDates.start||currentDates.end!==storedDates.end)
+     return {...saved,week:x.week,day:x.day,duration:x.duration,rowRevision:saved.rowRevision};
+    return saved;
+   });
    const chosenIds=new Set(chosen.map(x=>x.activityId));
    setRows([...chosen,...stored.filter(x=>!chosenIds.has(x.activityId))]);
    setMessage("Läste "+next.length+" aktiviteter på "+next.length+" rader. Befintliga aktivitetsperioder har slagits ihop i visningen.");
