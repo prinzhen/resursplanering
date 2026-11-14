@@ -2,6 +2,7 @@ import {env} from "cloudflare:workers";
 import {sessionIdentity,unauthorized,forbidden,sameOrigin} from "@/lib/auth";
 import {accessScope,authorizePlanningAction} from "@/lib/permissions";
 import {normalizeISOWeek,parseDurationDays,WEEK_DAYS,type WeeklyV2Row} from "@/lib/weekly-xlsx-v2";
+import {scheduleDates} from "@/lib/activity-calendar";
 export const dynamic="force-dynamic";
 const db=()=>{if(!env.DB)throw Error("Databasen saknas");return env.DB};
 type Plan={rowKey:string;employeeId:number;activityId:number;week:string;weekday:number|null;durationDays:number;effort:number|null;hours:number|null;workType:string;status:string;priority:number|null;deadline:string|null;firstWeek:string;comment:string;moveReason:string;revision:number};
@@ -44,7 +45,8 @@ export async function POST(req:Request){
   if(!Number.isSafeInteger(employeeId)||employeeId<1||!Array.isArray(body.rows)||body.rows.length>500)
    return Response.json({error:"Ogiltig import (max 500 rader)"},{status:400});
   const scope=await accessScope(d,user);if(!scope.employeeIds.has(employeeId))return forbidden();
-  const seen=new Set<string>(),changes:{value:Plan;before:Plan|null;action:"new"|"update"|"unchanged"}[]=[];
+  const seen=new Set<string>(),activitiesSeen=new Set<number>();
+  const changes:{value:Plan;before:Plan|null;action:"new"|"update"|"unchanged";oldStart:string;oldEnd:string;newStart:string;newEnd:string;updateDates:boolean;assignmentIds:number[]}[]=[];
   for(const row of body.rows){
    if(seen.has(row.rowKey||""))throw Error("Dubbel planeringsrad i filen");
    seen.add(row.rowKey||"");
@@ -55,17 +57,54 @@ export async function POST(req:Request){
    if(!a||!scope.projectIds.has(a.projectId))return forbidden();
    if(a.name.trim()!==row.task.trim()||a.projectCode.toUpperCase()!==row.projectCode.trim().toUpperCase())throw Error("Aktivitet/projektkod matchar inte aktivitets-ID");
    if(!await authorizePlanningAction(d,user,"setAssignmentPeriods",{employeeId,activityId}))return forbidden();
+   if(activitiesSeen.has(activityId))throw Error("Samma aktivitet finns på flera rader. Exportera den nya mallen med en rad per aktivitet.");
+   activitiesSeen.add(activityId);
    const value=parse(row,employeeId,activityId);
+   const dates=scheduleDates(row);
+   const original=await d.prepare("SELECT start_date startDate,end_date endDate FROM activities WHERE id=?").bind(activityId).first<{startDate:string;endDate:string}>();
+   if(!original)throw Error("Aktiviteten saknas.");
    const before=await d.prepare(select+" WHERE row_key=?").bind(value.rowKey).first<Plan>();
    if(before&&(before.employeeId!==employeeId||before.activityId!==activityId))throw Error("Radnyckeln hör till annan aktivitet");
    if(before&&before.revision!==value.revision)throw Error("Konflikt: planeringsraden har ändrats sedan exporten. Exportera på nytt.");
    const action=before?(fields.every(k=>(before[k]??null)===(value[k]??null))?"unchanged":"update"):"new";
-   changes.push({value,before,action});
+   const updateDates=original.startDate!==dates.start||original.endDate!==dates.end;
+   const ass=await d.prepare("SELECT id,employee_id employeeId,completed_at completedAt,start_date startDate,end_date endDate FROM assignments WHERE activity_id=?").bind(activityId).all<{id:number;employeeId:number;completedAt:string|null;startDate:string;endDate:string}>();
+   const assignmentIds=ass.results.map(a=>a.id);
+   if(updateDates){
+    if(ass.results.length>1&&!user.isAdmin&&!scope.projectLedIds.has(a.projectId))
+     throw Error("Aktiviteten delas av flera personer. Endast administratör eller projektledare får flytta gemensamma Gantt-datum.");
+    if(ass.results.some(x=>x.completedAt))
+     throw Error("Aktiviteten har avslutade tilldelningar. Ändra datumen i projektplaneringen efter särskild granskning.");
+    const periods=await d.prepare("SELECT s.id assignmentId,p.start_date startDate,p.end_date endDate FROM assignments s JOIN assignment_periods p ON p.assignment_id=s.id WHERE s.activity_id=?").bind(activityId).all<{assignmentId:number;startDate:string;endDate:string}>();
+    for(const a of ass.results){
+     const own=periods.results.filter(p=>p.assignmentId===a.id);
+     if(own.length>1)throw Error("Aktiviteten har flera historiska beläggningsperioder. Flytta inte datumen via Excel förrän periodhistoriken granskats.");
+    }
+    if(before){
+     const old=scheduleDates({week:before.week,day:WEEK_DAYS[before.weekday??0]||"",duration:before.durationDays+" dagar"});
+     if(old.start!==original.startDate||old.end!==original.endDate)
+      throw Error("Gantt-datumen har ändrats efter senaste Excelimport. Exportera och granska på nytt.");
+    }
+   }
+   changes.push({value,before,action,oldStart:original.startDate,oldEnd:original.endDate,
+    newStart:dates.start,newEnd:dates.end,updateDates,assignmentIds});
   }
   const preview={created:changes.filter(x=>x.action==="new").length,updated:changes.filter(x=>x.action==="update").length,unchanged:changes.filter(x=>x.action==="unchanged").length};
   if(!body.commit)return Response.json({preview,committed:false});
   const q:D1PreparedStatement[]=[];
-  for(const {value:x,before,action} of changes){
+  for(const {value:x,before,action,updateDates,oldStart,oldEnd,newStart,newEnd,assignmentIds} of changes){
+   if(action==="unchanged"&&!updateDates)continue;
+   if(updateDates){
+    q.push(d.prepare("UPDATE activities SET start_date=?,end_date=? WHERE id=? AND start_date=? AND end_date=?")
+      .bind(newStart,newEnd,x.activityId,oldStart,oldEnd));
+    // Keep one-period assignments synchronized, but do not rewrite historical
+    // multi-period assignments or modify actual time entries.
+    q.push(d.prepare("UPDATE assignments SET start_date=CASE WHEN start_date=? THEN ? ELSE start_date END,end_date=CASE WHEN end_date=? THEN ? ELSE end_date END,original_end_date=CASE WHEN original_end_date=? THEN ? ELSE original_end_date END WHERE activity_id=? AND completed_at IS NULL")
+      .bind(oldStart,newStart,oldEnd,newEnd,oldEnd,newEnd,x.activityId));
+    for(const assignmentId of assignmentIds)
+     q.push(d.prepare("UPDATE assignment_periods SET start_date=?,end_date=? WHERE assignment_id=? AND start_date=? AND end_date=? AND (SELECT COUNT(*) FROM assignment_periods WHERE assignment_id=?)=1")
+       .bind(newStart,newEnd,assignmentId,oldStart,oldEnd,assignmentId));
+   }
    if(action==="unchanged")continue;
    const revision=before?before.revision+1:1;
    if(before){
