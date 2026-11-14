@@ -22,6 +22,7 @@ RUN node scripts/test-effort-history.mjs
 RUN node scripts/test-individual-xlsx-layout.mjs
 RUN node scripts/test-weekly-v2.mjs
 RUN node scripts/test-activity-calendar.mjs
+RUN node scripts/test-weekly-single-row.mjs
 RUN node scripts/test-weekly-load.mjs
 RUN node scripts/test-weekly-v2-integration.mjs
 RUN node scripts/test-individual-integration.mjs
