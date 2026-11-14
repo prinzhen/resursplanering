@@ -58,7 +58,7 @@ try{
  const after=await call("/api/data");
  assert.deepEqual(after.result.assignmentPeriods,snap.result.assignmentPeriods,"Forecast must never overwrite historical assignment periods");
  assert.equal(after.result.weeklyPlanRows.length,1);
- assert.equal(after.result.weeklyPlanRowHistory.length,0,"Audit entries must not leak through generic snapshot");
+ assert.equal(after.result.weeklyPlanRowHistory.length,2,"Audit must include insert and update in admin snapshot");
  console.log("PASS weekly-v2 integration: auth, preview, commit, audit revision, stale conflict, idempotency, load history");
 } catch(e){console.error(e);console.error(logs);process.exitCode=1}
 finally{try{process.kill(-server.pid,"SIGTERM")}catch{server.kill("SIGTERM")}
