@@ -1,4 +1,4 @@
-import {normalizeISOWeek,currentWeekKey} from "./weekly-xlsx-v2.ts";
+import {normalizeISOWeek,currentWeekKey,type WeeklyV2Row} from "./weekly-xlsx-v2.ts";
 import {rowFromDates,hoursForSchedule} from "./activity-calendar.ts";
 import type {FormValues} from "./individual-xlsx.ts";
 
