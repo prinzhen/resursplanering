@@ -23,7 +23,7 @@ assert.equal(weeklyOverridePercent(threeWeeks,7,3,"2026-11-16"),50);
 assert.equal(weeklyOverridePercent(threeWeeks,7,3,"2026-11-27"),50);
 assert.equal(weeklyOverridePercent(threeWeeks,7,3,"2026-12-02"),50);
 assert.equal(weeklyOverridePercent(threeWeeks,7,3,"2026-12-07"),undefined);
-const rollover=[{...weekly[0],week:"2026-V53",weekday:4,durationDays:5,hours:16}];
+const rollover=[{...weekly[0],week:"2026-V53",weekday:4,durationDays:5,hours:24}];
 assert.equal(weeklyOverridePercent(rollover,7,3,"2026-12-31"),100);
 assert.equal(weeklyOverridePercent(rollover,7,3,"2027-01-04"),100);
 console.log("PASS weekly utilization: multi-day distribution, week rollover, legacy fallback and no double counting");
