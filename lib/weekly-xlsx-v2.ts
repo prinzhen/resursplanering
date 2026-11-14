@@ -28,6 +28,31 @@ export function normalizeISOWeek(value:string):string{
   throw Error("Vecka finns inte: "+value);
  return m[1]+"-V"+String(num).padStart(2,"0");
 }
+/** ISO current week based on Swedish local calendar date. */
+export function currentWeekKey(now=new Date()):string{
+ const parts=new Intl.DateTimeFormat("sv-SE",{timeZone:"Europe/Stockholm",year:"numeric",month:"2-digit",day:"2-digit"}).formatToParts(now);
+ const values=Object.fromEntries(parts.map(x=>[x.type,x.value]));
+ return weekKeyForDate(values.year+"-"+values.month+"-"+values.day);
+}
+export function weekKeyForDate(date:string):string{
+ const d=new Date(date+"T00:00:00Z");
+ if(Number.isNaN(d.getTime())||d.toISOString().slice(0,10)!==date)throw Error("Ogiltigt datum");
+ d.setUTCDate(d.getUTCDate()+3-((d.getUTCDay()+6)%7));
+ const y=d.getUTCFullYear(),jan4=new Date(Date.UTC(y,0,4));
+ jan4.setUTCDate(jan4.getUTCDate()-((jan4.getUTCDay()+6)%7));
+ return normalizeISOWeek(y+"-V"+(1+Math.round((d.getTime()-jan4.getTime())/604800000)));
+}
+export function shiftISOWeek(week:string,offset:number):string{
+ if(!Number.isSafeInteger(offset)||Math.abs(offset)>2000)throw Error("Ogiltig veckoförflyttning");
+ const monday=weekMonday(week);monday.setUTCDate(monday.getUTCDate()+offset*7);
+ return weekKeyForDate(monday.toISOString().slice(0,10));
+}
+export function weekOptions(current:string,past=104,future=156):string[]{
+ const all=[current];
+ for(let i=1;i<=future;i++)all.push(shiftISOWeek(current,i));
+ for(let i=1;i<=past;i++)all.push(shiftISOWeek(current,-i));
+ return all;
+}
 export function weekMonday(week:string):Date{
  const [year,num]=normalizeISOWeek(week).split("-V").map(Number);
  const jan4=new Date(Date.UTC(year,0,4));
@@ -35,11 +60,14 @@ export function weekMonday(week:string):Date{
  return jan4;
 }
 export function parseDurationDays(value:string|number):number{
- if(typeof value==="number"&&Number.isInteger(value)&&value>0)return value;
+ if(typeof value==="number"&&Number.isInteger(value)&&value>0&&value<=3650)return value;
  const v=String(value).toLowerCase().trim();
- const m=/^(\d+)\s*(dag|dagar|dygn|vecka|veckor)$/.exec(v);
- if(!m||Number(m[1])<1||Number(m[1])>3650)throw Error("Varaktighet ska vara t.ex. 3 dagar eller 2 veckor.");
- return Number(m[1])*(m[2].startsWith("veck")?7:1);
+ const m=/^(\d+)\s*(dag|dagar|dygn|vecka|veckor)(?:\s+(\d+)\s*(dag|dagar|dygn))?$/.exec(v);
+ if(!m)throw Error("Varaktighet ska vara t.ex. 3 dagar, 2 veckor eller 1 vecka 2 dagar.");
+ const days=Number(m[1])*(m[2].startsWith("veck")?7:1)+Number(m[3]||0);
+ if(days<1||days>3650||(m[3]!==undefined&&!m[2].startsWith("veck"))||Number(m[3]||0)>6)
+  throw Error("Ogiltig varaktighet: "+value);
+ return days;
 }
 export function durationLabel(days:number):string{
  if(!Number.isInteger(days)||days<1)throw Error("Ogiltig varaktighet.");
