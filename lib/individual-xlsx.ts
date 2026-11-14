@@ -11,7 +11,7 @@ const col=(n:number)=>{let s="";for(;n;n=Math.floor((n-1)/26))s=String.fromCharC
 const toUint=(v:number,n:number)=>Array.from({length:n},(_,i)=>(v>>>(8*i))&255);
 const concat=(arr:Uint8Array[])=>{const out=new Uint8Array(arr.reduce((n,a)=>n+a.length,0));let p=0;for(const a of arr){out.set(a,p);p+=a.length}return out};
 function crc(bytes:Uint8Array){let c=~0;for(const b of bytes){c^=b;for(let j=0;j<8;j++)c=(c>>>1)^((c&1)?0xEDB88320:0)}return (~c)>>>0}
-function zip(entries:Record<string,string>){
+export function zip(entries:Record<string,string>){
  const locals:Uint8Array[]=[],central:Uint8Array[]=[];let at=0;
  for(const [name,value] of Object.entries(entries)){
    const file=utf8.encode(value),nm=utf8.encode(name),checksum=crc(file);
@@ -49,7 +49,7 @@ function zip(entries:Record<string,string>){
  const parts=[...locals,cdir,end].map(chunk=>{const buffer=new ArrayBuffer(chunk.byteLength);new Uint8Array(buffer).set(chunk);return buffer});
  return new Blob(parts,{type:"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"});
 }
-async function unzip(bytes:Uint8Array){
+export async function unzip(bytes:Uint8Array){
  const v=new DataView(bytes.buffer,bytes.byteOffset,bytes.byteLength);let e=-1;
  for(let i=bytes.length-22;i>=Math.max(0,bytes.length-65557);i--){if(v.getUint32(i,true)===0x06054b50){e=i;break}}
  if(e<0)throw Error("Filen är inte en giltig XLSX-fil.");
@@ -72,7 +72,7 @@ async function unzip(bytes:Uint8Array){
  }
  return result;
 }
-function parseSheet(xmlText:string,shared:string[]){
+export function parseSheet(xmlText:string,shared:string[]){
  const doc=new DOMParser().parseFromString(xmlText,"application/xml");
  if(doc.getElementsByTagName("parsererror").length)throw Error("Felaktigt XML-innehåll i arbetsboken.");
  const get=(node:Element,name:string)=>Array.from(node.getElementsByTagName("*")).find(x=>x.localName===name);
