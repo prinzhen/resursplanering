@@ -65,6 +65,16 @@ export async function POST(req:Request){
    if(!original)throw Error("Aktiviteten saknas.");
    const before=await d.prepare(select+" WHERE row_key=?").bind(value.rowKey).first<Plan>();
    if(before&&(before.employeeId!==employeeId||before.activityId!==activityId))throw Error("Radnyckeln hör till annan aktivitet");
+   // When start/day/duration changes, recompute planned hours if the user
+   // kept the previous hours unchanged. A deliberate edit to hours survives.
+   if(before&&value.effort!==null&&value.hours===before.hours&&
+      (value.week!==before.week||value.weekday!==before.weekday||value.durationDays!==before.durationDays)){
+    const total=(()=>{let days=0,d=new Date(dates.start+"T00:00:00Z"),end=new Date(dates.end+"T00:00:00Z");
+      while(d<=end){const wd=d.getUTCDay();if(wd!==0&&wd!==6)days++;d.setUTCDate(d.getUTCDate()+1)}
+      return Math.round(days*8*value.effort)/100})();
+    value.hours=total;
+   }
+
    if(before&&before.revision!==value.revision)throw Error("Konflikt: planeringsraden har ändrats sedan exporten. Exportera på nytt.");
    const action=before?(fields.every(k=>(before[k]??null)===(value[k]??null))?"unchanged":"update"):"new";
    const updateDates=original.startDate!==dates.start||original.endDate!==dates.end;
