@@ -56,15 +56,27 @@ try{
  const repeat=await call("/api/weekly-v2",{employeeId:erik.id,rows:[{...changed,rowRevision:2}],commit:true});
  assert.deepEqual(repeat.result.preview,{created:0,updated:0,unchanged:1});
  const after=await call("/api/data");
- assert.deepEqual(after.result.assignmentPeriods,snap.result.assignmentPeriods,"Forecast must never overwrite historical assignment periods");
+ const shifted=after.result.activities.find(x=>x.id===activity.id);
+ assert.equal(shifted.startDate,"2026-11-26","Changing start week must move Gantt start");
+ assert.equal(shifted.endDate,"2026-11-27","Same duration must move Gantt end equally");
+ assert.equal(after.result.assignmentPeriods.find(x=>x.assignmentId===snap.result.assignments.find(a=>a.activityId===activity.id&&a.employeeId===erik.id).id).startDate,"2026-11-26","Single-period resource allocation must follow the schedule");
+ const extended={...changed,duration:"10 veckor",rowRevision:2};
+ const longSave=await call("/api/weekly-v2",{employeeId:erik.id,rows:[extended],commit:true});
+ assert.equal(longSave.status,200,JSON.stringify(longSave.result));
+ const longSnap=await call("/api/data");
+ const longActivity=longSnap.result.activities.find(x=>x.id===activity.id);
+ assert.equal(longActivity.startDate,"2026-11-26","Duration edit cannot change start date");
+ assert.equal(longActivity.endDate,"2027-02-03","10 calendar weeks has inclusive end date");
+ assert.equal(longSnap.result.weeklyPlanRows.find(x=>x.activityId===activity.id).revision,3);
+
  assert.equal(after.result.weeklyPlanRows.length,1);
- assert.equal(after.result.weeklyPlanRowHistory.length,2,"Audit must include insert and update in admin snapshot");
- const restoration=await call("/api/data",{action:"restore",backup:{version:4,data:after.result}});
+ assert.equal(longSnap.result.weeklyPlanRowHistory.length,3,"Audit records both moving and lengthening");
+ const restoration=await call("/api/data",{action:"restore",backup:{version:4,data:longSnap.result}});
  assert.equal(restoration.status,200,JSON.stringify(restoration.result));
  assert.equal(restoration.result.weeklyPlanRows.length,1,"Backup restore preserves weekly rows");
- assert.equal(restoration.result.weeklyPlanRowHistory.length,2,"Backup restore preserves audit revision history");
- assert.equal(restoration.result.weeklyPlanRows[0].revision,2);
- console.log("PASS weekly-v2 integration: auth, preview, commit, audit revision, stale conflict, idempotency, load history");
+ assert.equal(restoration.result.weeklyPlanRowHistory.length,3,"Backup restore preserves audit revision history");
+ assert.equal(restoration.result.weeklyPlanRows[0].revision,3);
+ console.log("PASS weekly-v2 integration: auth, preview, commit, audit revision, stale conflict, idempotency, Gantt start/end synchronization, duration edits, backup");
 } catch(e){console.error(e);console.error(logs);process.exitCode=1}
 finally{try{process.kill(-server.pid,"SIGTERM")}catch{server.kill("SIGTERM")}
  await sleep(800);try{process.kill(-server.pid,"SIGKILL")}catch{}
