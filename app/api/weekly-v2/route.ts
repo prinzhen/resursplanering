@@ -32,7 +32,8 @@ export async function GET(req:Request){
   if(!Number.isSafeInteger(employeeId)||employeeId<1)return Response.json({error:"Medarbetare saknas"},{status:400});
   const scope=await accessScope(d,user);if(!scope.employeeIds.has(employeeId))return forbidden();
   const result=await d.prepare("SELECT w.row_key rowKey,w.employee_id employeeId,w.activity_id activityId,w.iso_week week,w.weekday,w.duration_days durationDays,w.effort_percent effort,w.planned_hours hours,w.work_type workType,w.status,w.priority,w.deadline,w.first_planned_week firstWeek,w.comment,w.move_reason moveReason,w.revision,a.project_id projectId,a.name task,p.code projectCode,p.name projectName FROM weekly_plan_rows w JOIN activities a ON a.id=w.activity_id JOIN projects p ON p.id=a.project_id WHERE w.employee_id=? ORDER BY w.iso_week,w.weekday,w.id LIMIT 5000").bind(employeeId).all<Record<string,unknown>>();
-  return Response.json({rows:result.results.filter(r=>scope.projectIds.has(Number(r.projectId)))},{headers:{"cache-control":"no-store"}});
+  const identities=await d.prepare("SELECT s.activity_id activityId,COALESCE(i.item_uid,'employee-'||s.employee_id||'-activity-'||s.activity_id) uid FROM assignments s LEFT JOIN individual_form_items i ON i.employee_id=s.employee_id AND i.activity_id=s.activity_id WHERE s.employee_id=?").bind(employeeId).all<{activityId:number;uid:string}>();
+  return Response.json({rows:result.results.filter(r=>scope.projectIds.has(Number(r.projectId))),identities:identities.results},{headers:{"cache-control":"no-store"}});
  }catch(e){console.error(e);return Response.json({error:"Kunde inte läsa veckoplanering"},{status:500})}
 }
 export async function POST(req:Request){
