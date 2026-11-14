@@ -49,5 +49,5 @@ for(let i=0;i<WEEKLY_COLUMNS.length;i++){
  assert.ok(sheet.includes(WEEKLY_COLUMNS[i]),"Missing header "+WEEKLY_COLUMNS[i]);
 }
 assert.ok(sheet.includes('r="Q2"'),"Missing stable hidden planning row key");
-assert.ok(sheet.includes('min="17" max="17" hidden="1"'),"Metadata column must be hidden");
+assert.ok(sheet.includes('min="17" max="18" hidden="1"'),"Metadata column must be hidden");
 console.log("PASS weekly XLSX v2: all 16 columns, dates, duration, effort and ZIP structure");
