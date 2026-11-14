@@ -25,7 +25,7 @@ rollback(){
  echo "Uppdateringen avbröts (kod $code)." >&2
  if [[ $STOPPED -eq 1 ]];then
   systemctl stop "$SERVICE" >/dev/null 2>&1 || true
-  if [[ $SWAPPED -eq 1 && -d "$OLD" ]];then
+  if [[ -d "$OLD" ]];then
    [[ -d "$APP" ]] && mv "$APP" "$BACKUP/failed-code" || true
    mv "$OLD" "$APP" || true
   fi
