@@ -32,3 +32,34 @@ export const assignments = sqliteTable("assignments", {
   employeeId: integer("employee_id").notNull().references(() => employees.id), effortPercent: integer("effort_percent").notNull(),
   startDate: text("start_date").notNull(), endDate: text("end_date").notNull(),
 }, (table) => [uniqueIndex("idx_assignments_activity_employee").on(table.activityId, table.employeeId)]);
+
+export const weeklyPlans = sqliteTable("weekly_plans", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  activityId: integer("activity_id").notNull().references(() => activities.id),
+  employeeId: integer("employee_id").notNull().references(() => employees.id),
+  isoWeek: text("iso_week").notNull(),
+  weekday: integer("weekday"),
+  durationDays: integer("duration_days").notNull(),
+  effortPercent: integer("effort_percent", { mode: "number" }).notNull().default(100),
+  plannedHours: integer("planned_hours", { mode: "number" }).notNull().default(0),
+  workType: text("work_type").notNull().default(""),
+  status: text("status").notNull().default("Planerad"),
+  priority: text("priority").notNull().default("Normal"),
+  deadline: text("deadline"),
+  firstPlannedWeek: text("first_planned_week").notNull(),
+  comment: text("comment").notNull().default(""),
+  moveReason: text("move_reason").notNull().default(""),
+  revision: integer("revision").notNull().default(1),
+  createdAt: text("created_at").notNull(),
+  updatedAt: text("updated_at").notNull(),
+});
+export const weeklyPlanRevisions = sqliteTable("weekly_plan_revisions", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  planId: integer("plan_id").notNull().references(() => weeklyPlans.id),
+  revision: integer("revision").notNull(),
+  changeType: text("change_type").notNull(),
+  previousJson: text("previous_json"),
+  currentJson: text("current_json"),
+  changedAt: text("changed_at").notNull(),
+  changedBy: text("changed_by"),
+}, (table) => [uniqueIndex("idx_weekly_plan_revision").on(table.planId, table.revision)]);
