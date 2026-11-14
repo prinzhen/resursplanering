@@ -89,6 +89,9 @@ export async function POST(req:Request){
     for(const a of ass.results){
      const own=periods.results.filter(p=>p.assignmentId===a.id);
      if(own.length>1)throw Error("Aktiviteten har flera historiska beläggningsperioder. Flytta inte datumen via Excel förrän periodhistoriken granskats.");
+     if(a.startDate!==original.startDate||a.endDate!==original.endDate||
+        own.some(p=>p.startDate!==original.startDate||p.endDate!==original.endDate))
+      throw Error("Aktiviteten har individuellt anpassade resursdatum. Ändra dem först i projektplaneringen för att inte förlora personens beläggning.");
     }
     if(before){
      const old=scheduleDates({week:before.week,day:WEEK_DAYS[before.weekday??0]||"",duration:before.durationDays+" dagar"});
