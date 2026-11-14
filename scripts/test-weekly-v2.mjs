@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import {createWeeklyV2Xlsx,WEEKLY_COLUMNS,parseDurationDays,durationLabel,normalizeISOWeek,rowCalendarRange,estimatedHours,splitPeriodIntoWeeks} from "../lib/weekly-xlsx-v2.ts";
+import {createWeeklyV2Xlsx,WEEKLY_COLUMNS,parseDurationDays,durationLabel,normalizeISOWeek,rowCalendarRange,estimatedHours,splitPeriodIntoWeeks,currentWeekKey,shiftISOWeek,weekOptions,weekKeyForDate} from "../lib/weekly-xlsx-v2.ts";
 
 assert.deepEqual(WEEKLY_COLUMNS,[
 "Vecka","Dag","Vad jag skall göra","Varaktighet","Insats",
@@ -12,6 +12,14 @@ assert.throws(()=>normalizeISOWeek("2026-V54"));
 assert.equal(parseDurationDays("3 veckor"),21);
 assert.equal(durationLabel(7),"7 dagar");
 assert.equal(durationLabel(9),"1 vecka 2 dagar");
+assert.equal(parseDurationDays("1 vecka 2 dagar"),9,"Exported mixed durations must import");
+assert.equal(parseDurationDays(durationLabel(366)),366,"Long periods must round-trip");
+assert.equal(weekKeyForDate("2027-01-01"),"2026-V53","ISO rollover");
+assert.equal(currentWeekKey(new Date("2026-11-14T12:00:00Z")),"2026-V46");
+assert.equal(shiftISOWeek("2026-V53",1),"2027-V01");
+assert.equal(shiftISOWeek("2027-V01",-1),"2026-V53");
+assert.equal(weekOptions("2026-V46",2,2)[0],"2026-V46","Dropdown must begin with current week");
+
 assert.deepEqual(rowCalendarRange("2026-V40","Torsdag","3 dagar"),{start:"2026-10-01",end:"2026-10-03"});
 assert.equal(estimatedHours({week:"2026-V47",day:"",duration:"3 veckor",effort:50}),60);
 assert.equal(estimatedHours({week:"2026-V47",day:"Måndag",duration:"1 dag",effort:100}),8);
@@ -49,5 +57,12 @@ for(let i=0;i<WEEKLY_COLUMNS.length;i++){
  assert.ok(sheet.includes(WEEKLY_COLUMNS[i]),"Missing header "+WEEKLY_COLUMNS[i]);
 }
 assert.ok(sheet.includes('r="Q2"'),"Missing stable hidden planning row key");
-assert.ok(sheet.includes('min="17" max="18" hidden="1"'),"Metadata column must be hidden");
+assert.ok(sheet.includes('min="17" max="19" hidden="1"'),"Metadata and week-list columns must be hidden");
+assert.ok(sheet.includes('sqref="A2:A5001 M2:M5001"'),"Dropdown required for ISO week and first planned week");
+assert.ok(sheet.includes('$S$2:$S$262'),"Scrollable week list must be in hidden column S");
+assert.ok(sheet.includes('r="S2"'),"Week list must start at current week");
+assert.ok(sheet.includes('r="S262"'),"Week list must cover past/future years");
+assert.ok(sheet.includes('r="A1"'),"Visible header stays unchanged");
+const longer={...row,duration:"1 vecka 2 dagar",projectCode:"INTERNAL-VERK"};
+assert.ok(createWeeklyV2Xlsx([longer]).size>1000,"Combined duration and internal project must export");
 console.log("PASS weekly XLSX v2: all 16 columns, dates, duration, effort and ZIP structure");
