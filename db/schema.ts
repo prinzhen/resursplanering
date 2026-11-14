@@ -1,4 +1,4 @@
-import { integer, sqliteTable, text, uniqueIndex, type AnySQLiteColumn } from "drizzle-orm/sqlite-core";
+import { integer, real, sqliteTable, text, uniqueIndex, type AnySQLiteColumn } from "drizzle-orm/sqlite-core";
 
 export const employees = sqliteTable("employees", {
   id: integer("id").primaryKey({ autoIncrement: true }),
@@ -146,3 +146,36 @@ export const timeEntryAudit=sqliteTable("time_entry_audit",{
  action:text("action").notNull(),oldSeconds:integer("old_seconds"),newSeconds:integer("new_seconds"),
  changedAt:integer("changed_at").notNull(),
 });
+
+/** Separate weekly forecast entries; never overwrite reported time. */
+export const weeklyPlanRows = sqliteTable("weekly_plan_rows", {
+  id: integer("id").primaryKey({autoIncrement:true}),
+  rowKey: text("row_key").notNull().unique(),
+  employeeId: integer("employee_id").notNull().references(()=>employees.id,{onDelete:"restrict"}),
+  activityId: integer("activity_id").notNull().references(()=>activities.id,{onDelete:"restrict"}),
+  isoWeek: text("iso_week").notNull(),
+  weekday: integer("weekday"),
+  durationDays: integer("duration_days").notNull(),
+  effortPercent: real("effort_percent"),
+  plannedHours: real("planned_hours"),
+  workType: text("work_type").notNull().default(""),
+  status: text("status").notNull().default("Planerad"),
+  priority: integer("priority"),
+  deadline: text("deadline"),
+  firstPlannedWeek: text("first_planned_week").notNull(),
+  comment: text("comment").notNull().default(""),
+  moveReason: text("move_reason").notNull().default(""),
+  revision: integer("revision").notNull().default(1),
+  createdAt: text("created_at").notNull().default("CURRENT_TIMESTAMP"),
+  updatedAt: text("updated_at").notNull().default("CURRENT_TIMESTAMP"),
+});
+export const weeklyPlanRowHistory = sqliteTable("weekly_plan_row_history", {
+  id:integer("id").primaryKey({autoIncrement:true}),
+  rowKey:text("row_key").notNull(),
+  revision:integer("revision").notNull(),
+  action:text("action").notNull(),
+  beforeJson:text("before_json"),
+  afterJson:text("after_json").notNull(),
+  changedByAccountId:integer("changed_by_account_id").references(()=>userAccounts.id,{onDelete:"set null"}),
+  changedAt:text("changed_at").notNull().default("CURRENT_TIMESTAMP"),
+},t=>[uniqueIndex("weekly_plan_history_revision_unique").on(t.rowKey,t.revision)]);
