@@ -59,7 +59,7 @@ try{
  const shifted=after.result.activities.find(x=>x.id===activity.id);
  assert.equal(shifted.startDate,"2026-11-26","Changing start week must move Gantt start");
  assert.equal(shifted.endDate,"2026-11-27","Same duration must move Gantt end equally");
- assert.equal(after.result.assignmentPeriods.find(x=>x.assignmentId===snap.result.assignments.find(a=>a.activityId===activity.id&&a.employeeId===erik.id).id).startDate,"2026-11-26","Single-period resource allocation must follow the schedule");
+ assert.equal(after.result.assignments.find(x=>x.activityId===activity.id&&x.employeeId===erik.id).startDate,"2026-11-26","Resource assignment must follow moved Gantt start");
  const extended={...changed,duration:"10 veckor",rowRevision:2};
  const longSave=await call("/api/weekly-v2",{employeeId:erik.id,rows:[extended],commit:true});
  assert.equal(longSave.status,200,JSON.stringify(longSave.result));
