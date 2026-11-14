@@ -60,7 +60,7 @@ export default function WeeklyV2Page(){
     comment:w.comment,moveReason:w.moveReason,activityId:"activity-"+w.activityId,rowKey:w.rowKey,rowRevision:w.revision}));
    const savedByKey=new Map(stored.map(x=>[x.rowKey,x]));
    const keys=new Set(next.map(x=>x.rowKey));
-   setRows([...next.map(x=>savedByKey.get(x.rowKey)||x),...stored.filter(x=>!keys.has(x.rowKey))]);
+   setRows([...next.map(x=>savedByKey.get(x.rowKey||'')||x),...stored.filter(x=>!keys.has(x.rowKey))]);
    setMessage("Läste "+next.length+" befintliga periodrader och "+stored.length+" sparade v2-rader.");
   }catch(e){setError(e instanceof Error?e.message:String(e))}finally{setLoading(false)}
  };
