@@ -19,6 +19,7 @@ assert.equal(currentWeekKey(new Date("2026-11-14T12:00:00Z")),"2026-V46");
 assert.equal(shiftISOWeek("2026-V53",1),"2027-V01");
 assert.equal(shiftISOWeek("2027-V01",-1),"2026-V53");
 assert.equal(weekOptions("2026-V46",2,2)[0],"2026-V46","Dropdown must begin with current week");
+assert.deepEqual(weekOptions("2026-V46",2,2),["2026-V46","2026-V45","2026-V47","2026-V44","2026-V48"],"Dropdown offers past and future immediately");
 
 assert.deepEqual(rowCalendarRange("2026-V40","Torsdag","3 dagar"),{start:"2026-10-01",end:"2026-10-03"});
 assert.equal(estimatedHours({week:"2026-V47",day:"",duration:"3 veckor",effort:50}),60);
