@@ -1,6 +1,6 @@
 "use client";
 import {useEffect,useMemo,useState} from "react";
-import {createWeeklyV2Xlsx,readWeeklyV2Xlsx,normalizeISOWeek,durationLabel,splitPeriodIntoWeeks,currentWeekKey,shiftISOWeek,weekMonday,WEEK_DAYS,type WeeklyV2Row} from "@/lib/weekly-xlsx-v2";
+import {createWeeklyV2Xlsx,readWeeklyV2Xlsx,normalizeISOWeek,durationLabel,splitPeriodIntoWeeks,currentWeekKey,shiftISOWeek,weekOptions,formatWeekLabel,weekMonday,WEEK_DAYS,type WeeklyV2Row} from "@/lib/weekly-xlsx-v2";
 import type {FormValues} from "@/lib/individual-xlsx";
 import {asWeeklyRows} from "@/lib/weekly-export";
 import {scheduleDates,hoursForSchedule} from "@/lib/activity-calendar";
@@ -12,11 +12,8 @@ export default function WeeklyV2Page(){
  const [preview,setPreview]=useState<{created:number;updated:number;unchanged:number}|null>(null);
  const [selectedWeek,setSelectedWeek]=useState(()=>currentWeekKey());
  const [showAllWeeks,setShowAllWeeks]=useState(false);
- const weeks=useMemo(()=>{
-  const list=[] as string[];
-  for(let i=-104;i<=156;i++)list.push(shiftISOWeek(currentWeekKey(),i));
-  return list;
- },[]);
+ const weeks=useMemo(()=>weekOptions(currentWeekKey()),[]);
+ const thisWeek=currentWeekKey();
  const visibleRows=useMemo(()=>showAllWeeks?rows:rows.filter(r=>{
   try{const {start,end}=scheduleDates(r);const monday=weekMonday(selectedWeek);
    const sunday=new Date(monday);sunday.setUTCDate(sunday.getUTCDate()+6);
@@ -127,7 +124,7 @@ export default function WeeklyV2Page(){
    <div className="flex flex-wrap items-center gap-2">
     <button aria-label="Föregående vecka" onClick={()=>{setSelectedWeek(w=>shiftISOWeek(w,-1));setShowAllWeeks(false)}} className="rounded-lg border px-4 py-2">← Föregående</button>
     <select aria-label="Välj vecka" value={selectedWeek} onChange={e=>{setSelectedWeek(e.target.value);setShowAllWeeks(false)}} className="rounded-lg border px-4 py-2">
-     {weeks.map(w=><option key={w} value={w}>{w}{w===currentWeekKey()?" (aktuell vecka)":""}</option>)}
+     {weeks.map(w=><option key={w} value={w}>{formatWeekLabel(w,thisWeek)}</option>)}
     </select>
     <button aria-label="Nästa vecka" onClick={()=>{setSelectedWeek(w=>shiftISOWeek(w,1));setShowAllWeeks(false)}} className="rounded-lg border px-4 py-2">Nästa →</button>
     <button onClick={()=>{setSelectedWeek(currentWeekKey());setShowAllWeeks(false)}} className="rounded-lg border px-4 py-2">Aktuell vecka</button>
@@ -137,7 +134,7 @@ export default function WeeklyV2Page(){
   </section>
   <section className="overflow-x-auto rounded-xl border bg-white p-4"><h2 className="mb-3 font-semibold">Förhandsgranskning ({visibleRows.length} av {rows.length} rader)</h2><table className="w-full min-w-[950px] text-left text-sm">
    <thead><tr className="border-b bg-slate-100"><th className="p-2">Vecka</th><th className="p-2">Dag</th><th className="p-2">Aktivitet</th><th className="p-2">Varaktighet</th><th className="p-2">Insats</th><th className="p-2">Startdatum</th><th className="p-2">Slutdatum</th><th className="p-2">Timmar</th><th className="p-2">Projekt</th></tr></thead>
-   <tbody>{visibleRows.map((r,i)=><tr className="border-b" key={i}><td className="p-2">{r.week}</td><td className="p-2">{r.day||"Ej vald"}</td><td className="p-2">{r.task}</td><td className="p-2">{r.duration}</td><td className="p-2">{r.effort===null?"–":r.effort+" %"}</td><td className="p-2">{scheduleDates(r).start}</td><td className="p-2">{scheduleDates(r).end}</td><td className="p-2">{r.hours??hoursForSchedule(r)??"–"}</td><td className="p-2">{r.projectCode}</td></tr>)}</tbody></table>
+   <tbody>{visibleRows.map((r,i)=><tr className="border-b" key={i}><td className="p-2">{formatWeekLabel(r.week,thisWeek)}</td><td className="p-2">{r.day||"Ej vald"}</td><td className="p-2">{r.task}</td><td className="p-2">{r.duration}</td><td className="p-2">{r.effort===null?"–":r.effort+" %"}</td><td className="p-2">{scheduleDates(r).start}</td><td className="p-2">{scheduleDates(r).end}</td><td className="p-2">{r.hours??hoursForSchedule(r)??"–"}</td><td className="p-2">{r.projectCode}</td></tr>)}</tbody></table>
   </section>
  </div></main>;
 }
