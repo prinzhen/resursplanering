@@ -35,7 +35,7 @@ function asWeeklyRows(data:FormValues,employeeId:number,identities:Array<{uid:st
   const effort=periods.at(-1)?.effortPercent??first.effortPercent??null;
   const projectCode=first.projectCode||(first.kind==="Verksamhet"?"INTERNAL-VERK":first.kind==="Övrigt"?"INTERNAL-OVR":"");
   return {...dates,task:first.name,effort,workType:first.kind,
-   hours:first.hours??null,status:first.status,priority:first.priority,
+   hours:effort===null?first.hours??null:hoursForSchedule({...dates,effort}),status:first.status,priority:first.priority,
    deadline:first.dueDate||"",projectCode,projectName:first.link,
    firstWeek:parseOldWeek(first.firstWeek)||dates.week,comment:first.comment,moveReason:first.reason,
    activityId:activityId?"activity-"+activityId:uid,
