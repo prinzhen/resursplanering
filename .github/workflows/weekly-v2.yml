@@ -3,7 +3,7 @@ name: Weekly planning XLSX v2
 on:
   push:
     branches:
-      - feature/weekly-xlsx-v2-production-base
+      - feature/weekly-xlsx-v2-bf8e928-base
   workflow_dispatch:
 
 permissions:
