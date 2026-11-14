@@ -1,6 +1,6 @@
 "use client";
-import {useEffect,useState} from "react";
-import {createWeeklyV2Xlsx,readWeeklyV2Xlsx,normalizeISOWeek,durationLabel,splitPeriodIntoWeeks,WEEK_DAYS,type WeeklyV2Row} from "@/lib/weekly-xlsx-v2";
+import {useEffect,useMemo,useState} from "react";
+import {createWeeklyV2Xlsx,readWeeklyV2Xlsx,normalizeISOWeek,durationLabel,splitPeriodIntoWeeks,currentWeekKey,shiftISOWeek,weekMonday,WEEK_DAYS,type WeeklyV2Row} from "@/lib/weekly-xlsx-v2";
 import type {FormValues} from "@/lib/individual-xlsx";
 
 type Person={id:number;name:string;email:string};
@@ -23,13 +23,23 @@ function asWeeklyRows(data:FormValues,employeeId:number,identities:Array<{uid:st
   const days=rangeDuration(a.periodStart||"",a.periodEnd||"");
   const dateBased=!!a.periodStart&&!!a.periodEnd&&days!==null&&a.effortPercent!==null&&a.effortPercent!==undefined;
   const periods=dateBased?splitPeriodIntoWeeks(a.periodStart!,a.periodEnd!,a.effortPercent!):
-    [{week:parseOldWeek(a.week),day:"",hours:a.hours}];
+    [{week:parseOldWeek(a.week)||currentWeekKey(),day:"",hours:a.hours}];
   const activityId=byUid.get(a.uid),id=activityId?"activity-"+activityId:a.uid;
   return periods.map((p):WeeklyV2Row=>{
+   // Every exported week has its OWN calendar duration. Do not reapply the
+   // original multi-month duration to every single week when importing.
+   const monday=weekMonday(p.week),sunday=new Date(monday);
+   sunday.setUTCDate(sunday.getUTCDate()+6);
+   const mondayText=monday.toISOString().slice(0,10),sundayText=sunday.toISOString().slice(0,10);
+   const begin=dateBased&&a.periodStart!>mondayText?a.periodStart!:mondayText;
+   const finish=dateBased&&a.periodEnd!<sundayText?a.periodEnd!:sundayText;
+   const weekDays=dateBased?rangeDuration(begin,finish)!:days??7;
+   const day=dateBased?WEEK_DAYS[((new Date(begin+"T00:00:00Z").getUTCDay()+6)%7)+1]:p.day;
    const periodSource=(a.periodStart||a.week).replace(/[^a-zA-Z0-9-]/g,"");
-   return {week:p.week,day:p.day,task:a.name,duration:durationLabel(days??7),
+   const projectCode=a.projectCode||(a.kind==="Verksamhet"?"INTERNAL-VERK":a.kind==="Övrigt"?"INTERNAL-OVR":"");
+   return {week:p.week,day:dateBased?day:p.day,task:a.name,duration:durationLabel(weekDays),
     effort:a.effortPercent??null,workType:a.kind,hours:p.hours,status:a.status,priority:a.priority,
-    deadline:a.dueDate,projectCode:a.projectCode,projectName:a.link,
+    deadline:a.dueDate||"",projectCode,projectName:a.link,
     firstWeek:parseOldWeek(a.firstWeek)||p.week,comment:a.comment,moveReason:a.reason,
     activityId:id,rowKey:activityId?"legacy-"+employeeId+"-"+activityId+"-"+periodSource+"-"+p.week:"",
     rowRevision:0};
@@ -40,6 +50,14 @@ export default function WeeklyV2Page(){
  const [people,setPeople]=useState<Person[]>([]),[selected,setSelected]=useState(""),[rows,setRows]=useState<WeeklyV2Row[]>([]);
  const [error,setError]=useState(""),[message,setMessage]=useState(""),[loading,setLoading]=useState(false);
  const [preview,setPreview]=useState<{created:number;updated:number;unchanged:number}|null>(null);
+ const [selectedWeek,setSelectedWeek]=useState(()=>currentWeekKey());
+ const [showAllWeeks,setShowAllWeeks]=useState(false);
+ const weeks=useMemo(()=>{
+  const list=[] as string[];
+  for(let i=-104;i<=156;i++)list.push(shiftISOWeek(currentWeekKey(),i));
+  return list;
+ },[]);
+ const visibleRows=useMemo(()=>showAllWeeks?rows:rows.filter(r=>r.week===selectedWeek),[rows,selectedWeek,showAllWeeks]);
  useEffect(()=>{fetch("/api/data",{cache:"no-store"}).then(async r=>{
   if(r.status===401){window.location.assign("/login");return null}
   if(!r.ok)throw Error("Kunde inte läsa medarbetare");
@@ -51,6 +69,7 @@ export default function WeeklyV2Page(){
   setPeople(visible);
   if(visible.length===1)setSelected(visible[0].email);
  }).catch(e=>setError(String(e)))},[]);
+ useEffect(()=>{if(selected&&people.some(p=>p.email===selected)){void fetchRows(selected)}},[selected,people]);
  const fetchRows=async(email:string)=>{setSelected(email);setRows([]);setPreview(null);setError("");setMessage("");if(!email)return;setLoading(true);
   try{const r=await fetch("/api/individual?email="+encodeURIComponent(email)+"&includeClosed=1",{cache:"no-store"});
    const body=await r.json() as FormValues&{error?:string};if(!r.ok)throw Error(body.error||"API-fel");
@@ -70,8 +89,23 @@ export default function WeeklyV2Page(){
   }catch(e){setError(e instanceof Error?e.message:String(e))}finally{setLoading(false)}
  };
  const save=(items:WeeklyV2Row[],name:string)=>{
-  const blob=createWeeklyV2Xlsx(items);const url=URL.createObjectURL(blob);
-  const a=document.createElement("a");a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),2000);
+  setError("");
+  if(loading){setError("Planeringen läses in. Försök igen när inläsningen är klar.");return}
+  if(!selected){setError("Välj först en medarbetare.");return}
+  if(!items.length){setError("Det finns inga planeringsrader att exportera för detta urval.");return}
+  try{
+   const blob=createWeeklyV2Xlsx(items);
+   const url=URL.createObjectURL(blob),a=document.createElement("a");
+   a.href=url;a.download=name;document.body.append(a);a.click();a.remove();
+   setTimeout(()=>URL.revokeObjectURL(url),2000);
+   setMessage("Exporterade "+items.length+" planeringsrader.");
+  }catch(e){setError("Exporten misslyckades: "+(e instanceof Error?e.message:String(e)))}
+ };
+ const saveBlank=()=>{setError("");try{
+  const blob=createWeeklyV2Xlsx([]),url=URL.createObjectURL(blob),a=document.createElement("a");
+  a.href=url;a.download="veckoplanering-v2-mall.xlsx";document.body.append(a);a.click();a.remove();
+  setTimeout(()=>URL.revokeObjectURL(url),2000);
+ }catch(e){setError("Kunde inte skapa mallen: "+String(e))}
  };
  const openFile=async(file:File|null)=>{if(!file)return;setError("");try{
   const parsed=await readWeeklyV2Xlsx(file);setRows(parsed);setPreview(null);
@@ -101,10 +135,10 @@ export default function WeeklyV2Page(){
   {message&&<p className="rounded-lg border border-blue-200 bg-blue-50 p-4 text-blue-900">{message}</p>}
   <section className="rounded-xl border bg-white p-5"><h2 className="mb-4 font-semibold">Exportera eller läs XLSX</h2>
    <div className="flex flex-wrap items-center gap-3">
-    <select className="min-w-64 rounded-lg border p-2" value={selected} onChange={e=>fetchRows(e.target.value)}><option value="">Välj medarbetare</option>{people.map(p=><option key={p.id} value={p.email}>{p.name}</option>)}</select>
+    <select className="min-w-64 rounded-lg border p-2" value={selected} onChange={e=>setSelected(e.target.value)}><option value="">Välj medarbetare</option>{people.map(p=><option key={p.id} value={p.email}>{p.name}</option>)}</select>
     <button disabled={loading||!selected} onClick={()=>fetchRows(selected)} className="rounded-lg border px-4 py-2 disabled:opacity-50">Hämta planering</button>
-    <button onClick={()=>save(rows,"veckoplanering-v2.xlsx")} className="rounded-lg bg-blue-700 px-4 py-2 text-white">Exportera XLSX</button>
-    <button onClick={()=>save([],"veckoplanering-v2-mall.xlsx")} className="rounded-lg border px-4 py-2">Tom XLSX-mall</button>
+    <button disabled={loading||!selected||!rows.length} onClick={()=>save(rows,"veckoplanering-v2.xlsx")} className="rounded-lg bg-blue-700 px-4 py-2 text-white">Exportera XLSX</button>
+    <button onClick={saveBlank} className="rounded-lg border px-4 py-2">Tom XLSX-mall</button>
     <label className="cursor-pointer rounded-lg border px-4 py-2">Läs XLSX<input type="file" accept=".xlsx" className="hidden" onChange={e=>openFile(e.currentTarget.files?.[0]||null)}/></label>
    </div>
    <div className="mt-4 flex flex-wrap gap-3">
@@ -113,9 +147,22 @@ export default function WeeklyV2Page(){
    </div>
    <p className="mt-3 text-sm text-amber-800">V2-importen sparar separata planeringsposter och revisionshistorik. Den ändrar inte registrerad tid eller befintliga beläggningsperioder. En ny aktivitet måste först skapas i planeringsverktyget; Excel-raden måste ha ett befintligt aktivitets-ID och dold radnyckel.</p>
   </section>
-  <section className="overflow-x-auto rounded-xl border bg-white p-4"><h2 className="mb-3 font-semibold">Förhandsgranskning ({rows.length} rader)</h2><table className="w-full min-w-[950px] text-left text-sm">
+  <section className="rounded-xl border bg-white p-4 space-y-3">
+   <h2 className="font-semibold">Välj planeringsvecka</h2>
+   <div className="flex flex-wrap items-center gap-2">
+    <button aria-label="Föregående vecka" onClick={()=>{setSelectedWeek(w=>shiftISOWeek(w,-1));setShowAllWeeks(false)}} className="rounded-lg border px-4 py-2">← Föregående</button>
+    <select aria-label="Välj vecka" value={selectedWeek} onChange={e=>{setSelectedWeek(e.target.value);setShowAllWeeks(false)}} className="rounded-lg border px-4 py-2">
+     {weeks.map(w=><option key={w} value={w}>{w}{w===currentWeekKey()?" (aktuell vecka)":""}</option>)}
+    </select>
+    <button aria-label="Nästa vecka" onClick={()=>{setSelectedWeek(w=>shiftISOWeek(w,1));setShowAllWeeks(false)}} className="rounded-lg border px-4 py-2">Nästa →</button>
+    <button onClick={()=>{setSelectedWeek(currentWeekKey());setShowAllWeeks(false)}} className="rounded-lg border px-4 py-2">Aktuell vecka</button>
+    <label className="ml-2 flex items-center gap-2 text-sm"><input type="checkbox" checked={showAllWeeks} onChange={e=>setShowAllWeeks(e.target.checked)}/> Visa alla veckor</label>
+   </div>
+   <p className="text-sm text-slate-600">Veckoväljaren startar på aktuell vecka. Du kan bläddra bakåt eller framåt även över årsskiften. Personexporten omfattar alltid alla veckor.</p>
+  </section>
+  <section className="overflow-x-auto rounded-xl border bg-white p-4"><h2 className="mb-3 font-semibold">Förhandsgranskning ({visibleRows.length} av {rows.length} rader)</h2><table className="w-full min-w-[950px] text-left text-sm">
    <thead><tr className="border-b bg-slate-100"><th className="p-2">Vecka</th><th className="p-2">Dag</th><th className="p-2">Aktivitet</th><th className="p-2">Varaktighet</th><th className="p-2">Insats</th><th className="p-2">Timmar</th><th className="p-2">Projekt</th></tr></thead>
-   <tbody>{rows.map((r,i)=><tr className="border-b" key={i}><td className="p-2">{r.week}</td><td className="p-2">{r.day||"Ej vald"}</td><td className="p-2">{r.task}</td><td className="p-2">{r.duration}</td><td className="p-2">{r.effort===null?"–":r.effort+" %"}</td><td className="p-2">{r.hours??"–"}</td><td className="p-2">{r.projectCode}</td></tr>)}</tbody></table>
+   <tbody>{visibleRows.map((r,i)=><tr className="border-b" key={i}><td className="p-2">{r.week}</td><td className="p-2">{r.day||"Ej vald"}</td><td className="p-2">{r.task}</td><td className="p-2">{r.duration}</td><td className="p-2">{r.effort===null?"–":r.effort+" %"}</td><td className="p-2">{r.hours??"–"}</td><td className="p-2">{r.projectCode}</td></tr>)}</tbody></table>
   </section>
  </div></main>;
 }
