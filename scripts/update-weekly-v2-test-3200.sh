@@ -8,7 +8,7 @@ APP="/opt/resursplanering-weekly-v2"
 DATA="/var/lib/resursplanering-weekly-v2/data"
 SERVICE="resursplanering-weekly-v2.service"
 BRANCH="feature/weekly-xlsx-v2-bf8e928-base"
-VERSION="6b87b4c7be1671367aca841d463a4e801a6310cb"
+VERSION="57db22295af032d467394d244991310d8d4d0d0a"
 PREVIOUS="90ba2336e5fdcbe6a4aeea56e456bd759246fb3e"
 STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
 STAGE="/opt/.resursplanering-weekly-v2-stage-$STAMP"
@@ -39,8 +39,10 @@ for bin in git pnpm node python3 systemctl runuser curl;do
  command -v "$bin" >/dev/null || { echo "Saknar $bin" >&2;exit 1; }
 done
 [[ -d "$APP/.git" && -d "$DATA" && ! -L "$APP" && ! -L "$DATA" ]] || { echo "Testinstallation saknas." >&2;exit 1; }
-[[ "$(git -c safe.directory="$APP" -C "$APP" rev-parse HEAD)" == "$PREVIOUS" ]] ||
- { echo "Testversionen är inte den väntade. Avbryter säkert." >&2;exit 1; }
+CURRENT="$(git -c safe.directory="$APP" -C "$APP" rev-parse HEAD)"
+if [[ "$CURRENT" != "$PREVIOUS" && "$CURRENT" != "6b87b4c7be1671367aca841d463a4e801a6310cb" ]];then
+ echo "Testversion $CURRENT är inte en av de godkända föregående versionerna. Avbryter." >&2;exit 1
+fi
 systemctl is-active --quiet "$SERVICE" || { echo "Testtjänsten är inte aktiv." >&2;exit 1; }
 systemctl is-active --quiet resursplanering.service || { echo "Produktion är inte aktiv." >&2;exit 1; }
 [[ ! -e "$STAGE" && ! -e "$OLD" && ! -e "$BACKUP" ]] || { echo "Katalogkollision." >&2;exit 1; }
