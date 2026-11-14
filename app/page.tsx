@@ -1,6 +1,7 @@
 "use client";
 import {useEffect,useMemo,useRef,useState} from "react";
 import {sortEmployeeProjects} from "@/lib/project-sort";
+import {weeklyOverridePercent,type WeeklyLoadRow} from "@/lib/weekly-load";
 import {ganttState,ganttColor} from "@/lib/gantt-status";
 import QuickActivityDialog from "@/components/quick-activity-dialog";
 import TimeTrackingPanel from "@/components/time-tracking-panel";
@@ -13,7 +14,7 @@ type Employee={id:number;name:string;email:string;role:string;managerId:number|n
 type DeleteImpact={kind:"project"|"workPackage"|"activity";id:number;entryCount:number;activeEntryCount:number;deletedEntryCount:number;runningEntryCount:number;totalSeconds:number;fingerprint:string};
 type DeleteDestination={id:number;name:string;code:string|null;projectId:number;projectCode:string;projectName:string};
 type DeletePreview={impact:DeleteImpact;targets:DeleteDestination[]};
-type Data={viewer?:Viewer;projectDirectory?:Project[];employees:Employee[];projects:Project[];workPackages:WorkPackage[];activities:WorkActivity[];assignments:Assignment[];assignmentPeriods:EffortPeriod[];activityPriorityHistory?:ActivityPriorityEvent[];projectMembers:ProjectMember[];employeeProjectOrders:EmployeeProjectOrder[];employeeGroups:EmployeeGroup[];employeeGroupMembers:EmployeeGroupMember[];
+type Data={weeklyPlanRows?:WeeklyLoadRow[];viewer?:Viewer;projectDirectory?:Project[];employees:Employee[];projects:Project[];workPackages:WorkPackage[];activities:WorkActivity[];assignments:Assignment[];assignmentPeriods:EffortPeriod[];activityPriorityHistory?:ActivityPriorityEvent[];projectMembers:ProjectMember[];employeeProjectOrders:EmployeeProjectOrder[];employeeGroups:EmployeeGroup[];employeeGroupMembers:EmployeeGroupMember[];
  employeeDirectory?:{id:number;name:string}[];
  projectLeaders?:{projectId:number;employeeId:number;employeeName?:string}[];
  teamLeaders?:{teamId:number;employeeId:number;employeeName?:string}[];
@@ -41,14 +42,14 @@ function loadOnDate(data:Data,employeeId:number,day:string){
   .filter(a=>day<today||(!a.completedAt&&!["Fryst","Pausad"].includes(a.workStatus||"")))
   .reduce((total,a)=>{
    if(a.completedAt&&day>a.completedAt)return total;
-   return total+assignmentPeriods(a,data)
-    .filter(p=>p.startDate<=day&&p.endDate>=day)
+   const weekly=weeklyOverridePercent(data.weeklyPlanRows||[],a.activityId,a.employeeId,day);
+   if(weekly!==undefined)return total+weekly;
+   return total+assignmentPeriods(a,data).filter(p=>p.startDate<=day&&p.endDate>=day)
     .reduce((sum,p)=>sum+p.effortPercent,0);
   },0);
 }
 function currentLoad(d:Data,employeeId:number,day=new Date().toISOString().slice(0,10)){
- return d.assignments.filter(a=>a.employeeId===employeeId&&!a.completedAt&&!["Fryst","Pausad"].includes(a.workStatus||""))
-   .reduce((sum,a)=>sum+assignmentPeriods(a,d).filter(p=>p.startDate<=day&&p.endDate>=day).reduce((n,p)=>n+p.effortPercent,0),0);
+ return loadOnDate(d,employeeId,day);
 }
 function workingDays(start:string,end:string){
  if(start>end)return 0;const from=new Date(start+"T00:00:00Z"),to=new Date(end+"T00:00:00Z");
@@ -58,16 +59,29 @@ function workingDays(start:string,end:string){
 }
 function workload(data:Data,employeeId:number,start:string,end:string){
  const total=workingDays(start,end);if(!total)return 0;
+ const today=new Date().toISOString().slice(0,10);
  let weighted=0;
  for(const a of data.assignments){
-  // Current status must not erase recorded planning from past months.
-  // For today/future, continue to exclude paused/frozen assignments.
-  const historical=end<new Date().toISOString().slice(0,10);
+  const historical=end<today;
   if(a.employeeId!==employeeId||(!historical&&["Fryst","Pausad"].includes(a.workStatus||"")))continue;
-  for(const p of assignmentPeriods(a,data)){
-   const effectiveEnd=a.completedAt&&a.completedAt<p.endDate?a.completedAt:p.endDate;
-   const first=p.startDate>start?p.startDate:start,last=effectiveEnd<end?effectiveEnd:end;
-   weighted+=p.effortPercent*workingDays(first,last);
+  const periods=assignmentPeriods(a,data);
+  const hasWeekly=(data.weeklyPlanRows||[]).some(x=>x.activityId===a.activityId&&x.employeeId===employeeId);
+  if(!hasWeekly){
+   for(const p of periods){
+    const effectiveEnd=a.completedAt&&a.completedAt<p.endDate?a.completedAt:p.endDate;
+    const first=p.startDate>start?p.startDate:start,last=effectiveEnd<end?effectiveEnd:end;
+    weighted+=p.effortPercent*workingDays(first,last);
+   }
+   continue;
+  }
+  const d=new Date(start+"T00:00:00Z"),last=new Date(end+"T00:00:00Z");
+  while(d<=last){
+   const weekday=d.getUTCDay(),day=d.toISOString().slice(0,10);
+   if(weekday!==0&&weekday!==6&&(!a.completedAt||day<=a.completedAt)){
+    const override=weeklyOverridePercent(data.weeklyPlanRows||[],a.activityId,employeeId,day);
+    weighted+=override??periods.filter(p=>p.startDate<=day&&p.endDate>=day).reduce((sum,p)=>sum+p.effortPercent,0);
+   }
+   d.setUTCDate(d.getUTCDate()+1);
   }
  }
  return Math.round(weighted/total);
