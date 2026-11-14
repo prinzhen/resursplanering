@@ -4,6 +4,8 @@ set -Eeuo pipefail
 umask 077
 [[ $EUID -eq 0 ]] || { echo "Kör med sudo." >&2; exit 1; }
 BRANCH="feature/weekly-xlsx-v2-production-base"
+RELEASE_SHA="2951aa3b8e30b7a84bc996f2901646c889b40bac"
+PRODUCTION_SHA="7c2c7bea2d20d0e1494c727619dcdadb0204e441"
 SOURCE="/var/lib/resursplanering/data"
 if [[ -v SOURCE_DATA_DIR ]]; then SOURCE="$SOURCE_DATA_DIR"; fi
 ROOT="/opt/resursplanering-weekly-v2"
@@ -17,7 +19,11 @@ for bin in git node pnpm python3 ss systemctl runuser curl id getent; do
  command -v "$bin" >/dev/null || { echo "Saknar $bin" >&2; exit 1; }
 done
 id "$RUN_USER" >/dev/null || { echo "Saknar användare $RUN_USER" >&2; exit 1; }
-[[ -d "$SOURCE" ]] || { echo "Saknar källdatabas $SOURCE" >&2; exit 1; }
+[[ -d "$SOURCE" && ! -L "$SOURCE" ]] || { echo "Saknar giltig källdatabas $SOURCE" >&2; exit 1; }
+[[ "$SOURCE" != "$BASE"* ]] || { echo "Testkatalog får inte vara källdatabas." >&2; exit 1; }
+[[ -d /opt/resursplanering ]] || { echo "Saknar produktionskatalog." >&2; exit 1; }
+current_prod="$(git -c safe.directory=/opt/resursplanering -C /opt/resursplanering rev-parse HEAD)"
+[[ "$current_prod" == "$PRODUCTION_SHA" ]] || { echo "Produktion har en annan revision: $current_prod. Datakopian kräver ny granskning." >&2; exit 1; }
 [[ ! -e "$ROOT" && ! -e "$BASE" && ! -e "/etc/systemd/system/$SERVICE" ]] ||
  { echo "Testinstallation finns redan. Avbryter utan ändring." >&2; exit 1; }
 if ss -lntH '( sport = :3200 )' | grep -q .; then
@@ -30,6 +36,8 @@ read -r -p "Skriv INSTALLERA TEST för att fortsätta: " answer
 [[ "$answer" == "INSTALLERA TEST" ]] || { echo "Avbrutet."; exit 0; }
 echo "[1/6] Klonar produktionsbaserad utvecklingsgren."
 git clone --single-branch --branch "$BRANCH" https://github.com/prinzhen/resursplanering.git "$ROOT"
+git -C "$ROOT" checkout --quiet --detach "$RELEASE_SHA"
+[[ "$(git -C "$ROOT" rev-parse HEAD)" == "$RELEASE_SHA" ]] || { echo "Fel GitHub-version." >&2; exit 1; }
 cd "$ROOT"
 echo "[2/6] Bygger och kör tester före installation."
 pnpm install --frozen-lockfile
@@ -115,3 +123,4 @@ status="$(curl --max-time 5 -sS -o /dev/null -w '%{http_code}' http://127.0.0.1:
 echo "KLART – testtjänsten använder separat kod och separat SQLite-databas."
 echo "SSH-tunnel: ssh -L 3200:127.0.0.1:3200 $RUN_USER@PLANERING-IP"
 echo "Webbläsare: http://localhost:3200/weekly-v2"
+echo "Installerad Git-revision: $RELEASE_SHA"
