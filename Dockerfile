@@ -17,6 +17,7 @@ RUN pnpm build
 RUN pnpm exec tsc --noEmit
 RUN node scripts/test-effort-history.mjs
 RUN node scripts/test-individual-xlsx-layout.mjs
+RUN node scripts/test-weekly-v2.mjs
 RUN node scripts/test-individual-integration.mjs
 RUN node scripts/test-role-access.mjs
 RUN node scripts/test-tidrapport-sync.mjs
