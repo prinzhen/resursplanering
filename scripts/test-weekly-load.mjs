@@ -14,7 +14,7 @@ const mixed=[...daily,{...weekly[0],weekday:null,hours:10}];
 assert.equal(weeklyOverridePercent(mixed,7,3,"2026-11-19"),125);
 assert.equal(weeklyOverridePercent(mixed,7,3,"2026-11-18"),25);
 assert.equal(weeklyOverridePercent(weekly,7,99,"2026-11-19"),undefined);
-const threeDays=[{...daily,durationDays:3,hours:12}]; // Thu-Fri-Sat = 2 workdays
+const threeDays=[{...daily[0],durationDays:3,hours:12}]; // Thu-Fri-Sat = 2 workdays
 assert.equal(weeklyOverridePercent(threeDays,7,3,"2026-11-19"),75);
 assert.equal(weeklyOverridePercent(threeDays,7,3,"2026-11-20"),75);
 assert.equal(weeklyOverridePercent(threeDays,7,3,"2026-11-21"),0);
