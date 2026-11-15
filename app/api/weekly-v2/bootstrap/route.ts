@@ -61,7 +61,7 @@ export async function POST(req:Request){
    if(!Number.isFinite(hours)||hours<0||hours>100000)throw Error("Ogiltiga timmar.");
    activities.push({uid:"",week:row.week.replace("-V","-W"),name:row.task,kind,
     link:text(row.projectName),projectCode:kind==="Projekt"?code:"",hours,
-    status:row.status||"Planerad",priority:row.priority||"3",dueDate:row.deadline||"",
+    status:row.status==="Flyttad"?"Planerad":row.status||"Planerad",priority:row.priority||"3",dueDate:row.deadline||"",
     comment:row.comment||"",firstWeek:(row.firstWeek||row.week).replace("-V","-W"),
     reason:row.moveReason||"",periodStart:dates.start,periodEnd:dates.end,effortPercent:effort});
   }
