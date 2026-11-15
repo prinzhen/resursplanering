@@ -9,7 +9,9 @@ type Person={id:number;name:string;email:string};
 export default function WeeklyV2Page(){
  const [people,setPeople]=useState<Person[]>([]),[selected,setSelected]=useState(""),[rows,setRows]=useState<WeeklyV2Row[]>([]);
  const [error,setError]=useState(""),[message,setMessage]=useState(""),[loading,setLoading]=useState(false);
- const [preview,setPreview]=useState<{created:number;updated:number;unchanged:number}|null>(null);
+ const [preview,setPreview]=useState<{created:number;updated:number;unchanged:number;employeesCreated:number;projectsCreated:number;activitiesCreated:number}|null>(null);
+ const [filePerson,setFilePerson]=useState<{name:string;email:string}|null>(null);
+ const [fromFile,setFromFile]=useState(false);
  const [selectedWeek,setSelectedWeek]=useState(()=>currentWeekKey());
  const [showAllWeeks,setShowAllWeeks]=useState(false);
  const weeks=useMemo(()=>weekOptions(currentWeekKey()),[]);
@@ -32,7 +34,7 @@ export default function WeeklyV2Page(){
   if(visible.length===1)setSelected(visible[0].email);
  }).catch(e=>setError(String(e)))},[]);
  useEffect(()=>{if(selected&&people.some(p=>p.email===selected)){void fetchRows(selected)}},[selected,people]);
- const fetchRows=async(email:string)=>{setSelected(email);setRows([]);setPreview(null);setError("");setMessage("");if(!email)return;setLoading(true);
+ const fetchRows=async(email:string)=>{setSelected(email);setRows([]);setPreview(null);setFilePerson(null);setFromFile(false);setError("");setMessage("");if(!email)return;setLoading(true);
   try{const r=await fetch("/api/individual?email="+encodeURIComponent(email)+"&includeClosed=1",{cache:"no-store"});
    const body=await r.json() as FormValues&{error?:string};if(!r.ok)throw Error(body.error||"API-fel");
    const person=people.find(p=>p.email===email);if(!person)throw Error("Välj en medarbetare.");
@@ -66,7 +68,8 @@ export default function WeeklyV2Page(){
   if(!selected){setError("Välj först en medarbetare.");return}
   if(!items.length){setError("Det finns inga planeringsrader att exportera för detta urval.");return}
   try{
-   const blob=createWeeklyV2Xlsx(items);
+   const who=people.find(p=>p.email===selected);
+   const blob=createWeeklyV2Xlsx(items,currentWeekKey(),{name:who?.name||filePerson?.name||"",email:selected||filePerson?.email||""});
    const url=URL.createObjectURL(blob),a=document.createElement("a");
    a.href=url;a.download=name;document.body.appendChild(a);a.click();a.remove();
    setTimeout(()=>URL.revokeObjectURL(url),2000);
@@ -74,28 +77,87 @@ export default function WeeklyV2Page(){
   }catch(e){setError("Exporten misslyckades: "+(e instanceof Error?e.message:String(e)))}
  };
  const saveBlank=()=>{setError("");try{
-  const blob=createWeeklyV2Xlsx([]),url=URL.createObjectURL(blob),a=document.createElement("a");
+  const who=people.find(p=>p.email===selected);
+  const blob=createWeeklyV2Xlsx([],currentWeekKey(),{name:who?.name||"",email:who?.email||""}),url=URL.createObjectURL(blob),a=document.createElement("a");
   a.href=url;a.download="veckoplanering-v2-mall.xlsx";document.body.appendChild(a);a.click();a.remove();
   setTimeout(()=>URL.revokeObjectURL(url),2000);
  }catch(e){setError("Kunde inte skapa mallen: "+String(e))}
  };
  const openFile=async(file:File|null)=>{if(!file)return;setError("");try{
-  const parsed=await readWeeklyV2Xlsx(file);setRows(parsed);setPreview(null);
-  setMessage("Validerade "+parsed.length+" rader. Klicka Förhandsgranska ändringar innan du sparar.");
+  const parsed=await readWeeklyV2Xlsx(file);
+  const email=parsed.email||selected;
+  const known=people.find(p=>p.email.toLowerCase()===email.toLowerCase());
+  if(!email)throw Error("E-postadress saknas i filen. Fyll i e-post i Excel och exportera/importera igen.");
+  if(!parsed.name&&!known)throw Error("Namn saknas i den personliga Excel-filen.");
+  setFilePerson({name:parsed.name||known?.name||"",email});
+  setSelected(known?.email||"");
+  setRows(parsed.rows);setFromFile(true);setPreview(null);
+  setMessage("Läste "+parsed.rows.length+" aktivitetsrader för "+(parsed.name||known?.name||email)+
+    ". Förhandsgranska vilka poster som ska skapas eller uppdateras.");
  }catch(e){setError(e instanceof Error?e.message:String(e))}
  };
  const importRows=async(commit:boolean)=>{
-  const person=people.find(p=>p.email===selected);if(!person){setError("Välj medarbetare.");return}
+  if(!fromFile){setError("Läs in en personlig Excel-fil först.");return}
+  const person=filePerson;
+  if(!person?.email){setError("Excel-filen måste innehålla e-postadress.");return}
+  const existing=people.find(p=>p.email.toLowerCase()===person.email.toLowerCase());
+  const newRows=rows.filter(r=>!r.activityId.trim());
+  const existingRows=rows.filter(r=>!!r.activityId.trim());
+  if(existingRows.length&&!existing){
+   setError("Filen innehåller befintliga aktivitets-ID:n, men medarbetaren finns inte eller är inte tillgänglig för dig.");
+   return;
+  }
   setError("");setLoading(true);
   try{
-   const response=await fetch("/api/weekly-v2",{method:"POST",headers:{"content-type":"application/json"},
-    body:JSON.stringify({employeeId:person.id,rows,commit})});
-   const result=await response.json() as {error?:string;preview:{created:number;updated:number;unchanged:number};committed:boolean};
-   if(!response.ok)throw Error(result.error||"Importen avbröts");
-   setPreview(result.preview);
-   if(commit){setMessage("Sparade "+(result.preview.created+result.preview.updated)+" planeringsposter och synkroniserade Gantt-datumen. Rapporterad tid är oförändrad.");
-    await fetchRows(person.email);
-   }else{setMessage("Förhandsgranskning: "+result.preview.created+" nya, "+result.preview.updated+" ändrade, "+result.preview.unchanged+" oförändrade.")}
+   let existingPreview={created:0,updated:0,unchanged:0};
+   const request=async(url:string,body:unknown)=>{
+    const response=await fetch(url,{method:"POST",headers:{"content-type":"application/json"},
+     body:JSON.stringify(body)});
+    const result=await response.json() as {error?:string;preview?:{created:number;updated:number;unchanged:number;employeesCreated:number;projectsCreated:number;activitiesCreated:number}};
+    if(!response.ok)throw Error(result.error||"Importen avbröts");
+    return result;
+   };
+   // Always validate existing revision keys BEFORE any new objects are created.
+   if(existingRows.length&&existing){
+    const p=await request("/api/weekly-v2",{employeeId:existing.id,rows:existingRows,commit:false});
+    existingPreview=p.preview||existingPreview;
+   }
+   let createdPreview={employeesCreated:0,projectsCreated:0,activitiesCreated:0};
+   if(newRows.length||!existing){
+    const p=await request("/api/weekly-v2/bootstrap",{name:person.name,email:person.email,rows:newRows,commit:false});
+    createdPreview={...createdPreview,...p.preview};
+   }
+   const summary={...existingPreview,...createdPreview};
+   setPreview(summary);
+   if(!commit){
+    setMessage("Förhandsgranskning: "+summary.activitiesCreated+" nya aktiviteter, "+
+      summary.projectsCreated+" nya projekt, "+summary.employeesCreated+" nya medarbetare, "+
+      summary.updated+" ändrade aktiviteter och "+summary.unchanged+" oförändrade.");
+    return;
+   }
+   if(!preview){throw Error("Klicka Förhandsgranska ändringar före Godkänn och spara.");}
+   let created=false;
+   try{
+    if(newRows.length||!existing){
+     await request("/api/weekly-v2/bootstrap",{name:person.name,email:person.email,rows:newRows,commit:true});
+     created=true;
+    }
+    if(existingRows.length&&existing){
+     await request("/api/weekly-v2",{employeeId:existing.id,rows:existingRows,commit:true});
+    }
+   }catch(e){
+    if(created)throw Error("De nya posterna kan ha registrerats, men uppdatering av befintliga aktiviteter misslyckades. Kontrollera databasen och exportera på nytt innan du försöker igen. "+String(e));
+    throw e;
+   }
+   setFromFile(false);setPreview(null);
+   const email=person.email;
+   const list=await fetch("/api/data",{cache:"no-store"}).then(r=>r.json()) as {employees:Person[]};
+   setPeople(list.employees||[]);
+   const selectedPerson=(list.employees||[]).find(p=>p.email.toLowerCase()===email.toLowerCase());
+   if(selectedPerson){
+    setSelected(selectedPerson.email);
+    setMessage("Import genomförd. Nya personer, projekt och aktiviteter har registrerats. Exportera om för uppdaterade ID:n.");
+   }else setMessage("Import genomförd. Ladda om sidan för att visa personen.");
   }catch(e){setError(e instanceof Error?e.message:String(e))}
   finally{setLoading(false)}
  };
@@ -105,7 +167,7 @@ export default function WeeklyV2Page(){
    <a className="rounded-lg border bg-white px-4 py-2 text-sm" href="/individual">← Befintlig veckoplanering</a></header>
   {error&&<p role="alert" className="rounded-lg border border-red-300 bg-red-50 p-4 text-red-800">{error}</p>}
   {message&&<p className="rounded-lg border border-blue-200 bg-blue-50 p-4 text-blue-900">{message}</p>}
-  <section className="rounded-xl border bg-white p-5"><h2 className="mb-4 font-semibold">Exportera eller läs XLSX</h2>
+  <section className="rounded-xl border bg-white p-5"><h2 className="mb-4 font-semibold">Personlig Excel-planering – namn och e-post identifierar medarbetaren</h2>
    <div className="flex flex-wrap items-center gap-3">
     <select className="min-w-64 rounded-lg border p-2" value={selected} onChange={e=>setSelected(e.target.value)}><option value="">Välj medarbetare</option>{people.map(p=><option key={p.id} value={p.email}>{p.name}</option>)}</select>
     <button disabled={loading||!selected} onClick={()=>fetchRows(selected)} className="rounded-lg border px-4 py-2 disabled:opacity-50">Hämta planering</button>
@@ -114,10 +176,11 @@ export default function WeeklyV2Page(){
     <label className="cursor-pointer rounded-lg border px-4 py-2">Läs XLSX<input type="file" accept=".xlsx" className="hidden" onChange={e=>openFile(e.currentTarget.files?.[0]||null)}/></label>
    </div>
    <div className="mt-4 flex flex-wrap gap-3">
-    <button disabled={loading||!rows.length} onClick={()=>importRows(false)} className="rounded-lg border border-blue-400 px-4 py-2 disabled:opacity-50">Förhandsgranska ändringar</button>
-    <button disabled={loading||!preview||preview.created+preview.updated===0} onClick={()=>importRows(true)} className="rounded-lg bg-emerald-700 px-4 py-2 text-white disabled:opacity-50">Godkänn och spara planeringsposter</button>
+    <button disabled={loading||!fromFile} onClick={()=>importRows(false)} className="rounded-lg border border-blue-400 px-4 py-2 disabled:opacity-50">Förhandsgranska ändringar</button>
+    <button disabled={loading||!preview||!(preview.activitiesCreated+preview.projectsCreated+preview.employeesCreated+preview.created+preview.updated)} onClick={()=>importRows(true)} className="rounded-lg bg-emerald-700 px-4 py-2 text-white disabled:opacity-50">Godkänn och spara planeringsposter</button>
    </div>
-   <p className="mt-3 text-sm text-amber-800">En aktivitet visas som en rad, även vid tio veckors varaktighet. Ändrad vecka/dag flyttar både start och slut; ändrad varaktighet ändrar bara slut. Vid godkänd import uppdateras Gantt och enkla resursperioder. Redan rapporterad tid ändras aldrig. För aktiviteter med särskilda resursperioder krävs manuell granskning. Nya aktiviteter skapas fortfarande först i planeringsverktyget.</p>
+   {filePerson&&<p className="mt-3 rounded-lg bg-blue-50 p-3 text-sm text-blue-900">Filens medarbetare: <b>{filePerson.name}</b> · {filePerson.email} {people.some(p=>p.email.toLowerCase()===filePerson.email.toLowerCase())?"(finns registrerad)":"(ny medarbetare – kräver administratör/gruppchef)"}</p>}
+   <p className="mt-3 text-sm text-amber-800">En aktivitet visas som en rad, även vid tio veckors varaktighet. Ändrad vecka/dag flyttar både start och slut; ändrad varaktighet ändrar bara slut. Vid godkänd import uppdateras Gantt och enkla resursperioder. Redan rapporterad tid ändras aldrig. För aktiviteter med särskilda resursperioder krävs manuell granskning. Saknade medarbetare, projekt och aktiviteter kan skapas från Excel enligt samma behörighetsregler som i version 1.</p>
   </section>
   <section className="rounded-xl border bg-white p-4 space-y-3">
    <h2 className="font-semibold">Välj planeringsvecka</h2>
