@@ -151,9 +151,12 @@ export default function WeeklyV2Page(){
    }
    setFromFile(false);setPreview(null);
    const email=person.email;
-   const list=await fetch("/api/data",{cache:"no-store"}).then(r=>r.json()) as {employees:Person[]};
-   setPeople(list.employees||[]);
-   const selectedPerson=(list.employees||[]).find(p=>p.email.toLowerCase()===email.toLowerCase());
+   const list=await fetch("/api/data",{cache:"no-store"}).then(r=>r.json()) as {
+    employees:Person[];viewer?:{employeeId:number|null;isAdmin:boolean;isGroupManager:boolean;managedEmployeeIds:number[]}};
+   const allowed=(list.employees||[]).filter(p=>list.viewer?.isAdmin||p.id===list.viewer?.employeeId||
+    (list.viewer?.isGroupManager&&list.viewer.managedEmployeeIds.includes(p.id)));
+   setPeople(allowed);
+   const selectedPerson=allowed.find(p=>p.email.toLowerCase()===email.toLowerCase());
    if(selectedPerson){
     setSelected(selectedPerson.email);
     setMessage("Import genomförd. Nya personer, projekt och aktiviteter har registrerats. Exportera om för uppdaterade ID:n.");
