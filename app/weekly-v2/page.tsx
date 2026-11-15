@@ -171,7 +171,7 @@ export default function WeeklyV2Page(){
    <div className="flex flex-wrap items-center gap-3">
     <select className="min-w-64 rounded-lg border p-2" value={selected} onChange={e=>setSelected(e.target.value)}><option value="">Välj medarbetare</option>{people.map(p=><option key={p.id} value={p.email}>{p.name}</option>)}</select>
     <button disabled={loading||!selected} onClick={()=>fetchRows(selected)} className="rounded-lg border px-4 py-2 disabled:opacity-50">Hämta planering</button>
-    <button disabled={loading||!selected||!rows.length} onClick={()=>save(rows,"veckoplanering-v2.xlsx")} className="rounded-lg bg-blue-700 px-4 py-2 text-white">Exportera XLSX</button>
+    <button disabled={loading||!selected||!rows.length} onClick={()=>save(rows,"veckoplanering-"+selected.replace(/[^a-z0-9._-]/gi,"_")+"-v2.xlsx")} className="rounded-lg bg-blue-700 px-4 py-2 text-white">Exportera XLSX</button>
     <button onClick={saveBlank} className="rounded-lg border px-4 py-2">Tom XLSX-mall</button>
     <label className="cursor-pointer rounded-lg border px-4 py-2">Läs XLSX<input type="file" accept=".xlsx" className="hidden" onChange={e=>openFile(e.currentTarget.files?.[0]||null)}/></label>
    </div>
