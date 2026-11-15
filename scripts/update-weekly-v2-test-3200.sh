@@ -8,7 +8,7 @@ APP="/opt/resursplanering-weekly-v2"
 DATA="/var/lib/resursplanering-weekly-v2/data"
 SERVICE="resursplanering-weekly-v2.service"
 BRANCH="feature/weekly-xlsx-v2-bf8e928-base"
-VERSION="55842ab6cc87381af2cf66140207faeb906dbd6c"
+VERSION="3940bb553691e91be403e2f546ece12b5fb8f75a"
 PREVIOUS="90ba2336e5fdcbe6a4aeea56e456bd759246fb3e"
 STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
 STAGE="/opt/.resursplanering-weekly-v2-stage-$STAMP"
@@ -40,13 +40,15 @@ for bin in git pnpm node python3 systemctl runuser curl;do
 done
 [[ -d "$APP/.git" && -d "$DATA" && ! -L "$APP" && ! -L "$DATA" ]] || { echo "Testinstallation saknas." >&2;exit 1; }
 CURRENT="$(git -c safe.directory="$APP" -C "$APP" rev-parse HEAD)"
-if [[ "$CURRENT" != "$PREVIOUS" && "$CURRENT" != "6b87b4c7be1671367aca841d463a4e801a6310cb" && "$CURRENT" != "9a68562c8543593ac0d91d6d6d89e484608e3b90" ]];then
+if [[ "$CURRENT" != "$PREVIOUS" && "$CURRENT" != "6b87b4c7be1671367aca841d463a4e801a6310cb" && "$CURRENT" != "9a68562c8543593ac0d91d6d6d89e484608e3b90" && "$CURRENT" != "55842ab6cc87381af2cf66140207faeb906dbd6c" ]];then
  echo "Testversion $CURRENT är inte en av de godkända föregående versionerna. Avbryter." >&2;exit 1
 fi
 systemctl is-active --quiet "$SERVICE" || { echo "Testtjänsten är inte aktiv." >&2;exit 1; }
 systemctl is-active --quiet resursplanering.service || { echo "Produktion är inte aktiv." >&2;exit 1; }
 [[ ! -e "$STAGE" && ! -e "$OLD" && ! -e "$BACKUP" ]] || { echo "Katalogkollision." >&2;exit 1; }
 echo "Uppdaterar enbart TEST på 3200. Skarp port 3000 berörs inte."
+echo "Nuvarande version: $CURRENT"
+echo "Ny version: $VERSION"
 read -r -p "Skriv JA UPPDATERA TEST för att fortsätta: " answer
 [[ "$answer" == "JA UPPDATERA TEST" ]] || { echo "Avbrutet.";exit 0; }
 echo "[1/5] Bygger ny testkod separat."
