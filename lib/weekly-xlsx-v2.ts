@@ -159,36 +159,40 @@ const cell=(ref:string,v:string|number|null|undefined,style=0)=>{
  return '<c r="'+ref+'" s="'+style+'" t="inlineStr"><is><t xml:space="preserve">'+enc(v)+'</t></is></c>';
 };
 const column=(index:number)=>String.fromCharCode(65+index);
-export function createWeeklyV2Xlsx(rows:WeeklyV2Row[],base=currentWeekKey()):Blob{
+export function createWeeklyV2Xlsx(rows:WeeklyV2Row[],base=currentWeekKey(),person:{name:string;email:string}={name:"",email:""}):Blob{
  if(rows.length>5000)throw Error("Max 5000 rader per export.");
  const exportYear=Number(normalizeISOWeek(base).slice(0,4));
- const body=['<row r="1">'+WEEKLY_COLUMNS.map((h,i)=>cell(column(i)+"1",h,1)).join("")+cell("T1",exportYear)+'</row>'];
+ const body=[
+  '<row r="1">'+cell("A1","PERSONLIG VECKOPLANERING",1)+cell("T1",exportYear)+'</row>',
+  '<row r="2">'+cell("A2","Namn",1)+cell("B2",person.name)+cell("D2","E-postadress",1)+cell("E2",person.email)+'</row>',
+  '<row r="4">'+WEEKLY_COLUMNS.map((h,i)=>cell(column(i)+"4",h,1)).join("")+'</row>'
+ ];
  rows.forEach((row,i)=>{
   validateWeeklyV2(row);
   const values=[formatWeekLabel(row.week,base),row.day,row.task,row.duration,row.effort,row.workType,
    row.hours,row.status,row.priority,row.deadline,row.projectCode,row.projectName,row.firstWeek?formatWeekLabel(row.firstWeek,base):"",
    row.comment,row.moveReason,row.activityId];
-  const ref=i+2;
+  const ref=i+5;
   body.push('<row r="'+ref+'">'+values.map((v,n)=>cell(column(n)+ref,v)).join("")+
    cell("Q"+ref,row.rowKey||"")+cell("R"+ref,row.rowRevision??0)+'</row>');
  });
  // The dropdown starts at the CURRENT Swedish calendar week and includes
  // future and past weeks, including year boundaries. Hidden helper column S.
  weekOptions(base).forEach((week,i)=>{
-  const number=i+2,extra=cell("S"+number,formatWeekLabel(week,base));
+  const number=i+5,extra=cell("S"+number,formatWeekLabel(week,base));
   const idx=body.findIndex(r=>r.startsWith('<row r="'+number+'">'));
   if(idx>=0)body[idx]=body[idx].replace("</row>",extra+"</row>");
   else body.push('<row r="'+number+'">'+extra+"</row>");
  });
  body.sort((a,b)=>Number(/<row r="(\d+)"/.exec(a)?.[1]||0)-Number(/<row r="(\d+)"/.exec(b)?.[1]||0));
  const validation=[
-  '<dataValidation type="list" allowBlank="1" showErrorMessage="0" sqref="A2:A5001 M2:M5001"><formula1>$S$2:$S$262</formula1></dataValidation>',
-  '<dataValidation type="list" allowBlank="1" sqref="B2:B5001"><formula1>"Måndag,Tisdag,Onsdag,Torsdag,Fredag,Lördag,Söndag"</formula1></dataValidation>',
-  '<dataValidation type="list" allowBlank="1" sqref="H2:H5001"><formula1>"Planerad,Pågående,Pausad,Klar,Fryst,Flyttad"</formula1></dataValidation>',
-  '<dataValidation type="list" allowBlank="1" sqref="I2:I5001"><formula1>"1,2,3,4,5"</formula1></dataValidation>',
+  '<dataValidation type="list" allowBlank="1" showErrorMessage="0" sqref="A5:A5004 M5:M5004"><formula1>$S$5:$S$265</formula1></dataValidation>',
+  '<dataValidation type="list" allowBlank="1" sqref="B5:B5004"><formula1>"Måndag,Tisdag,Onsdag,Torsdag,Fredag,Lördag,Söndag"</formula1></dataValidation>',
+  '<dataValidation type="list" allowBlank="1" sqref="H5:H5004"><formula1>"Planerad,Pågående,Pausad,Klar,Fryst,Flyttad"</formula1></dataValidation>',
+  '<dataValidation type="list" allowBlank="1" sqref="I5:I5004"><formula1>"1,2,3,4,5"</formula1></dataValidation>',
  ].join("");
  const cols=WEEKLY_COLUMNS.map((v,i)=>'<col min="'+(i+1)+'" max="'+(i+1)+'" width="'+Math.min(45,Math.max(17,v.length+4))+'" customWidth="1"/>').join("");
- const sheet='<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetViews><sheetView workbookViewId="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews><cols>'+cols+'<col min="17" max="20" hidden="1"/></cols><sheetData>'+body.join("")+'</sheetData><autoFilter ref="A1:P'+Math.max(1,rows.length+1)+'"/><dataValidations count="4">'+validation+'</dataValidations></worksheet>';
+ const sheet='<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetViews><sheetView workbookViewId="0"><pane ySplit="4" topLeftCell="A5" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews><cols>'+cols+'<col min="17" max="20" hidden="1"/></cols><sheetData>'+body.join("")+'</sheetData><autoFilter ref="A4:P'+Math.max(4,rows.length+4)+'"/><dataValidations count="4">'+validation+'</dataValidations></worksheet>';
  const styles='<?xml version="1.0" encoding="UTF-8"?><styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><fonts count="2"><font><sz val="11"/></font><font><b/><sz val="11"/><color rgb="FFFFFFFF"/></font></fonts><fills count="3"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FF1E40AF"/></patternFill></fill></fills><borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="2"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="0" fontId="1" fillId="2" borderId="0" xfId="0"/></cellXfs></styleSheet>';
  return zip({
   "[Content_Types].xml":'<?xml version="1.0" encoding="UTF-8"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/></Types>',
@@ -199,7 +203,7 @@ export function createWeeklyV2Xlsx(rows:WeeklyV2Row[],base=currentWeekKey()):Blo
   "xl/worksheets/sheet1.xml":sheet,
  });
 }
-export async function readWeeklyV2Xlsx(file:File):Promise<WeeklyV2Row[]>{
+export async function readWeeklyV2Xlsx(file:File):Promise<{name:string;email:string;rows:WeeklyV2Row[]}>{
  if(file.size>8_000_000)throw Error("Maximal XLSX-storlek är 8 MB.");
  const entries=await unzip(new Uint8Array(await file.arrayBuffer()));
  const xml=entries.get("xl/worksheets/sheet1.xml");if(!xml)throw Error("Arbetsboken saknar första bladet.");
@@ -211,9 +215,11 @@ export async function readWeeklyV2Xlsx(file:File):Promise<WeeklyV2Row[]>{
  const explicitYear=Number(c("T1"));
  const referenceYear=Number.isInteger(explicitYear)&&explicitYear>=1900&&explicitYear<=2100?explicitYear:
   Number(currentWeekKey().slice(0,4));
- WEEKLY_COLUMNS.forEach((h,i)=>{if(c(column(i)+"1")!==h)throw Error("Fel veckoplaneringsmall i kolumn "+column(i)+".");});
+ const headerRow=c("A4")==="Vecka"?4:c("A1")==="Vecka"?1:0;
+ if(!headerRow)throw Error("Fel XLSX-mall. Exportera en ny personlig planeringsfil.");
+ WEEKLY_COLUMNS.forEach((h,i)=>{if(c(column(i)+headerRow)!==h)throw Error("Fel veckoplaneringsmall i kolumn "+column(i)+".");});
  const out:WeeklyV2Row[]=[];
- for(let index=2;index<=5001;index++){
+ for(let index=headerRow+1;index<=headerRow+5000;index++){
   const name=c("C"+index);if(!name)continue;
   const str=(x:string)=>c(x+index);
   const num=(s:string)=>{const v=s.replace("%","").replace(",",".").trim();return v?Number(v):null};
@@ -223,5 +229,5 @@ export async function readWeeklyV2Xlsx(file:File):Promise<WeeklyV2Row[]>{
    firstWeek:str("M")?parseWeekLabel(str("M"),referenceYear):"",comment:str("N"),moveReason:str("O"),activityId:str("P"),rowKey:str("Q"),rowRevision:Number(str("R")||0)};
   validateWeeklyV2(row);out.push(row);
  }
- return out;
+ return {name:headerRow===4?c("B2").trim():"",email:headerRow===4?c("E2").trim().toLowerCase():"",rows:out};
 }
