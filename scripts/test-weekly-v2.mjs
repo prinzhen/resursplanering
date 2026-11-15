@@ -51,7 +51,7 @@ const row={week:"2026-V47",day:"Torsdag",task:"Systemdesign",duration:"3 dagar",
 workType:"Projekt",hours:12,status:"Planerad",priority:"3",deadline:"2026-12-01",
 projectCode:"N.001",projectName:"Exempel",firstWeek:"2026-V46",comment:"Behov",
 moveReason:"",activityId:"activity-42",rowKey:"row-42"};
-const blob=createWeeklyV2Xlsx([row],"2026-V46");
+const blob=createWeeklyV2Xlsx([row],"2026-V46",{name:"Test Person",email:"test@example.se"});
 const bytes=new Uint8Array(await blob.arrayBuffer()), view=new DataView(bytes.buffer);
 const decoder=new TextDecoder();
 let sheet="";
@@ -65,22 +65,25 @@ for(let offset=0;offset+30<=bytes.length&&view.getUint32(offset,true)===0x04034b
 }
 assert.ok(sheet,"Missing sheet");
 for(let i=0;i<WEEKLY_COLUMNS.length;i++){
- const ref=String.fromCharCode(65+i)+"1";
+ const ref=String.fromCharCode(65+i)+"4";
  assert.ok(sheet.includes('r="'+ref+'"'),"Missing header "+ref);
  assert.ok(sheet.includes(WEEKLY_COLUMNS[i]),"Missing header "+WEEKLY_COLUMNS[i]);
 }
-assert.ok(sheet.includes('r="Q2"'),"Missing stable hidden planning row key");
+assert.ok(sheet.includes('r="Q5"'),"Missing stable hidden planning row key");
 assert.ok(sheet.includes('min="17" max="20" hidden="1"'),"Metadata, year and week-list columns must be hidden");
-assert.ok(sheet.includes('sqref="A2:A5001 M2:M5001"'),"Dropdown required for ISO week and first planned week");
-assert.ok(sheet.includes('$S$2:$S$262'),"Scrollable week list must be in hidden column S");
-assert.ok(sheet.includes('r="S2"'),"Week list must start at current week");
+assert.ok(sheet.includes('sqref="A5:A5004 M5:M5004"'),"Dropdown required for ISO week and first planned week");
+assert.ok(sheet.includes('$S$5:$S$265'),"Scrollable week list must be in hidden column S");
+assert.ok(sheet.includes('r="S5"'),"Week list must start at current week");
 assert.ok(sheet.includes('r="T1"'),"Export year must be preserved in hidden metadata");
+assert.ok(sheet.includes('r="B2"')&&sheet.includes('Test Person'),"Personal name must be visible in workbook");
+assert.ok(sheet.includes('r="E2"')&&sheet.includes('test@example.se'),"Personal email must be visible in workbook");
+
 assert.ok(sheet.includes("v.46 (aktuell vecka)"),"Current week must have visible relative label");
 assert.ok(sheet.includes("v.45 (föregående vecka)"),"Previous week must have visible relative label");
 assert.ok(sheet.includes("v.47 (kommande vecka)"),"Next week must have visible relative label");
 
-assert.ok(sheet.includes('r="S262"'),"Week list must cover past/future years");
-assert.ok(sheet.includes('r="A1"'),"Visible header stays unchanged");
+assert.ok(sheet.includes('r="S265"'),"Week list must cover past/future years");
+assert.ok(sheet.includes('r="A4"'),"Visible header stays unchanged");
 const longer={...row,duration:"1 vecka 2 dagar",projectCode:"INTERNAL-VERK"};
 assert.ok(createWeeklyV2Xlsx([longer]).size>1000,"Combined duration and internal project must export");
 console.log("PASS weekly XLSX v2: all 16 columns, dates, duration, effort and ZIP structure");
