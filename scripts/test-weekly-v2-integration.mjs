@@ -32,6 +32,30 @@ try{
  assert.equal((await call("/api/weekly-v2?employeeId=1")).status,401,"Anonymous weekly planning must be protected");
  const auth=await fetch(base+"/api/auth",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({action:"login",email:"ci-admin@example.se",password:pw})});
  assert.ok(auth.ok,await auth.text());cookie=(auth.headers.get("set-cookie")||"").split(";")[0];assert.match(cookie,/rp_session=/);
+ const bootstrapRow={week:"2026-V40",day:"Tisdag",task:"Ny tio-veckorsaktivitet",duration:"10 veckor",
+  effort:50,workType:"Projekt",hours:200,status:"Planerad",priority:"3",deadline:"",
+  projectCode:"N.90990",projectName:"Nytt testprojekt",firstWeek:"2026-V40",
+  comment:"",moveReason:"",activityId:"",rowKey:"",rowRevision:0};
+ const newPerson={name:"Excel Person",email:"excel-person@example.se",rows:[bootstrapRow]};
+ let bs=await call("/api/weekly-v2/bootstrap",{...newPerson,commit:false});
+ assert.equal(bs.status,200,JSON.stringify(bs.result));
+ assert.equal(bs.result.preview.employeesCreated,1);
+ assert.equal(bs.result.preview.projectsCreated,1);
+ assert.equal(bs.result.preview.activitiesCreated,1);
+ let beforeBootstrap=await call("/api/data");
+ assert.ok(!beforeBootstrap.result.employees.some(x=>x.email===newPerson.email),"Preview must not mutate database");
+ bs=await call("/api/weekly-v2/bootstrap",{...newPerson,commit:true});
+ assert.equal(bs.status,200,JSON.stringify(bs.result));
+ const boot=await call("/api/data");
+ const newEmployee=boot.result.employees.find(x=>x.email===newPerson.email);
+ assert.ok(newEmployee,"V1 backend must create missing employee from personal v2 XLSX");
+ const newProject=boot.result.projects.find(x=>x.code==="N.90990");
+ assert.ok(newProject,"V1 backend must create project");
+ const newActivity=boot.result.activities.find(x=>x.projectId===newProject.id&&x.name===bootstrapRow.task);
+ assert.ok(newActivity,"V1 backend must create activity");
+ assert.equal(newActivity.startDate,"2026-09-29");
+ assert.equal(newActivity.endDate,"2026-12-07");
+ assert.ok(boot.result.assignments.some(x=>x.activityId===newActivity.id&&x.employeeId===newEmployee.id));
  const snap=await call("/api/data");assert.equal(snap.status,200,JSON.stringify(snap.result));
  const erik=snap.result.employees.find(x=>x.name==="Erik Holm");assert.ok(erik);
  const activity=snap.result.activities.find(x=>x.name==="Systemdesign");assert.ok(activity);
