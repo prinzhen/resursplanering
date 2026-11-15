@@ -33,7 +33,7 @@ export default function WeeklyV2Page(){
   setPeople(visible);
   if(visible.length===1)setSelected(visible[0].email);
  }).catch(e=>setError(String(e)))},[]);
- useEffect(()=>{if(selected&&people.some(p=>p.email===selected)){void fetchRows(selected)}},[selected,people]);
+ useEffect(()=>{if(!fromFile&&selected&&people.some(p=>p.email===selected)){void fetchRows(selected)}},[selected,people,fromFile]);
  const fetchRows=async(email:string)=>{setSelected(email);setRows([]);setPreview(null);setFilePerson(null);setFromFile(false);setError("");setMessage("");if(!email)return;setLoading(true);
   try{const r=await fetch("/api/individual?email="+encodeURIComponent(email)+"&includeClosed=1",{cache:"no-store"});
    const body=await r.json() as FormValues&{error?:string};if(!r.ok)throw Error(body.error||"API-fel");
