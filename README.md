@@ -683,6 +683,22 @@ aktivitet, dubbelimport, dateringar, Gantt, beläggning, historik,
 **Obs:** Tidrapporteringsmodulen har en separat CSV-export som inte är
 en del av projektplaneringens vanliga import/export.
 
+**Projekt saknas i personlig Excel v2:** Nya aktivitetsrader utan
+projektkod läggs automatiskt i det interna uppsamlingsprojektet
+`Övrigt arbete` (`INTERNAL-OVR`). Om projektet saknas skapas det
+vid godkänd import. Förhandsgranskningen visar hur många aktiviteter
+som hamnar där. Aktivitetens namn, datum, timmar, prioritet och
+medarbetartilldelning bevaras så att den senare kan klassificeras
+om till ett riktigt projekt via projektredigering. Vid återimport
+används samma interna projekt och tidigare aktivitet matchas för
+att undvika dubbletter.
+
+**Organisationsgräns:** Nuvarande databasschema saknar separat
+`organization_id` på medarbetare och projekt. Uppsamlingsprojektet
+gäller därför den aktuella planeringsinstallationen (en organisation
+per databas); automatisk uppdelning i olika organisationer inom
+samma databas kräver en separat schema-/behörighetsutökning.
+
 Personlig Excel v2 används under `/weekly-v2`: namn och e-post identifierar
 medarbetaren, nya aktivitetsrader saknar ID och kan skapas via v1:s
 behörighetskontroller. Aktivitetens startvecka, startdag och varaktighet
