@@ -79,8 +79,8 @@ try{
  assert.equal(addedProject.name,"Andra nya projektet","New project should retain Excel display name");
  const addedTask=afterKnown.result.activities.find(a=>a.projectId===addedProject.id&&a.name==="Ny aktivitet i nytt projekt från Excel");
  assert.ok(addedTask,"New activity must appear under new project");
- assert.equal(addedTask.startDate,"2026-11-16");
- assert.equal(addedTask.endDate,"2026-11-25","1v3d = eight weekdays ending Wednesday");
+ assert.equal(addedTask.startDate,"2026-11-17");
+ assert.equal(addedTask.endDate,"2026-11-26","1v3d = eight weekdays from Tuesday through Thursday");
  assert.ok(afterKnown.result.assignments.some(a=>a.activityId===addedTask.id&&a.employeeId===newEmployee.id),
   "New activity must be assigned to the existing employee");
  const afterKnownExport=await call("/api/individual?email="+encodeURIComponent(newPerson.email));
