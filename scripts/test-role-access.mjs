@@ -39,7 +39,11 @@ for(const stream of [server.stdout,server.stderr])stream.on("data",chunk=>{
  if(logs.length>75000)logs=logs.slice(-75000);
 });
 function check(label,fn){fn();passes++;console.log("PASS role-matrix:",label)}
-async function api(cookie,path,body){
+async function api(cookie,path,body,{retryKnownDenied=false}={}){
+ // Only safe reads, read-only previews, and explicit EXPECTED denial checks
+ // may retry if Wrangler returns a transient worker-restarted HTTP 503.
+ // Mutating POST requests are deliberately NOT replayed.
+
  const options={headers:{"accept":"application/json"}};
  if(cookie)options.headers.cookie=cookie;
  if(body!==undefined){
@@ -47,7 +51,7 @@ async function api(cookie,path,body){
   options.headers["content-type"]="application/json";
   options.body=JSON.stringify(body);
  }
- const safeRetry=body===undefined||body?.commit===false;
+ const safeRetry=body===undefined||body?.commit===false||retryKnownDenied;
  let response,raw="";
  for(let attempt=0;attempt<(safeRetry?3:1);attempt++){
   try{
@@ -58,7 +62,8 @@ async function api(cookie,path,body){
    throw Error("HTTP-testet misslyckades på "+path+": "+String(e));
   }
   if(safeRetry&&response.status===503&&raw.includes("worker restarted mid-request")&&attempt<2){
-   await sleep(500);continue
+   console.warn("Transient Wrangler restart for "+path+" (retry "+(attempt+1)+"/2)");
+   await sleep(800);continue
   }
   break;
  }
@@ -197,7 +202,7 @@ try{
  const anonWeekly=await api("",weeklyBootstrap,{...workbook,commit:true});
  check("Anonymous cannot create weekly Excel records",()=>assert.equal(anonWeekly.status,401));
  for(const [role,cookie] of [["ORDINARY STAFF",ordinary],["PROJECT/TEAM LEADER",leader],["NONMEMBER",nonmember]]){
-  const denied=await api(cookie,weeklyBootstrap,{...workbook,commit:true});
+  const denied=await api(cookie,weeklyBootstrap,{...workbook,commit:true},{retryKnownDenied:true});
   check(role+" cannot create unscoped employee via v2",()=>assert.equal(denied.status,403));
  }
  const snapshotWeeklyBefore=await ok(admin,"/api/data");
