@@ -688,6 +688,15 @@ medarbetaren, nya aktivitetsrader saknar ID och kan skapas via v1:s
 behörighetskontroller. Aktivitetens startvecka, startdag och varaktighet
 bestämmer alltid Gantt-datum.
 
+**Femdagarsvecka från och med denna Excelversion:** `1v` = 5 arbetsdagar,
+`1v3d` = 8 arbetsdagar, `10` / `10d` = 10 arbetsdagar. Helger hoppas över;
+allmänna helgdagar/röda dagar behandlas för närvarande inte separat.
+Nya XLSX-filer märks med `ARBETSDAGAR-5` i dold metadata. Äldre XLSX utan
+den markören läser ursprungliga långa varaktighetsuttryck som kalenderdagar,
+så att äldre scheman kan importeras utan att datum flyttas. Vid export av
+befintliga aktiviteter med slutdatum på helg används `kalenderdagar`
+explicit för att bevara redan lagrade datum.
+
 Blandad v2-import som både skapar nya objekt och uppdaterar befintliga sker
 ännu i två API-steg. En lyckad isolerad testsvit ersätter därför **inte**
 kravet på en enda databastransaktion för dessa två steg före produktionssättning.
