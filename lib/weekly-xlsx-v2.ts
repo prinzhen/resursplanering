@@ -84,14 +84,30 @@ export function weekMonday(week:string):Date{
  jan4.setUTCDate(jan4.getUTCDate()-((jan4.getUTCDay()+6)%7)+(num-1)*7);
  return jan4;
 }
+/** Swedish calendar duration. Bare numbers and "d" mean days, "v" weeks.
+ * 1v3d = 10 calendar days; 10 or 10d = 10 calendar days.
+ * Keep existing long forms for exported workbooks.
+ */
 export function parseDurationDays(value:string|number):number{
- if(typeof value==="number"&&Number.isInteger(value)&&value>0&&value<=3650)return value;
- const v=String(value).toLowerCase().trim();
- const m=/^(\d+)\s*(dag|dagar|dygn|vecka|veckor)(?:\s+(\d+)\s*(dag|dagar|dygn))?$/.exec(v);
- if(!m)throw Error("Varaktighet ska vara t.ex. 3 dagar, 2 veckor eller 1 vecka 2 dagar.");
- const days=Number(m[1])*(m[2].startsWith("veck")?7:1)+Number(m[3]||0);
- if(days<1||days>3650||(m[3]!==undefined&&!m[2].startsWith("veck"))||Number(m[3]||0)>6)
-  throw Error("Ogiltig varaktighet: "+value);
+ if(typeof value==="number"){
+  if(!Number.isSafeInteger(value)||value<1||value>3650)throw Error("Varaktighet måste vara 1–3650 kalenderdagar.");
+  return value;
+ }
+ const v=String(value??"").trim().toLowerCase().replace(/\s+/g," ");
+ if(/^\d+$/.test(v)){
+  const days=Number(v);
+  if(!Number.isSafeInteger(days)||days<1||days>3650)throw Error("Varaktighet måste vara 1–3650 kalenderdagar.");
+  return days;
+ }
+ const m=/^(\d+)\s*(v|vecka|veckor|d|dag|dagar|dygn)(?:\s*(\d+)\s*(d|dag|dagar|dygn))?$/.exec(v);
+ if(!m)throw Error("Varaktighet: ange t.ex. 10, 10d, 1v, 1v3d eller 1 vecka 3 dagar.");
+ const weeks=["v","vecka","veckor"].includes(m[2]);
+ const rest=Number(m[3]||0);
+ const days=Number(m[1])*(weeks?7:1)+rest;
+ if(m[3]!==undefined&&(!weeks||rest>6))
+  throw Error("Ange 0–6 extra dagar efter veckor (exempel: 1v3d).");
+ if(!Number.isSafeInteger(days)||days<1||days>3650)
+  throw Error("Varaktighet måste vara 1–3650 kalenderdagar.");
  return days;
 }
 export function durationLabel(days:number):string{
