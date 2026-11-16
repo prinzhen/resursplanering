@@ -715,6 +715,24 @@ try{
    assert.equal(afterActivityMove.prepare("PRAGMA foreign_key_check").all().length,0);
   });
  }finally{afterActivityMove.close()}
+ // A normal employee can submit unclassified work to the internal
+ // catch-all without administrative rights or an existing project membership.
+ const orphanWork={name:"Sara Berg",email:"sara@example.se",rows:[{
+  week:"2026-V48",day:"Måndag",task:"Oklassificerat veckouppdrag för Sara",
+  duration:"1v",effort:50,workType:"Projekt",hours:null,status:"Planerad",
+  priority:"3",deadline:"",projectCode:"",projectName:"",firstWeek:"2026-V48",
+  comment:"Behöver senare klassificeras",moveReason:"",activityId:"",rowKey:"",rowRevision:0
+ }]};
+ const unclassifiedPreview=await ok(ordinary,"/api/weekly-v2/bootstrap",{...orphanWork,commit:false});
+ check("ORDINARY STAFF may report work without project",()=>{
+  assert.equal(unclassifiedPreview.preview.assignedToInternal,1);
+ });
+ const unclassifiedSave=await ok(ordinary,"/api/weekly-v2/bootstrap",{...orphanWork,commit:true});
+ check("ORDINARY STAFF can create their OWN internal unclassified activity",()=>{
+  assert.equal(unclassifiedSave.verified,true);
+  assert.equal(unclassifiedSave.registered.length,1);
+  assert.equal(unclassifiedSave.registered[0].projectCode,"INTERNAL-OVR");
+ });
  const db=new DatabaseSync(await onlyDatabase(join(dir,"data")),{readOnly:true});
  try{
   check("Time adjustments are audited, including delete",()=>{
