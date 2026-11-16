@@ -35,15 +35,22 @@ async function api(cookie,path,body){
   options.headers["content-type"]="application/json";
   options.body=JSON.stringify(body);
  }
- let response=await fetch(base+path,options);
- let raw=await response.text();
- // Wrangler can briefly restart the ephemeral worker during warm-up.
- // Retry ONLY this explicit transient response; never retry policy failures.
- for(let n=0;n<3&&response.status===503&&raw.includes("worker restarted mid-request");n++){
-  await sleep(500);
-  response=await fetch(base+path,options);
-  raw=await response.text();
+ const safeRetry=body===undefined||body?.commit===false;
+ let response,raw="";
+ for(let attempt=0;attempt<(safeRetry?3:1);attempt++){
+  try{
+   response=await fetch(base+path,{...options,signal:AbortSignal.timeout(15000)});
+   raw=await response.text();
+  }catch(e){
+   if(safeRetry&&attempt<2){await sleep(500);continue}
+   throw Error("HTTP-testet misslyckades på "+path+": "+String(e));
+  }
+  if(safeRetry&&response.status===503&&raw.includes("worker restarted mid-request")&&attempt<2){
+   await sleep(500);continue
+  }
+  break;
  }
+ if(!response)throw Error("Ingen HTTP-respons på "+path);
  let value;
  try{value=JSON.parse(raw)}catch{throw Error(`Non-JSON response for ${path} HTTP ${response.status}: ${raw.slice(0,500)}`)}
  return {status:response.status,data:value};
