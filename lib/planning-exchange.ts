@@ -142,6 +142,59 @@ export function writeMspdi(rows:ExchangeRow[]):string{
  const projectName=rows[0]?.project_name||"Resursplanering";
  return '<?xml version="1.0" encoding="utf-8"?>\n<Project xmlns="http://schemas.microsoft.com/project"><SaveVersion>14</SaveVersion><Name>'+e(projectName)+'</Name><Tasks>'+taskXml+'</Tasks><Resources>'+resXml+'</Resources><Assignments>'+assignmentXml+'</Assignments></Project>';
 }
+/** MPX is a legacy, configurable record format. We support a documented
+ * task subset (numeric layout 61 + tasks 70); unsupported records are never
+ * claimed to have been imported. Export includes WBS, Start and Finish.
+ */
+function mpxFields(line:string):string[]{
+ const out:string[]=[];let token="",quoted=false;
+ for(let i=0;i<line.length;i++){
+  const ch=line[i];
+  if(ch==='"'){
+   if(quoted&&line[i+1]==='"'){token+='"';i++}else quoted=!quoted;
+  }else if(ch===","&&!quoted){out.push(token);token=""}
+  else token+=ch;
+ }
+ if(quoted)throw Error("Ogiltigt MPX-citat.");
+ out.push(token);return out;
+}
+const quoted=(s:string)=>'"'+s.replaceAll('"','""').replace(/[\r\n]+/g," ")+'"';
+export function writeMpx(rows:ExchangeRow[]):string{
+ const unique=new Map<string,ExchangeRow>();
+ for(const row of rows)if(row.record_type==="activity"){
+  const key=row.project_code+"|"+row.activity_code+"|"+row.start_date;
+  if(!unique.has(key))unique.set(key,row);
+ }
+ const output=["MPX,Microsoft Project,4.0","61,90,1,2,50,51"];
+ let i=0;
+ for(const r of unique.values()){
+  i++;
+  output.push(["70",String(i),quoted(r.activity),quoted(r.activity_code),r.start_date,r.end_date].join(","));
+ }
+ return output.join("\r\n")+"\r\n";
+}
+export function readMpx(input:string,importCode="MPX-IMPORT",importName="Importerat MPX"):ExchangeRow[]{
+ const text=input.replace(/^\uFEFF/,""),lines=text.split(/\r?\n/).filter(x=>x.trim());
+ if(lines.length>6000||!/^MPX[,;]/i.test(lines[0]||""))throw Error("Filen saknar MPX-huvud.");
+ let columns:string[]=[];
+ const result:ExchangeRow[]=[];
+ for(const line of lines.slice(1)){
+  const values=mpxFields(line),type=values[0];
+  if(type==="61"){columns=values.slice(1);continue}
+  if(type!=="70")continue;
+  if(!columns.length)throw Error("MPX saknar numerisk aktivitetslayout (post 61).");
+  const field=(id:string)=>values[columns.indexOf(id)+1]||"";
+  const name=field("1"),start=field("50").slice(0,10),end=field("51").slice(0,10);
+  if(!name||!start||!end)continue;
+  const row=Object.fromEntries(PLAN_COLUMNS.map(k=>[k,""])) as ExchangeRow;
+  Object.assign(row,{record_type:"activity",project_code:importCode,project_name:importName,
+   activity_code:field("2")||"MPX-"+(field("90")||result.length+1),
+   activity:name,start_date:safeIso(start),end_date:safeIso(end),status:"Planerad"});
+  result.push(row);
+ }
+ if(!result.length)throw Error("MPX innehåller inga läsbara aktiviteter med start och slut.");
+ return result;
+}
 export function detectExchangeFile(filename:string):"xlsx"|"xml"|"mpp"|"mpx"|"json"{
  const ext=filename.toLowerCase().split(".").at(-1);
  if(ext==="csv")throw Error("CSV stöds inte längre. Använd XLSX, XML/MSPDI eller MPX.");
