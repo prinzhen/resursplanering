@@ -247,6 +247,9 @@ try{
   assert.ok(importedProject&&importedTask);
   assert.equal(afterExchange.projects.filter(p=>p.code==="TEST-XCH").length,1);
   assert.equal(afterExchange.assignments.filter(a=>a.activityId===importedTask.id&&a.employeeId===sara).length,1);
+  const importedAssignment=afterExchange.assignments.find(a=>a.activityId===importedTask.id&&a.employeeId===sara);
+  assert.equal(afterExchange.assignmentPeriods.filter(p=>p.assignmentId===importedAssignment.id).length,1);
+  assert.ok(afterExchange.projectMembers.some(p=>p.employeeId===sara&&p.projectId===importedProject.id));
  });
  await ok(admin,exchangeUrl,{rows:[multiProjectRow],commit:true});
  const afterRepeat=await ok(admin,"/api/data");
