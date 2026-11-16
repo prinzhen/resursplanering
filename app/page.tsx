@@ -702,6 +702,7 @@ function ExportDialog({open,close,data}:{open:boolean;close:()=>void;data:Data})
   const all=exchangeRows(data);
   const selected=project==="all"?all:all.filter(row=>data.projects.find(p=>p.id===Number(project))?.code===row.project_code);
   if(format==="json"){
+   if(!data.viewer?.isAdmin){window.alert("Endast administratör får exportera en fullständig JSON-säkerhetskopia.");return}
    download("resursplanering-backup-"+new Date().toISOString().slice(0,10)+".json",
     JSON.stringify({version:4,exportedAt:new Date().toISOString(),data},null,2),"application/json");
   }else if(format==="xlsx"){
@@ -724,7 +725,7 @@ function ExportDialog({open,close,data}:{open:boolean;close:()=>void;data:Data})
    <NativeSelectOption value="xlsx">Excel (.xlsx)</NativeSelectOption>
    <NativeSelectOption value="xml">Microsoft Project XML / MSPDI (.xml)</NativeSelectOption>
    <NativeSelectOption value="mpx">Microsoft Project Exchange (.mpx) – grundläggande aktivitetsfält</NativeSelectOption>
-   <NativeSelectOption value="json">Fullständig JSON-säkerhetskopia</NativeSelectOption>
+   {data.viewer?.isAdmin&&<NativeSelectOption value="json">Fullständig JSON-säkerhetskopia</NativeSelectOption>}
   </NativeSelect></Field>
   {format!=="json"&&<Field label="Projekt"><NativeSelect className="w-full" value={project} onChange={e=>setProject(e.target.value)}>
    <NativeSelectOption value="all">Alla projekt (endast Excel)</NativeSelectOption>
@@ -733,7 +734,7 @@ function ExportDialog({open,close,data}:{open:boolean;close:()=>void;data:Data})
   <div className="rounded-xl bg-blue-50 p-3 text-sm text-blue-800">
    Excel stödjer projekt, uppdrag, aktiviteter och resurstilldelning.
    XML/MSPDI och MPX exporterar grundläggande aktivitets- och resursfält, men inte alla avancerade beroenden eller kalendrar.
-   JSON bevarar hela planeringsdatabasen för separat återställning.
+   Endast administratör kan exportera JSON för separat återställning. Vanliga medarbetare exporterar sin behörighetsavgränsade planering.
   </div>
   <DialogFooter><Button variant="outline" onClick={close}>Avbryt</Button><Button onClick={run}><Download/>Exportera</Button></DialogFooter>
  </DialogContent></Dialog>;
