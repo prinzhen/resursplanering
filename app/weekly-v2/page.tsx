@@ -9,9 +9,10 @@ type Person={id:number;name:string;email:string};
 export default function WeeklyV2Page(){
  const [people,setPeople]=useState<Person[]>([]),[selected,setSelected]=useState(""),[rows,setRows]=useState<WeeklyV2Row[]>([]);
  const [error,setError]=useState(""),[message,setMessage]=useState(""),[loading,setLoading]=useState(false);
- const [preview,setPreview]=useState<{created:number;updated:number;unchanged:number;employeesCreated:number;projectsCreated:number;activitiesCreated:number}|null>(null);
+ const [preview,setPreview]=useState<{created:number;updated:number;unchanged:number;employeesCreated:number;projectsCreated:number;activitiesCreated:number;conflicts?:Array<{activityId:number;task:string;exportRevision:number;currentRevision:number}>}|null>(null);
  const [filePerson,setFilePerson]=useState<{name:string;email:string}|null>(null);
  const [fromFile,setFromFile]=useState(false);
+ const [acceptStale,setAcceptStale]=useState(false);
  const [registered,setRegistered]=useState<Array<{projectCode:string;projectName:string;projectId:number;activityName:string;activityId:number;startDate:string;endDate:string}>>([]);
  const [selectedWeek,setSelectedWeek]=useState(()=>currentWeekKey());
  const [showAllWeeks,setShowAllWeeks]=useState(false);
@@ -93,7 +94,7 @@ export default function WeeklyV2Page(){
   if(!parsed.name&&!known)throw Error("Namn saknas i den personliga Excel-filen.");
   setFilePerson({name:parsed.name||known?.name||"",email});
   setSelected(known?.email||"");
-  setRows(parsed.rows);setFromFile(true);setPreview(null);
+  setRows(parsed.rows);setFromFile(true);setPreview(null);setAcceptStale(false);
   setMessage("Läste "+parsed.rows.length+" aktivitetsrader för "+(parsed.name||known?.name||email)+
     ". Förhandsgranska vilka poster som ska skapas eller uppdateras.");
  }catch(e){setError(e instanceof Error?e.message:String(e))}
@@ -111,11 +112,11 @@ export default function WeeklyV2Page(){
   }
   setError("");setLoading(true);
   try{
-   let existingPreview={created:0,updated:0,unchanged:0};
+   let existingPreview:{created:number;updated:number;unchanged:number;conflicts?:Array<{activityId:number;task:string;exportRevision:number;currentRevision:number}>}={created:0,updated:0,unchanged:0};
    const request=async(url:string,body:unknown)=>{
     const response=await fetch(url,{method:"POST",headers:{"content-type":"application/json"},
      body:JSON.stringify(body)});
-    const result=await response.json() as {error?:string;preview?:{created:number;updated:number;unchanged:number;employeesCreated:number;projectsCreated:number;activitiesCreated:number};verified?:boolean;warnings?:string[];registered?:Array<{projectCode:string;projectName:string;projectId:number;activityName:string;activityId:number;startDate:string;endDate:string}>};
+    const result=await response.json() as {error?:string;preview?:{created:number;updated:number;unchanged:number;employeesCreated:number;projectsCreated:number;activitiesCreated:number;conflicts?:Array<{activityId:number;task:string;exportRevision:number;currentRevision:number}>};verified?:boolean;warnings?:string[];registered?:Array<{projectCode:string;projectName:string;projectId:number;activityName:string;activityId:number;startDate:string;endDate:string}>};
     if(!response.ok)throw Error(result.error||"Importen avbröts");
     return result;
    };
@@ -132,12 +133,13 @@ export default function WeeklyV2Page(){
    const summary={...existingPreview,...createdPreview};
    setPreview(summary);
    if(!commit){
-    setMessage("Förhandsgranskning: "+summary.activitiesCreated+" nya aktiviteter, "+
+    setMessage((summary.conflicts?.length?"Obs: "+summary.conflicts.length+" aktiviteter har nyare revisioner i verktyget. ":"")+"Förhandsgranskning: "+summary.activitiesCreated+" nya aktiviteter, "+
       summary.projectsCreated+" nya projekt, "+summary.employeesCreated+" nya medarbetare, "+
       summary.updated+" ändrade aktiviteter och "+summary.unchanged+" oförändrade.");
     return;
    }
    if(!preview){throw Error("Klicka Förhandsgranska ändringar före Godkänn och spara.");}
+   if((summary.conflicts?.length||0)>0&&!acceptStale)throw Error("Bekräfta först att Excel ska ersätta nyare planeringsrevisioner.");
    let created=false;
    let createdRecords:typeof registered=[];
    try{
@@ -148,7 +150,7 @@ export default function WeeklyV2Page(){
      if(result.verified===false)throw Error("Importen genomfördes, men kontroll av sparade aktiviteter misslyckades: "+(result.warnings||[]).join(" "));
     }
     if(existingRows.length&&existing){
-     await request("/api/weekly-v2",{employeeId:existing.id,rows:existingRows,commit:true});
+     await request("/api/weekly-v2",{employeeId:existing.id,rows:existingRows,commit:true,acceptStaleRevisions:acceptStale});
     }
    }catch(e){
     if(created)throw Error("De nya posterna kan ha registrerats, men uppdatering av befintliga aktiviteter misslyckades. Kontrollera databasen och exportera på nytt innan du försöker igen. "+String(e));
@@ -186,8 +188,14 @@ export default function WeeklyV2Page(){
    </div>
    <div className="mt-4 flex flex-wrap gap-3">
     <button disabled={loading||!fromFile} onClick={()=>importRows(false)} className="rounded-lg border border-blue-400 px-4 py-2 disabled:opacity-50">Förhandsgranska ändringar</button>
-    <button disabled={loading||!preview||!(preview.activitiesCreated+preview.projectsCreated+preview.employeesCreated+preview.created+preview.updated)} onClick={()=>importRows(true)} className="rounded-lg bg-emerald-700 px-4 py-2 text-white disabled:opacity-50">Godkänn och spara planeringsposter</button>
+    <button disabled={loading||!preview||((preview.conflicts?.length||0)>0&&!acceptStale)||!(preview.activitiesCreated+preview.projectsCreated+preview.employeesCreated+preview.created+preview.updated)} onClick={()=>importRows(true)} className="rounded-lg bg-emerald-700 px-4 py-2 text-white disabled:opacity-50">Godkänn och spara planeringsposter</button>
    </div>
+   {(preview?.conflicts?.length||0)>0&&<div className="mt-3 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950">
+    <p className="font-semibold">{preview?.conflicts?.length} aktiviteter har ändrats i verktyget sedan Excelversionen exporterades.</p>
+    <ul className="mt-2 space-y-1">{preview?.conflicts?.map(c=><li key={c.activityId}>{c.task} – filrevision {c.exportRevision}, aktuell revision {c.currentRevision}</li>)}</ul>
+    <label className="mt-3 flex items-start gap-2"><input type="checkbox" checked={acceptStale} onChange={e=>setAcceptStale(e.target.checked)}/>
+     <span>Jag har granskat konflikterna och vill att Excel-filens aktuella prognos ersätter den senaste planeringsversionen för dessa aktiviteter.</span></label>
+   </div>}
    {registered.length>0&&<div className="mt-3 rounded-lg border border-emerald-300 bg-emerald-50 p-3 text-sm text-emerald-950">
     <p className="font-semibold">Kontrollerat sparade projekt och aktiviteter ({registered.length})</p>
     <ul className="mt-2 space-y-1">{registered.map((r,i)=><li key={i}>Projekt <b>{r.projectName}</b> ({r.projectCode}, ID {r.projectId}) · Aktivitet <b>{r.activityName}</b> (ID {r.activityId}) · {r.startDate}–{r.endDate}</li>)}</ul>
