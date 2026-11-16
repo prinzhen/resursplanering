@@ -87,7 +87,7 @@ assert.ok(workbook.includes('fullCalcOnLoad="1"'),"Excel must recalculate all fo
 assert.ok(loadSheet.includes("BELÄGGNING PER VECKA"),"Weekly load sheet must be present");
 assert.ok(loadSheet.includes('r="B4"')&&loadSheet.includes("2026-V45"),"First load column is previous week");
 assert.ok(loadSheet.includes('r="C4"')&&loadSheet.includes("2026-V46"),"Second load column is current week");
-assert.ok(loadSheet.includes('r="AC4"')&&loadSheet.includes("2027-V20"),"Last load column is 26 weeks ahead");
+assert.ok(loadSheet.includes('r="AC4"')&&loadSheet.includes("2027-V19"),"Last load column is 26 weeks ahead");
 assert.ok(loadSheet.includes('r="B6"')&&loadSheet.includes("SUMPRODUCT"),"Weekly total must be a live Excel formula");
 assert.ok(loadSheet.includes("Veckoplanering!$V$5:$V$5004"),"Weekly load must read only exported activity rows");
 assert.ok(loadSheet.includes("Veckoplanering!$X$5:$X$5004"),"Weekly load must derive effort from first sheet");
