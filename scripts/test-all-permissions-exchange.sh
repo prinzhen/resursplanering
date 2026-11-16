@@ -4,6 +4,7 @@ set -Eeuo pipefail
 [[ "$EUID" -ne 0 ]] || { echo "SÄKERHETSSTOPP: kör inte med sudo/root." >&2; exit 1; }
 ROOT="$(cd -- "$(dirname -- "$0")/.." && pwd)"
 cd "$ROOT"
+case "$ROOT" in /opt/resursplanering*|/var/lib/resursplanering*) echo "SÄKERHETSSTOPP: kör testsviten i en separat klon, inte i en aktiv installation." >&2;exit 1;;esac
 for bin in node pnpm;do command -v "$bin" >/dev/null || { echo "Saknar $bin";exit 1; };done
 [[ -f package.json && -d node_modules ]] || { echo "Installera beroenden först.";exit 1; }
 case "${DATA_DIR:-}" in /var/lib/resursplanering*) echo "SÄKERHETSSTOPP: DATA_DIR är skarp databas." >&2;exit 1;;esac
