@@ -196,7 +196,7 @@ export function createWeeklyV2Xlsx(rows:WeeklyV2Row[],base=currentWeekKey(),pers
  if(rows.length>5000)throw Error("Max 5000 rader per export.");
  const exportYear=Number(normalizeISOWeek(base).slice(0,4));
  const body=[
-  '<row r="1">'+cell("A1","PERSONLIG VECKOPLANERING",1)+cell("T1",exportYear)+'</row>',
+  '<row r="1">'+cell("A1","PERSONLIG VECKOPLANERING",1)+cell("T1",exportYear)+cell("U1","ARBETSDAGAR-5")+'</row>',
   '<row r="2">'+cell("A2","Namn",1)+cell("B2",person.name)+cell("D2","E-postadress",1)+cell("E2",person.email)+'</row>',
   '<row r="4">'+WEEKLY_COLUMNS.map((h,i)=>cell(column(i)+"4",h,1)).join("")+'</row>'
  ];
@@ -225,7 +225,7 @@ export function createWeeklyV2Xlsx(rows:WeeklyV2Row[],base=currentWeekKey(),pers
   '<dataValidation type="list" allowBlank="1" sqref="I5:I5004"><formula1>"1,2,3,4,5"</formula1></dataValidation>',
  ].join("");
  const cols=WEEKLY_COLUMNS.map((v,i)=>'<col min="'+(i+1)+'" max="'+(i+1)+'" width="'+Math.min(45,Math.max(17,v.length+4))+'" customWidth="1"/>').join("");
- const sheet='<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetViews><sheetView workbookViewId="0"><pane ySplit="4" topLeftCell="A5" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews><cols>'+cols+'<col min="17" max="20" hidden="1"/></cols><sheetData>'+body.join("")+'</sheetData><autoFilter ref="A4:P'+Math.max(4,rows.length+4)+'"/><dataValidations count="4">'+validation+'</dataValidations></worksheet>';
+ const sheet='<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetViews><sheetView workbookViewId="0"><pane ySplit="4" topLeftCell="A5" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews><cols>'+cols+'<col min="17" max="21" hidden="1"/></cols><sheetData>'+body.join("")+'</sheetData><autoFilter ref="A4:P'+Math.max(4,rows.length+4)+'"/><dataValidations count="4">'+validation+'</dataValidations></worksheet>';
  const styles='<?xml version="1.0" encoding="UTF-8"?><styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><fonts count="2"><font><sz val="11"/></font><font><b/><sz val="11"/><color rgb="FFFFFFFF"/></font></fonts><fills count="3"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FF1E40AF"/></patternFill></fill></fills><borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="2"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="0" fontId="1" fillId="2" borderId="0" xfId="0"/></cellXfs></styleSheet>';
  return zip({
   "[Content_Types].xml":'<?xml version="1.0" encoding="UTF-8"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/></Types>',
@@ -248,6 +248,7 @@ export async function readWeeklyV2Xlsx(file:File):Promise<{name:string;email:str
  const explicitYear=Number(c("T1"));
  const referenceYear=Number.isInteger(explicitYear)&&explicitYear>=1900&&explicitYear<=2100?explicitYear:
   Number(currentWeekKey().slice(0,4));
+ const usesFiveDayWorkweeks=c("U1")==="ARBETSDAGAR-5";
  const headerRow=c("A4")==="Vecka"?4:c("A1")==="Vecka"?1:0;
  if(!headerRow)throw Error("Fel XLSX-mall. Exportera en ny personlig planeringsfil.");
  WEEKLY_COLUMNS.forEach((h,i)=>{if(c(column(i)+headerRow)!==h)throw Error("Fel veckoplaneringsmall i kolumn "+column(i)+".");});
@@ -256,7 +257,19 @@ export async function readWeeklyV2Xlsx(file:File):Promise<{name:string;email:str
   const name=c("C"+index);if(!name)continue;
   const str=(x:string)=>c(x+index);
   const num=(s:string)=>{const v=s.replace("%","").replace(",",".").trim();return v?Number(v):null};
-  const row:WeeklyV2Row={week:parseWeekLabel(str("A"),referenceYear),day:str("B"),task:name,duration:str("D"),
+  // Older exported workbooks used calendar durations (7 days per week).
+  // Preserve their exact historical date ranges. Re-exporting marks the new
+  // 5-working-day mode so subsequent edits use working days by default.
+  let duration=str("D");
+  if(!usesFiveDayWorkweeks){
+   const legacy=/^(\\d+)\\s*(dag|dagar|dygn|vecka|veckor)(?:\\s+(\\d+)\\s*(dag|dagar|dygn))?$/i.exec(duration.trim());
+   if(legacy){
+    const days=Number(legacy[1])*(legacy[2].toLowerCase().startsWith("veck")?7:1)+Number(legacy[3]||0);
+    if(!Number.isSafeInteger(days)||days<1||days>3650)throw Error("Ogiltig äldre varaktighet på rad "+index);
+    duration=days+" kalenderdagar";
+   }
+  }
+  const row:WeeklyV2Row={week:parseWeekLabel(str("A"),referenceYear),day:str("B"),task:name,duration,
    effort:num(str("E")),workType:str("F"),hours:num(str("G")),status:str("H"),
    priority:str("I"),deadline:str("J"),projectCode:str("K"),projectName:str("L"),
    firstWeek:str("M")?parseWeekLabel(str("M"),referenceYear):"",comment:str("N"),moveReason:str("O"),activityId:str("P"),rowKey:str("Q"),rowRevision:Number(str("R")||0)};
