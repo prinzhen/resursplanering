@@ -70,23 +70,39 @@ assert.throws(()=>createWeeklyV2Xlsx([{...unassigned,activityId:"activity-42"}],
 const blob=createWeeklyV2Xlsx([row],"2026-V46",{name:"Test Person",email:"test@example.se"});
 const bytes=new Uint8Array(await blob.arrayBuffer()), view=new DataView(bytes.buffer);
 const decoder=new TextDecoder();
-let sheet="";
+let sheet="",loadSheet="",workbook="";
 for(let offset=0;offset+30<=bytes.length&&view.getUint32(offset,true)===0x04034b50;){
  assert.equal(view.getUint16(offset+8,true),0,"Expected ZIP STORE in XLSX writer");
  const size=view.getUint32(offset+18,true),nameSize=view.getUint16(offset+26,true),extra=view.getUint16(offset+28,true);
  const name=decoder.decode(bytes.slice(offset+30,offset+30+nameSize));
  const start=offset+30+nameSize+extra;
  if(name==="xl/worksheets/sheet1.xml")sheet=decoder.decode(bytes.slice(start,start+size));
+ if(name==="xl/worksheets/sheet2.xml")loadSheet=decoder.decode(bytes.slice(start,start+size));
+ if(name==="xl/workbook.xml")workbook=decoder.decode(bytes.slice(start,start+size));
  offset=start+size;
 }
 assert.ok(sheet,"Missing sheet");
+assert.ok(workbook.includes('sheet name="Beläggning"'),"Workbook must include independent weekly load sheet");
+assert.ok(workbook.includes('fullCalcOnLoad="1"'),"Excel must recalculate all formula cells on open");
+assert.ok(loadSheet.includes("BELÄGGNING PER VECKA"),"Weekly load sheet must be present");
+assert.ok(loadSheet.includes('r="B4"')&&loadSheet.includes("2026-V45"),"First load column is previous week");
+assert.ok(loadSheet.includes('r="C4"')&&loadSheet.includes("2026-V46"),"Second load column is current week");
+assert.ok(loadSheet.includes('r="AC4"')&&loadSheet.includes("2027-V20"),"Last load column is 26 weeks ahead");
+assert.ok(loadSheet.includes('r="B6"')&&loadSheet.includes("SUMPRODUCT"),"Weekly total must be a live Excel formula");
+assert.ok(loadSheet.includes("Veckoplanering!$V$5:$V$5004"),"Weekly load must read only exported activity rows");
+assert.ok(loadSheet.includes("Veckoplanering!$X$5:$X$5004"),"Weekly load must derive effort from first sheet");
+assert.ok(sheet.includes('r="V5"')&&sheet.includes('r="W5"')&&sheet.includes('r="X5"')&&sheet.includes('r="Y5"'),"Every exported row gets date and load helper formulas");
+assert.ok(sheet.includes('r="V5004"')&&sheet.includes('r="X5004"'),"Newly added activity rows must also recalculate workload");
+assert.ok(loadSheet.includes('r="B7"')&&loadSheet.includes('r="B8"')&&loadSheet.includes('r="B9"'),"Hours, available capacity and free time must be present");
+assert.ok(loadSheet.includes('<conditionalFormatting'),"Weekly utilization colors must be automatic");
+
 for(let i=0;i<WEEKLY_COLUMNS.length;i++){
  const ref=String.fromCharCode(65+i)+"4";
  assert.ok(sheet.includes('r="'+ref+'"'),"Missing header "+ref);
  assert.ok(sheet.includes(WEEKLY_COLUMNS[i]),"Missing header "+WEEKLY_COLUMNS[i]);
 }
 assert.ok(sheet.includes('r="Q5"'),"Missing stable hidden planning row key");
-assert.ok(sheet.includes('min="17" max="21" hidden="1"'),"Metadata, year, duration-mode and week-list columns must be hidden");
+assert.ok(sheet.includes('min="17" max="25" hidden="1"'),"Metadata, year, duration-mode and week-list columns must be hidden");
 assert.ok(sheet.includes('r="U1"')&&sheet.includes("KALENDERDAGAR-7"),"New XLSX must declare seven-day calendar spans");
 assert.ok(sheet.includes('sqref="A5:A5004 M5:M5004"'),"Dropdown required for ISO week and first planned week");
 assert.ok(sheet.includes('$S$5:$S$265'),"Scrollable week list must be in hidden column S");
