@@ -704,6 +704,20 @@ medarbetaren, nya aktivitetsrader saknar ID och kan skapas via v1:s
 behörighetskontroller. Aktivitetens startvecka, startdag och varaktighet
 bestämmer alltid Gantt-datum.
 
+**XLSX v2 – fliken Beläggning:** Personliga Excel-exporter innehåller två
+blad: `Veckoplanering` med de 16 importbara aktivitetskolumnerna och
+`Beläggning` med veckoupplösning (föregående vecka, aktuell vecka och
+26 kommande veckor). Beläggningen visas per vecka i procent, beräknade
+timmar och ledig kapacitet mot 40 timmar/vecka och färgmarkeras (<80 %,
+80–100 %, >100 %). Beräkningen är enbart Excel-formler som läser samma
+arbetsboks aktivitetsblad och räknas om när startvecka, startdag,
+varaktighet eller insats ändras. 1 kalendervecka är 7 dagar för
+Gantt-datum; beläggning omfattar endast måndag–fredag. `Insats` används
+först som veckans beläggningsgrad; om den är tom kan `Planerade timmar`
+fördelas jämnt över aktivitetens arbetsdagar. Fliken `Beläggning` kan
+inte importera data till databasen och läses aldrig av v2-importen.
+Interna Excel-hjälpformler i dold metadata används endast för översikten.
+
 **Kalenderdagar för Gantt och Excel v2:** `1v` = 7 kalenderdagar,
 `1v3d` = 10 kalenderdagar och `10` / `10d` = 10 kalenderdagar.
 Varaktigheten kan börja och sluta på helger. Beläggning och beräknade
