@@ -135,7 +135,24 @@ try{
  assert.equal(restoration.result.weeklyPlanRows.length,1,"Backup restore preserves weekly rows");
  assert.equal(restoration.result.weeklyPlanRowHistory.length,3,"Backup restore preserves audit revision history");
  assert.equal(restoration.result.weeklyPlanRows[0].revision,3);
- console.log("PASS weekly-v2 integration: auth, preview, commit, audit revision, stale conflict, idempotency, Gantt start/end synchronization, duration edits, backup");
+ // A user's explicit estimate is authoritative even if their Excel was
+ // exported before a later import; don't silently overwrite concurrent edits.
+ const revisedEstimate={...row,week:"2026-V47",day:"Måndag",duration:"10d",rowRevision:1};
+ const conflictPreview=await call("/api/weekly-v2",{employeeId:erik.id,rows:[revisedEstimate],commit:false});
+ assert.equal(conflictPreview.status,200,JSON.stringify(conflictPreview.result));
+ assert.equal(conflictPreview.result.preview.conflicts.length,1);
+ assert.equal(conflictPreview.result.preview.conflicts[0].currentRevision,3);
+ const deniedOverride=await call("/api/weekly-v2",{employeeId:erik.id,rows:[revisedEstimate],commit:true});
+ assert.equal(deniedOverride.status,400,"A stale estimate requires explicit approval");
+ const acceptedEstimate=await call("/api/weekly-v2",{employeeId:erik.id,rows:[revisedEstimate],commit:true,acceptStaleRevisions:true});
+ assert.equal(acceptedEstimate.status,200,JSON.stringify(acceptedEstimate.result));
+ const estimatedSnap=await call("/api/data");
+ const estimatedTask=estimatedSnap.result.activities.find(x=>x.id===activity.id);
+ assert.equal(estimatedTask.startDate,"2026-11-16","Excel week/day replaces former Gantt start");
+ assert.equal(estimatedTask.endDate,"2026-11-25","Excel 10d updates Gantt end inclusive");
+ assert.equal(estimatedSnap.result.weeklyPlanRows.find(x=>x.activityId===activity.id).revision,4);
+ assert.equal(estimatedSnap.result.weeklyPlanRowHistory.length,4,"Override is retained in revision audit log");
+ console.log("PASS weekly-v2 integration: auth, preview, commit, audit revision, stale conflict, idempotency, Gantt start/end synchronization, duration edits, backup, explicit stale-confirmed estimate");
 } catch(e){console.error(e);console.error(logs);process.exitCode=1}
 finally{try{process.kill(-server.pid,"SIGTERM")}catch{server.kill("SIGTERM")}
  await sleep(800);try{process.kill(-server.pid,"SIGKILL")}catch{}
