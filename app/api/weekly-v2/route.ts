@@ -96,10 +96,21 @@ export async function POST(req:Request){
       throw Error("Aktiviteten har individuellt anpassade resursdatum. Ändra dem först i projektplaneringen för att inte förlora personens beläggning.");
     }
     if(before){
+     // weekly_plan_rows.duration_days contains a COUNT, not a duration
+     // semantic version. Rows written by the short-lived five-day release
+     // must be accepted when the persisted Gantt range matches either model.
      const old=scheduleDates({week:before.week,day:WEEK_DAYS[before.weekday??0]||"",duration:before.durationDays+" dagar"});
-     if((old.start!==original.startDate||old.end!==original.endDate)&&
-        (dates.start!==original.startDate||dates.end!==original.endDate))
-      throw Error("Gantt-datumen har ändrats efter senaste Excelimport. Exportera och granska på nytt.");
+     const legacyEnd=new Date(old.start+"T00:00:00Z");
+     if(legacyEnd.getUTCDay()!==0&&legacyEnd.getUTCDay()!==6){
+      for(let remaining=before.durationDays-1;remaining>0;){
+       legacyEnd.setUTCDate(legacyEnd.getUTCDate()+1);
+       if(legacyEnd.getUTCDay()!==0&&legacyEnd.getUTCDay()!==6)remaining--;
+      }
+     }
+     const oldMatches=(old.start===original.startDate&&old.end===original.endDate)||
+       (old.start===original.startDate&&legacyEnd.toISOString().slice(0,10)===original.endDate);
+     if(!oldMatches&&(dates.start!==original.startDate||dates.end!==original.endDate))
+      throw Error("Gantt-datumen avviker från både tidigare kalender- och arbetsdagsplanering. Exportera på nytt och granska datumen före import.");
     }
    }
    changes.push({value,before,action,oldStart:original.startDate,oldEnd:original.endDate,
