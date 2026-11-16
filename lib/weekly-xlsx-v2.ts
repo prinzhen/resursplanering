@@ -84,13 +84,12 @@ export function weekMonday(week:string):Date{
  jan4.setUTCDate(jan4.getUTCDate()-((jan4.getUTCDay()+6)%7)+(num-1)*7);
  return jan4;
 }
-/** Swedish calendar duration. Bare numbers and "d" mean days, "v" weeks.
- * 1v3d = 10 calendar days; 10 or 10d = 10 calendar days.
- * Keep existing long forms for exported workbooks.
+/** Working-day duration (Mon–Fri), 1v=5 days. Legacy explicit calendar days
+ * preserve previously stored weekend endpoints during no-op roundtrips.
  */
 export function parseDurationDays(value:string|number):number{
  if(typeof value==="number"){
-  if(!Number.isSafeInteger(value)||value<1||value>3650)throw Error("Varaktighet måste vara 1–3650 kalenderdagar.");
+  if(!Number.isSafeInteger(value)||value<1||value>3650)throw Error("Varaktighet måste vara 1–3650 dagar.");
   return value;
  }
  const v=String(value??"").trim().toLowerCase().replace(/\s+/g," ");
@@ -99,21 +98,27 @@ export function parseDurationDays(value:string|number):number{
   if(!Number.isSafeInteger(days)||days<1||days>3650)throw Error("Varaktighet måste vara 1–3650 kalenderdagar.");
   return days;
  }
+ const legacy=/^(\d+)\s*kalenderdag(?:ar)?$/.exec(v);
+ if(legacy){
+  const days=Number(legacy[1]);
+  if(!Number.isSafeInteger(days)||days<1||days>3650)throw Error("Ogiltig kalenderperiod.");
+  return days;
+ }
  const m=/^(\d+)\s*(v|vecka|veckor|d|dag|dagar|dygn)(?:\s*(\d+)\s*(d|dag|dagar|dygn))?$/.exec(v);
  if(!m)throw Error("Varaktighet: ange t.ex. 10, 10d, 1v, 1v3d eller 1 vecka 3 dagar.");
  const weeks=["v","vecka","veckor"].includes(m[2]);
  const rest=Number(m[3]||0);
- const days=Number(m[1])*(weeks?7:1)+rest;
- if(m[3]!==undefined&&(!weeks||rest>6))
-  throw Error("Ange 0–6 extra dagar efter veckor (exempel: 1v3d).");
+ const days=Number(m[1])*(weeks?5:1)+rest;
+ if(m[3]!==undefined&&(!weeks||rest>4))
+  throw Error("Ange 0–4 extra arbetsdagar efter veckor (exempel: 1v3d).");
  if(!Number.isSafeInteger(days)||days<1||days>3650)
   throw Error("Varaktighet måste vara 1–3650 kalenderdagar.");
  return days;
 }
 export function durationLabel(days:number):string{
  if(!Number.isInteger(days)||days<1)throw Error("Ogiltig varaktighet.");
- if(days<=7)return days+" "+(days===1?"dag":"dagar");
- const weeks=Math.floor(days/7),remaining=days%7;
+ if(days<5)return days+" "+(days===1?"dag":"dagar");
+ const weeks=Math.floor(days/5),remaining=days%5;
  return weeks+" "+(weeks===1?"vecka":"veckor")+(remaining?" "+remaining+" "+(remaining===1?"dag":"dagar"):"");
 }
 export function rowCalendarRange(week:string,day:string,duration:string|number){
@@ -121,7 +126,19 @@ export function rowCalendarRange(week:string,day:string,duration:string|number){
  const index=WEEK_DAYS.findIndex(x=>x.toLowerCase()===day.trim().toLowerCase());
  if(index<0)throw Error("Ogiltig veckodag: "+day);
  start.setUTCDate(start.getUTCDate()+(index===0?0:index-1));
- const end=new Date(start);end.setUTCDate(end.getUTCDate()+parseDurationDays(duration)-1);
+ const count=parseDurationDays(duration);
+ const end=new Date(start);
+ if(/^\\d+\\s*kalenderdag(?:ar)?$/i.test(String(duration).trim())){
+  end.setUTCDate(end.getUTCDate()+count-1);
+ }else{
+  if(start.getUTCDay()===0||start.getUTCDay()===6)
+   throw Error("En arbetsdagsaktivitet måste börja måndag–fredag. Välj arbetsdag eller ange kalenderdagar för äldre perioder.");
+  let remaining=count-1;
+  while(remaining>0){
+   end.setUTCDate(end.getUTCDate()+1);
+   if(end.getUTCDay()!==0&&end.getUTCDay()!==6)remaining--;
+  }
+ }
  return {start:isodate(start),end:isodate(end)};
 }
 /** Split a dated assignment segment into ISO calendar weeks with 8h/day / 40h/week. */
