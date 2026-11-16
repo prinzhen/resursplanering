@@ -87,6 +87,49 @@ try{
  assert.equal(afterKnownExport.status,200,JSON.stringify(afterKnownExport.result));
  assert.ok(afterKnownExport.result.activities.some(a=>a.name==="Ny aktivitet i nytt projekt från Excel"),
   "New activity must be visible in next personal export");
+ // Unassigned new XLSX activities must be received without knowing a
+ // project. Auto-create the planning instance's internal "Övrigt arbete".
+ const unassigned={name:newEmployee.name,email:newPerson.email,rows:[
+  {...bootstrapRow,task:"Okänt projekt – första aktiviteten",workType:"Projekt",projectCode:"",projectName:"",
+   week:"2026-V47",firstWeek:"2026-V47",duration:"10d",hours:null},
+  {...bootstrapRow,task:"Okänt projekt – andra aktiviteten",workType:"Projekt",projectCode:"",projectName:"",
+   week:"2026-V48",firstWeek:"2026-V48",duration:"1v",hours:null},
+ ]};
+ const beforeUnknown=await call("/api/data");
+ assert.equal(beforeUnknown.result.projects.filter(p=>p.code==="INTERNAL-OVR").length,0,"Test catch-all must not exist yet");
+ const unknownPreview=await call("/api/weekly-v2/bootstrap",{...unassigned,commit:false});
+ assert.equal(unknownPreview.status,200,JSON.stringify(unknownPreview.result));
+ assert.equal(unknownPreview.result.preview.projectsCreated,1,"Catch-all should be created once");
+ assert.equal(unknownPreview.result.preview.assignedToInternal,2);
+ assert.equal(unknownPreview.result.preview.activitiesCreated,2);
+ const unknownAfterPreview=await call("/api/data");
+ assert.equal(unknownAfterPreview.result.projects.some(p=>p.code==="INTERNAL-OVR"),false,"Preview must not create catch-all");
+ const unknownCommit=await call("/api/weekly-v2/bootstrap",{...unassigned,commit:true});
+ assert.equal(unknownCommit.status,200,JSON.stringify(unknownCommit.result));
+ assert.equal(unknownCommit.result.verified,true,JSON.stringify(unknownCommit.result));
+ assert.equal(unknownCommit.result.registered.length,2);
+ const unknownSaved=await call("/api/data");
+ const catchAll=unknownSaved.result.projects.filter(p=>p.code==="INTERNAL-OVR");
+ assert.equal(catchAll.length,1,"Only one internal catch-all is allowed per planning instance");
+ assert.equal(catchAll[0].name,"Övrigt arbete");
+ for(const activityName of unassigned.rows.map(r=>r.task)){
+  const activity=unknownSaved.result.activities.find(a=>a.projectId===catchAll[0].id&&a.name===activityName);
+  assert.ok(activity,"Unassigned activity must be visible for later project classification");
+  assert.ok(unknownSaved.result.assignments.some(a=>a.activityId===activity.id&&a.employeeId===newEmployee.id));
+ }
+ const third={...unassigned,rows:[{...unassigned.rows[0],task:"Okänt projekt – tredje aktiviteten",week:"2026-V49",firstWeek:"2026-V49"}]};
+ const nextPreview=await call("/api/weekly-v2/bootstrap",{...third,commit:false});
+ assert.equal(nextPreview.status,200,JSON.stringify(nextPreview.result));
+ assert.equal(nextPreview.result.preview.projectsCreated,0,"Internal project must be reused");
+ assert.equal(nextPreview.result.preview.assignedToInternal,1);
+ const nextCommit=await call("/api/weekly-v2/bootstrap",{...third,commit:true});
+ assert.equal(nextCommit.status,200,JSON.stringify(nextCommit.result));
+ assert.equal(nextCommit.result.verified,true);
+ const repeatUnknown=await call("/api/weekly-v2/bootstrap",{...third,commit:true});
+ assert.equal(repeatUnknown.status,200,JSON.stringify(repeatUnknown.result));
+ const afterRepeat=await call("/api/data");
+ assert.equal(afterRepeat.result.projects.filter(p=>p.code==="INTERNAL-OVR").length,1);
+ assert.equal(afterRepeat.result.activities.filter(a=>a.projectId===catchAll[0].id&&a.name===third.rows[0].task).length,1,"Re-import must not duplicate unassigned task");
  const snap=await call("/api/data");assert.equal(snap.status,200,JSON.stringify(snap.result));
  const erik=snap.result.employees.find(x=>x.name==="Erik Holm");assert.ok(erik);
  const activity=snap.result.activities.find(x=>x.name==="Systemdesign");assert.ok(activity);
