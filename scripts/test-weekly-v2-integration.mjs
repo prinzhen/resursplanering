@@ -46,6 +46,9 @@ try{
  assert.ok(!beforeBootstrap.result.employees.some(x=>x.email===newPerson.email),"Preview must not mutate database");
  bs=await call("/api/weekly-v2/bootstrap",{...newPerson,commit:true});
  assert.equal(bs.status,200,JSON.stringify(bs.result));
+ assert.equal(bs.result.verified,true,JSON.stringify(bs.result));
+ assert.equal(bs.result.registered.length,1);
+ assert.ok(bs.result.registered[0].activityId>0);
  const boot=await call("/api/data");
  const newEmployee=boot.result.employees.find(x=>x.email===newPerson.email);
  assert.ok(newEmployee,"V1 backend must create missing employee from personal v2 XLSX");
@@ -68,6 +71,8 @@ try{
  assert.equal(previewKnown.result.preview.activitiesCreated,1);
  let commitKnown=await call("/api/weekly-v2/bootstrap",{...knownPerson,commit:true});
  assert.equal(commitKnown.status,200,JSON.stringify(commitKnown.result));
+ assert.equal(commitKnown.result.verified,true,JSON.stringify(commitKnown.result));
+ assert.equal(commitKnown.result.registered[0].projectCode,"N.90991");
  const afterKnown=await call("/api/data");
  const addedProject=afterKnown.result.projects.find(p=>p.code==="N.90991");
  assert.ok(addedProject,"New project must be in main project catalogue after personal Excel import");
