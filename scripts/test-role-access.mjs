@@ -11,9 +11,21 @@ import {tmpdir} from "node:os";
 import {join} from "node:path";
 import {setTimeout as sleep} from "node:timers/promises";
 import {DatabaseSync} from "node:sqlite";
+import {createServer} from "node:net";
 
 const dir=await mkdtemp(join(tmpdir(),"resursplanering-roles-"));
-const port=32141,base=`http://127.0.0.1:${port}`;
+// Do not reuse a fixed port: a leftover Wrangler worker from a cancelled
+// test could answer HTTP 200 while this instance has no SQLite database.
+const port=await new Promise((resolve,reject)=>{
+ const listener=createServer();
+ listener.once("error",reject);
+ listener.listen(0,"127.0.0.1",()=>{
+  const address=listener.address();
+  const number=typeof address==="object"&&address?address.port:null;
+  listener.close(error=>error?reject(error):resolve(number));
+ });
+});
+const base=`http://127.0.0.1:${port}`;
 const password="CI-Role-Matrix-Only!2026";
 let logs="";
 let passes=0;
@@ -93,7 +105,23 @@ try{
   try{if((await fetch(base+"/api/auth",{signal:AbortSignal.timeout(1200)})).status===200){ready=true;break}}catch{}
   await sleep(1000);
  }
- if(!ready)throw Error("Isolated test server failed to become ready");
+ if(!ready)throw Error("Isolated test server failed to become ready: "+logs.slice(-4000));
+ // HTTP readiness alone is not enough: make sure THIS test instance completed
+ // its SQLite migrations. Do not provision accounts against a missing file.
+ let dbReady=false;
+ for(let i=0;i<30;i++){
+  if(server.exitCode!==null)throw Error("Test server exited while waiting for SQLite: "+logs.slice(-4000));
+  try{
+   const location=await onlyDatabase(join(dir,"data"));
+   const probe=new DatabaseSync(location,{readOnly:true});
+   try{
+    dbReady=!!probe.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='user_accounts'").get();
+   }finally{probe.close()}
+   if(dbReady)break;
+  }catch{}
+  await sleep(250);
+ }
+ if(!dbReady)throw Error("Isolated SQLite database was not initialized before admin provisioning. Port "+port+"; server logs: "+logs.slice(-4000));
  const provision=spawnSync("python3",["scripts/provision-account.py","--data-dir",join(dir,"data"),"--email","role-admin@example.se","--admin","--password-stdin"],{input:password+"\n",encoding:"utf8"});
  if(provision.status!==0)throw Error("Admin provisioning failed: "+provision.stdout+" "+provision.stderr);
  const anon=await api("","/api/quick-activity");
