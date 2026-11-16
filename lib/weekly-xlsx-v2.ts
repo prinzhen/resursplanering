@@ -84,41 +84,30 @@ export function weekMonday(week:string):Date{
  jan4.setUTCDate(jan4.getUTCDate()-((jan4.getUTCDay()+6)%7)+(num-1)*7);
  return jan4;
 }
-/** Working-day duration (Mon–Fri), 1v=5 days. Legacy explicit calendar days
- * preserve previously stored weekend endpoints during no-op roundtrips.
- */
+/** Calendar spans: one week is seven calendar days. Work hours are computed separately. */
 export function parseDurationDays(value:string|number):number{
  if(typeof value==="number"){
-  if(!Number.isSafeInteger(value)||value<1||value>3650)throw Error("Varaktighet måste vara 1–3650 dagar.");
+  if(!Number.isSafeInteger(value)||value<1||value>3650)throw Error("Varaktighet måste vara 1–3650 kalenderdagar.");
   return value;
  }
- const v=String(value??"").trim().toLowerCase().replace(/\s+/g," ");
- if(/^\d+$/.test(v)){
-  const days=Number(v);
-  if(!Number.isSafeInteger(days)||days<1||days>3650)throw Error("Varaktighet måste vara 1–3650 dagar.");
+ const raw=String(value??"").trim().toLowerCase().replace(/\s+/g," ");
+ if(/^\d+$/.test(raw)){
+  const days=Number(raw);
+  if(!Number.isSafeInteger(days)||days<1||days>3650)throw Error("Varaktighet måste vara 1–3650 kalenderdagar.");
   return days;
  }
- const legacy=/^(\d+)\s*kalenderdag(?:ar)?$/.exec(v);
- if(legacy){
-  const days=Number(legacy[1]);
-  if(!Number.isSafeInteger(days)||days<1||days>3650)throw Error("Ogiltig kalenderperiod.");
-  return days;
- }
- const m=/^(\d+)\s*(v|vecka|veckor|d|dag|dagar|dygn)(?:\s*(\d+)\s*(d|dag|dagar|dygn))?$/.exec(v);
+ const m=/^(\d+)\s*(v|vecka|veckor|d|dag|dagar|dygn|kalenderdag|kalenderdagar)(?:\s*(\d+)\s*(d|dag|dagar|dygn))?$/.exec(raw);
  if(!m)throw Error("Varaktighet: ange t.ex. 10, 10d, 1v, 1v3d eller 1 vecka 3 dagar.");
  const weeks=["v","vecka","veckor"].includes(m[2]);
- const rest=Number(m[3]||0);
- const days=Number(m[1])*(weeks?5:1)+rest;
- if(m[3]!==undefined&&(!weeks||rest>4))
-  throw Error("Ange 0–4 extra arbetsdagar efter veckor (exempel: 1v3d).");
- if(!Number.isSafeInteger(days)||days<1||days>3650)
-  throw Error("Varaktighet måste vara 1–3650 dagar.");
+ const rest=Number(m[3]||0),days=Number(m[1])*(weeks?7:1)+rest;
+ if(m[3]!==undefined&&(!weeks||rest>6))throw Error("Ange högst 6 extra dagar efter hela veckor.");
+ if(!Number.isSafeInteger(days)||days<1||days>3650)throw Error("Varaktighet måste vara 1–3650 kalenderdagar.");
  return days;
 }
 export function durationLabel(days:number):string{
  if(!Number.isInteger(days)||days<1)throw Error("Ogiltig varaktighet.");
- if(days<5)return days+" "+(days===1?"dag":"dagar");
- const weeks=Math.floor(days/5),remaining=days%5;
+ if(days<=7)return days+" "+(days===1?"dag":"dagar");
+ const weeks=Math.floor(days/7),remaining=days%7;
  return weeks+" "+(weeks===1?"vecka":"veckor")+(remaining?" "+remaining+" "+(remaining===1?"dag":"dagar"):"");
 }
 export function rowCalendarRange(week:string,day:string,duration:string|number){
@@ -126,19 +115,8 @@ export function rowCalendarRange(week:string,day:string,duration:string|number){
  const index=WEEK_DAYS.findIndex(x=>x.toLowerCase()===day.trim().toLowerCase());
  if(index<0)throw Error("Ogiltig veckodag: "+day);
  start.setUTCDate(start.getUTCDate()+(index===0?0:index-1));
- const count=parseDurationDays(duration);
  const end=new Date(start);
- if(/^\d+\s*kalenderdag(?:ar)?$/i.test(String(duration).trim())){
-  end.setUTCDate(end.getUTCDate()+count-1);
- }else{
-  if(start.getUTCDay()===0||start.getUTCDay()===6)
-   throw Error("En arbetsdagsaktivitet måste börja måndag–fredag. Välj arbetsdag eller ange kalenderdagar för äldre perioder.");
-  let remaining=count-1;
-  while(remaining>0){
-   end.setUTCDate(end.getUTCDate()+1);
-   if(end.getUTCDay()!==0&&end.getUTCDay()!==6)remaining--;
-  }
- }
+ end.setUTCDate(end.getUTCDate()+parseDurationDays(duration)-1);
  return {start:isodate(start),end:isodate(end)};
 }
 /** Split a dated assignment segment into ISO calendar weeks with 8h/day / 40h/week. */
@@ -196,7 +174,7 @@ export function createWeeklyV2Xlsx(rows:WeeklyV2Row[],base=currentWeekKey(),pers
  if(rows.length>5000)throw Error("Max 5000 rader per export.");
  const exportYear=Number(normalizeISOWeek(base).slice(0,4));
  const body=[
-  '<row r="1">'+cell("A1","PERSONLIG VECKOPLANERING",1)+cell("T1",exportYear)+cell("U1","ARBETSDAGAR-5")+'</row>',
+  '<row r="1">'+cell("A1","PERSONLIG VECKOPLANERING",1)+cell("T1",exportYear)+cell("U1","KALENDERDAGAR-7")+'</row>',
   '<row r="2">'+cell("A2","Namn",1)+cell("B2",person.name)+cell("D2","E-postadress",1)+cell("E2",person.email)+'</row>',
   '<row r="4">'+WEEKLY_COLUMNS.map((h,i)=>cell(column(i)+"4",h,1)).join("")+'</row>'
  ];
@@ -236,6 +214,20 @@ export function createWeeklyV2Xlsx(rows:WeeklyV2Row[],base=currentWeekKey(),pers
   "xl/worksheets/sheet1.xml":sheet,
  });
 }
+/** Read legacy five-working-day XLSX precisely, without changing calendar semantics. */
+function legacyFiveDayDuration(value:string):number{
+ const raw=value.trim().toLowerCase().replace(/\s+/g," ");
+ const number=/^\d+$/.exec(raw);
+ if(number)return Number(number[0]);
+ const explicit=/^(\d+)\s*kalenderdag(?:ar)?$/.exec(raw);
+ if(explicit)return Number(explicit[1]);
+ const m=/^(\d+)\s*(v|vecka|veckor|d|dag|dagar|dygn)(?:\s*(\d+)\s*(d|dag|dagar|dygn))?$/.exec(raw);
+ if(!m)throw Error("Ogiltig varaktighet i femdagarsfil: "+value);
+ const weeks=["v","vecka","veckor"].includes(m[2]);
+ const days=Number(m[1])*(weeks?5:1)+Number(m[3]||0);
+ if(days<1||days>3650)throw Error("Ogiltig varaktighet i femdagarsfil.");
+ return days;
+}
 export async function readWeeklyV2Xlsx(file:File):Promise<{name:string;email:string;rows:WeeklyV2Row[]}>{
  if(file.size>8_000_000)throw Error("Maximal XLSX-storlek är 8 MB.");
  const entries=await unzip(new Uint8Array(await file.arrayBuffer()));
@@ -257,17 +249,24 @@ export async function readWeeklyV2Xlsx(file:File):Promise<{name:string;email:str
   const name=c("C"+index);if(!name)continue;
   const str=(x:string)=>c(x+index);
   const num=(s:string)=>{const v=s.replace("%","").replace(",",".").trim();return v?Number(v):null};
-  // Older exported workbooks used calendar durations (7 days per week).
-  // Preserve their exact historical date ranges. Re-exporting marks the new
-  // 5-working-day mode so subsequent edits use working days by default.
+  // Workbooks exported by the intermediate 5-day release must keep their
+  // original calendar endpoints even when read by the restored 7-day version.
   let duration=str("D");
-  if(!usesFiveDayWorkweeks){
-   const legacy=/^(\\d+)\\s*(dag|dagar|dygn|vecka|veckor)(?:\\s+(\\d+)\\s*(dag|dagar|dygn))?$/i.exec(duration.trim());
-   if(legacy){
-    const days=Number(legacy[1])*(legacy[2].toLowerCase().startsWith("veck")?7:1)+Number(legacy[3]||0);
-    if(!Number.isSafeInteger(days)||days<1||days>3650)throw Error("Ogiltig äldre varaktighet på rad "+index);
-    duration=days+" kalenderdagar";
+  if(usesFiveDayWorkweeks){
+   const n=legacyFiveDayDuration(duration);
+   const w=parseWeekLabel(str("A"),referenceYear);
+   const day=str("B");
+   const begin=weekMonday(w);
+   const idx=WEEK_DAYS.findIndex(x=>x.toLowerCase()===day.trim().toLowerCase());
+   if(idx<0)throw Error("Ogiltig veckodag i äldre femdagarsfil på rad "+index);
+   begin.setUTCDate(begin.getUTCDate()+(idx===0?0:idx-1));
+   const end=new Date(begin);
+   if(n>1&&(begin.getUTCDay()===0||begin.getUTCDay()===6))throw Error("Ogiltig start på helg i femdagarsfil.");
+   for(let left=n-1;left>0;){
+    end.setUTCDate(end.getUTCDate()+1);
+    if(end.getUTCDay()!==0&&end.getUTCDay()!==6)left--;
    }
+   duration=(Math.round((end.getTime()-begin.getTime())/86400000)+1)+" kalenderdagar";
   }
   const row:WeeklyV2Row={week:parseWeekLabel(str("A"),referenceYear),day:str("B"),task:name,duration,
    effort:num(str("E")),workType:str("F"),hours:num(str("G")),status:str("H"),
