@@ -36,7 +36,7 @@ export async function POST(req:Request){
    // An unidentifiable project must not block reporting. Use the existing
    // internal catch-all for THIS planning database. The current schema does
    // not expose separate organization IDs, so do not invent cross-org links.
-   if(!text(row.projectCode)&&text(row.workType)!=="Verksamhet"&&text(row.workType)!=="Övrigt")return "Övrigt";
+   if(!text(row.projectCode))return "Övrigt";
    return text(row.workType)||"Projekt";
   };
   const codeFor=(row:WeeklyV2Row)=>{
