@@ -19,16 +19,10 @@ RUN node --check scripts/test-release-readiness.mjs
 RUN pnpm build
 RUN pnpm exec tsc --noEmit
 RUN node scripts/test-chef-filter.mjs
-RUN node scripts/test-effort-history.mjs
 RUN node scripts/test-individual-xlsx-layout.mjs
-RUN node scripts/test-planning-exchange.mjs
-RUN node scripts/test-weekly-v2.mjs
 RUN node scripts/test-activity-calendar.mjs
-RUN node scripts/test-weekly-single-row.mjs
-RUN node scripts/test-weekly-load.mjs
-RUN node scripts/test-weekly-v2-integration.mjs
 RUN node scripts/test-individual-integration.mjs
-RUN node scripts/test-role-access.mjs
+RUN node scripts/test-release-readiness.mjs --quick
 RUN node scripts/test-tidrapport-sync.mjs
 
 FROM node:24-bookworm-slim AS runtime
