@@ -63,6 +63,10 @@ const row={week:"2026-V47",day:"Torsdag",task:"Systemdesign",duration:"3 dagar",
 workType:"Projekt",hours:12,status:"Planerad",priority:"3",deadline:"2026-12-01",
 projectCode:"N.001",projectName:"Exempel",firstWeek:"2026-V46",comment:"Behov",
 moveReason:"",activityId:"activity-42",rowKey:"row-42"};
+// Blank project is valid for a NEW activity and must survive XLSX export.
+const unassigned={...row,task:"Ej projektsatt arbete",projectCode:"",projectName:"",activityId:"",rowKey:"",rowRevision:0};
+assert.ok(createWeeklyV2Xlsx([unassigned],"2026-V46").size>1000);
+assert.throws(()=>createWeeklyV2Xlsx([{...unassigned,activityId:"activity-42"}],"2026-V46"),/Befintlig aktivitet saknar projektkod/);
 const blob=createWeeklyV2Xlsx([row],"2026-V46",{name:"Test Person",email:"test@example.se"});
 const bytes=new Uint8Array(await blob.arrayBuffer()), view=new DataView(bytes.buffer);
 const decoder=new TextDecoder();
