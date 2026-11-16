@@ -143,10 +143,9 @@ export default function WeeklyV2Page(){
    try{
     if(newRows.length||!existing){
      const result=await request("/api/weekly-v2/bootstrap",{name:person.name,email:person.email,rows:newRows,commit:true});
+     created=true; // The POST succeeded and may have written data; never retry blindly.
      createdRecords=result.registered||[];
      if(result.verified===false)throw Error("Importen genomfördes, men kontroll av sparade aktiviteter misslyckades: "+(result.warnings||[]).join(" "));
-
-     created=true;
     }
     if(existingRows.length&&existing){
      await request("/api/weekly-v2",{employeeId:existing.id,rows:existingRows,commit:true});
