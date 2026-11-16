@@ -82,7 +82,8 @@ for(let i=0;i<WEEKLY_COLUMNS.length;i++){
  assert.ok(sheet.includes(WEEKLY_COLUMNS[i]),"Missing header "+WEEKLY_COLUMNS[i]);
 }
 assert.ok(sheet.includes('r="Q5"'),"Missing stable hidden planning row key");
-assert.ok(sheet.includes('min="17" max="20" hidden="1"'),"Metadata, year and week-list columns must be hidden");
+assert.ok(sheet.includes('min="17" max="21" hidden="1"'),"Metadata, year, duration-mode and week-list columns must be hidden");
+assert.ok(sheet.includes('r="U1"')&&sheet.includes("ARBETSDAGAR-5"),"New XLSX must declare five-day workweeks");
 assert.ok(sheet.includes('sqref="A5:A5004 M5:M5004"'),"Dropdown required for ISO week and first planned week");
 assert.ok(sheet.includes('$S$5:$S$265'),"Scrollable week list must be in hidden column S");
 assert.ok(sheet.includes('r="S5"'),"Week list must start at current week");
