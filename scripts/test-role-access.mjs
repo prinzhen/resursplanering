@@ -137,6 +137,57 @@ try{
  const leader=await connected("erik@example.se");
  const ordinary=await connected("sara@example.se");
  const nonmember=await connected("johan@example.se");
+ // Generic multi-project import must not bypass RBAC via direct HTTP POST.
+ const multiProjectRow={
+  record_type:"activity",project_code:"TEST-XCH",project_name:"Utbyte test",
+  work_package_code:"",work_package_name:"",activity_code:"XCH-01",activity:"Planerad integration",
+  parent_activity_code:"",description:"Behörighetstest",start_date:"2026-11-16",end_date:"2026-11-20",
+  estimated_hours:"20",status:"Planerad",employee_email:"sara@example.se",
+  employee_name:"Sara Berg",effort_percent:"50"
+ };
+ const exchangeUrl="/api/planning-exchange";
+ const anonymousExchange=await api("",exchangeUrl,{rows:[multiProjectRow],commit:true});
+ check("Anonymous bulk exchange is denied",()=>assert.equal(anonymousExchange.status,401));
+ for(const [role,cookie] of [["GROUP MANAGER",manager],["PROJECT/TEAM LEADER",leader],["ORDINARY STAFF",ordinary],["NONMEMBER",nonmember]]){
+  const denied=await api(cookie,exchangeUrl,{rows:[multiProjectRow],commit:true});
+  check(role+" cannot bypass bulk-import rights with direct API call",()=>assert.equal(denied.status,403));
+ }
+ const beforePreview=await ok(admin,"/api/data");
+ const safePreview=await ok(admin,exchangeUrl,{rows:[multiProjectRow],commit:false});
+ check("ADMIN preview describes new project and activity without changing database",()=>{
+  assert.equal(safePreview.preview.projectsCreated,1);
+  assert.equal(safePreview.preview.activitiesCreated,1);
+  assert.equal(safePreview.committed,false);
+ });
+ const previewSnapshot=await ok(admin,"/api/data");
+ check("Preview is read-only and creates no employee, project or activity",()=>{
+  assert.deepEqual(previewSnapshot.projects,beforePreview.projects);
+  assert.deepEqual(previewSnapshot.activities,beforePreview.activities);
+  assert.deepEqual(previewSnapshot.employees,beforePreview.employees);
+ });
+ const invalidBulk=[multiProjectRow,{...multiProjectRow,activity_code:"XCH-02",activity:"Invalid row",start_date:"2026-11-31"}];
+ const refused=await api(admin,exchangeUrl,{rows:invalidBulk,commit:true});
+ check("Invalid bulk import is rejected before any writes",()=>assert.equal(refused.status,400));
+ const afterInvalid=await ok(admin,"/api/data");
+ check("Invalid date cannot partially create project or activities",()=>assert.ok(!afterInvalid.projects.some(p=>p.code==="TEST-XCH")));
+ const committed=await ok(admin,exchangeUrl,{rows:[multiProjectRow],commit:true});
+ check("ADMIN can commit validated ordinary project exchange",()=>assert.equal(committed.committed,true));
+ const afterExchange=await ok(admin,"/api/data");
+ const importedProject=afterExchange.projects.find(p=>p.code==="TEST-XCH");
+ const importedTask=afterExchange.activities.find(a=>a.projectId===importedProject?.id&&a.code==="XCH-01");
+ check("Atomic import creates exactly one new project, activity and assignment",()=>{
+  assert.ok(importedProject&&importedTask);
+  assert.equal(afterExchange.projects.filter(p=>p.code==="TEST-XCH").length,1);
+  assert.equal(afterExchange.assignments.filter(a=>a.activityId===importedTask.id&&a.employeeId===sara).length,1);
+ });
+ await ok(admin,exchangeUrl,{rows:[multiProjectRow],commit:true});
+ const afterRepeat=await ok(admin,"/api/data");
+ check("Importing same activity twice is idempotent",()=>{
+  assert.equal(afterRepeat.activities.filter(a=>a.projectId===importedProject.id&&a.code==="XCH-01").length,1);
+  assert.equal(afterRepeat.assignments.filter(a=>a.activityId===importedTask.id&&a.employeeId===sara).length,1);
+ });
+ const noCsv=await api(admin,"/api/data",{action:"import",rows:[multiProjectRow]});
+ check("Legacy CSV import cannot bypass the reviewed exchange workflow",()=>assert.equal(noCsv.status,410));
  const managerState=await ok(manager,"/api/data");
  check("GROUP MANAGER role is retained with real employee identity",()=>{
   assert.equal(managerState.viewer.isGroupManager,true);
