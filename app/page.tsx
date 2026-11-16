@@ -1,5 +1,5 @@
-import {weeklyOverridePercent,type WeeklyLoadRow} from "@/lib/weekly-load";
 "use client";
+import {weeklyOverridePercent,type WeeklyLoadRow} from "@/lib/weekly-load";
 import {useEffect,useMemo,useRef,useState} from "react";
 import {sortEmployeeProjects} from "@/lib/project-sort";
 import {exchangeRows,writePlanningXlsx,readPlanningXlsx,readMspdi,writeMspdi,readMpx,writeMpx,detectExchangeFile,type ExchangeRow} from "@/lib/planning-exchange";
@@ -748,10 +748,10 @@ function ImportDialog({open,close,fileRef,run,preview,canCommit,reset}:{
   <DialogHeader><DialogTitle>Importera projektplanering</DialogTitle>
    <DialogDescription>Excel XLSX, Microsoft Project XML/MSPDI eller MPX. CSV accepteras inte längre.
     Personlig Excel v2 importeras i den separata veckoplaneringen.</DialogDescription></DialogHeader>
-  <Field label="Planeringsfil"><Input ref={fileRef} type="file" accept=".xlsx,.xml,.mpx,.mpp" onChange={reset}/></Field>
+  <Field label="Planeringsfil"><Input ref={fileRef} type="file" accept=".xlsx,.xml,.mpx" onChange={reset}/></Field>
   <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
    Organisationsövergripande import kräver administratör. Förhandsgranskning gör inga ändringar.
-   Binära MPP-filer behöver MPXJ och är ännu inte aktiverade; använd XML/MSPDI för tillfället.
+   Binära MPP-filer stöds inte ännu (MPXJ-konverterare saknas); exportera XML/MSPDI eller MPX.  aktiverade; använd XML/MSPDI för tillfället.
    Kalender- och beroendedata som formatet inte kan mappa importeras inte.
   </div>
   {preview&&<div className="rounded-xl border p-3 text-sm">
