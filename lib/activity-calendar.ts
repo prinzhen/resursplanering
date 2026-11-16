@@ -1,6 +1,6 @@
 import {rowCalendarRange,parseDurationDays,normalizeISOWeek,weekKeyForDate,WEEK_DAYS,type WeeklyV2Row} from "./weekly-xlsx-v2.ts";
 
-/** Calendar duration is inclusive: a 10-week activity starting Tuesday ends Monday 69 days later. */
+/** Five-day workweek: durations skip weekends; legacy calendar-day markers preserve historical dates. */
 export function scheduleDates(row:Pick<WeeklyV2Row,"week"|"day"|"duration">){
  return rowCalendarRange(normalizeISOWeek(row.week),row.day,parseDurationDays(row.duration));
 }
@@ -8,10 +8,18 @@ export function rowFromDates(start:string,end:string):Pick<WeeklyV2Row,"week"|"d
  const first=new Date(start+"T00:00:00Z"),last=new Date(end+"T00:00:00Z");
  if(Number.isNaN(first.getTime())||Number.isNaN(last.getTime())||first.toISOString().slice(0,10)!==start||
   last.toISOString().slice(0,10)!==end||last<first)throw Error("Ogiltigt start- eller slutdatum");
- const days=Math.round((last.getTime()-first.getTime())/86400000)+1;
- const weeks=Math.floor(days/7),rest=days%7;
- const duration=weeks?(weeks+" "+(weeks===1?"vecka":"veckor")+(rest?" "+rest+" "+(rest===1?"dag":"dagar"):"")):
-   days+" "+(days===1?"dag":"dagar");
+ const calendarDays=Math.round((last.getTime()-first.getTime())/86400000)+1;
+ const workdays=workdaysBetween(start,end);
+ const startWeekend=first.getUTCDay()===0||first.getUTCDay()===6;
+ const endWeekend=last.getUTCDay()===0||last.getUTCDay()===6;
+ // Never shift a historical weekend endpoint during export/import.
+ const duration=startWeekend||endWeekend?
+  calendarDays+" kalenderdagar":
+  (()=>{
+   const weeks=Math.floor(workdays/5),rest=workdays%5;
+   return weeks?(weeks+" "+(weeks===1?"vecka":"veckor")+(rest?" "+rest+" "+(rest===1?"dag":"dagar"):"")):
+    workdays+" "+(workdays===1?"dag":"dagar");
+  })();
  const weekday=(first.getUTCDay()+6)%7+1;
  return {week:weekKeyForDate(start),day:WEEK_DAYS[weekday],duration};
 }
