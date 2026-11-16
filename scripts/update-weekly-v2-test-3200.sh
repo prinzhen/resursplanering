@@ -8,7 +8,7 @@ APP="/opt/resursplanering-weekly-v2"
 DATA="/var/lib/resursplanering-weekly-v2/data"
 SERVICE="resursplanering-weekly-v2.service"
 BRANCH="feature/weekly-xlsx-v2-bf8e928-base"
-VERSION="4e9e70024546497519bee8d0d33314208a35a822"
+VERSION="d61dfbee7f40610f91f93f9e086fd5ff78ba6434"
 PREVIOUS="90ba2336e5fdcbe6a4aeea56e456bd759246fb3e"
 STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
 STAGE="/opt/.resursplanering-weekly-v2-stage-$STAMP"
@@ -40,7 +40,7 @@ for bin in git pnpm node python3 systemctl runuser curl timeout;do
 done
 [[ -d "$APP/.git" && -d "$DATA" && ! -L "$APP" && ! -L "$DATA" ]] || { echo "Testinstallation saknas." >&2;exit 1; }
 CURRENT="$(git -c safe.directory="$APP" -C "$APP" rev-parse HEAD)"
-if [[ "$CURRENT" != "$PREVIOUS" && "$CURRENT" != "6b87b4c7be1671367aca841d463a4e801a6310cb" && "$CURRENT" != "9a68562c8543593ac0d91d6d6d89e484608e3b90" && "$CURRENT" != "55842ab6cc87381af2cf66140207faeb906dbd6c" && "$CURRENT" != "ef5662d96fb0ce0f419813a0dfd2b61b8af586c9" && "$CURRENT" != "f0c9a13d6a388539d3240f442687d556d12c9371" && "$CURRENT" != "20f0cea8e63ba3d73bc8daf4b9b84ea90a8205c0" ]];then
+if [[ "$CURRENT" != "$PREVIOUS" && "$CURRENT" != "6b87b4c7be1671367aca841d463a4e801a6310cb" && "$CURRENT" != "9a68562c8543593ac0d91d6d6d89e484608e3b90" && "$CURRENT" != "55842ab6cc87381af2cf66140207faeb906dbd6c" && "$CURRENT" != "ef5662d96fb0ce0f419813a0dfd2b61b8af586c9" && "$CURRENT" != "f0c9a13d6a388539d3240f442687d556d12c9371" && "$CURRENT" != "20f0cea8e63ba3d73bc8daf4b9b84ea90a8205c0" && "$CURRENT" != "4e9e70024546497519bee8d0d33314208a35a822" ]];then
  echo "Testversion $CURRENT är inte en av de godkända föregående versionerna. Avbryter." >&2;exit 1
 fi
 systemctl is-active --quiet "$SERVICE" || { echo "Testtjänsten är inte aktiv." >&2;exit 1; }
