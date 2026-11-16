@@ -18,12 +18,9 @@ RUN bash -n scripts/update-production-timereconciliation.sh
 RUN node --check scripts/test-release-readiness.mjs
 RUN pnpm build
 RUN pnpm exec tsc --noEmit
-RUN node scripts/test-chef-filter.mjs
 RUN node scripts/test-individual-xlsx-layout.mjs
 RUN node scripts/test-activity-calendar.mjs
-RUN node scripts/test-individual-integration.mjs
-RUN node scripts/test-release-readiness.mjs --quick
-RUN node scripts/test-tidrapport-sync.mjs
+RUN node scripts/test-release-readiness.mjs
 
 FROM node:24-bookworm-slim AS runtime
 
