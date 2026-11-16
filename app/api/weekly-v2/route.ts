@@ -116,8 +116,14 @@ export async function POST(req:Request){
      }
      const oldMatches=(old.start===original.startDate&&old.end===original.endDate)||
        (old.start===original.startDate&&legacyEnd.toISOString().slice(0,10)===original.endDate);
-     if(!oldMatches&&(dates.start!==original.startDate||dates.end!==original.endDate))
-      throw Error("Gantt-datumen avviker från både tidigare kalender- och arbetsdagsplanering. Exportera på nytt och granska datumen före import.");
+     if(!oldMatches&&(dates.start!==original.startDate||dates.end!==original.endDate)){
+      // Project Gantt may have moved without incrementing weekly_plan_rows
+      // revision. Present it as a conflict for explicit confirmation too.
+      if(!conflicts.some(c=>c.activityId===activityId))
+       conflicts.push({activityId,task:row.task,exportRevision:value.revision,currentRevision:before.revision});
+      if(body.commit&&!body.acceptStaleRevisions)
+       throw Error("Gantt-planen har ändrats sedan senaste Excelversionen. Förhandsgranska och välj om Excelprognosen ska ersätta plandatumen.");
+     }
     }
    }
    changes.push({value,before,action,oldStart:original.startDate,oldEnd:original.endDate,
