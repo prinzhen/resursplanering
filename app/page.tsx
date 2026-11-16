@@ -751,7 +751,7 @@ function ImportDialog({open,close,fileRef,run,preview,canCommit,reset}:{
   <Field label="Planeringsfil"><Input ref={fileRef} type="file" accept=".xlsx,.xml,.mpx" onChange={reset}/></Field>
   <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
    Organisationsövergripande import kräver administratör. Förhandsgranskning gör inga ändringar.
-   Binära MPP-filer stöds inte ännu (MPXJ-konverterare saknas); exportera XML/MSPDI eller MPX.  aktiverade; använd XML/MSPDI för tillfället.
+   Binära MPP-filer stöds inte ännu (MPXJ-konverterare saknas); exportera XML/MSPDI eller MPX i stället.
    Kalender- och beroendedata som formatet inte kan mappa importeras inte.
   </div>
   {preview&&<div className="rounded-xl border p-3 text-sm">
