@@ -699,6 +699,14 @@ Databasens redan sparade start/slutdatum ändras inte vid uppgradering.
 Vid Excelimport kontrolleras äldre varaktigheter mot både 5- och 7-dagarsmodellen
 för att förhindra falska Gantt-konflikter; verkliga datumkonflikter stoppas.
 
+Vid import av en ny prognos har Excelradens vecka, dag och varaktighet
+företräde framför äldre Gantt-datum efter användarens godkännande.
+Om filens radrevision eller Gantt-baslinje skiljer sig från databasens visar
+förhandsgranskningen exakt vilka aktiviteter som berörs och kräver att
+användaren uttryckligen markerar att Exceluppgifterna får ersätta
+senast sparad planering. Dessa överskrivningar revisionsloggas. Importen
+får inte automatiskt kringgå historiska eller delade resursperioder.
+
 Blandad v2-import som både skapar nya objekt och uppdaterar befintliga sker
 ännu i två API-steg. En lyckad isolerad testsvit ersätter därför **inte**
 kravet på en enda databastransaktion för dessa två steg före produktionssättning.
