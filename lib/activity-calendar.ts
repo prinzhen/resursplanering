@@ -1,8 +1,8 @@
-import {rowCalendarRange,parseDurationDays,normalizeISOWeek,weekKeyForDate,WEEK_DAYS,type WeeklyV2Row} from "./weekly-xlsx-v2.ts";
+import {rowCalendarRange,normalizeISOWeek,weekKeyForDate,WEEK_DAYS,type WeeklyV2Row} from "./weekly-xlsx-v2.ts";
 
 /** Five-day workweek: durations skip weekends; legacy calendar-day markers preserve historical dates. */
 export function scheduleDates(row:Pick<WeeklyV2Row,"week"|"day"|"duration">){
- return rowCalendarRange(normalizeISOWeek(row.week),row.day,parseDurationDays(row.duration));
+ return rowCalendarRange(normalizeISOWeek(row.week),row.day,row.duration);
 }
 export function rowFromDates(start:string,end:string):Pick<WeeklyV2Row,"week"|"day"|"duration">{
  const first=new Date(start+"T00:00:00Z"),last=new Date(end+"T00:00:00Z");
