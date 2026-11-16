@@ -30,12 +30,25 @@ export async function POST(req:Request){
   const codes=new Set<string>();
   const tasks=new Set<string>();
   let projectsCreated=0;
+  let assignedToInternal=0;
   const activities:FormActivity[]=[];
+  const kindFor=(row:WeeklyV2Row)=>{
+   // An unidentifiable project must not block reporting. Use the existing
+   // internal catch-all for THIS planning database. The current schema does
+   // not expose separate organization IDs, so do not invent cross-org links.
+   if(!text(row.projectCode)&&text(row.workType)!=="Verksamhet"&&text(row.workType)!=="Övrigt")return "Övrigt";
+   return text(row.workType)||"Projekt";
+  };
+  const codeFor=(row:WeeklyV2Row)=>{
+   const kind=kindFor(row);
+   return kind==="Verksamhet"?"INTERNAL-VERK":kind==="Övrigt"?"INTERNAL-OVR":text(row.projectCode).toUpperCase();
+  };
   for(const row of rows){
    if(text(row.activityId)||text(row.rowKey))return Response.json({error:"Endast nya aktiviteter utan ID får registreras via den här funktionen."},{status:400});
-   const kind=text(row.workType)||"Projekt";
+   const kind=kindFor(row);
+   if(!text(row.projectCode)&&kind==="Övrigt")assignedToInternal++;
    if(!["Projekt","Verksamhet","Övrigt"].includes(kind))throw Error("Felaktig typ av arbete.");
-   const code=kind==="Verksamhet"?"INTERNAL-VERK":kind==="Övrigt"?"INTERNAL-OVR":text(row.projectCode).toUpperCase();
+   const code=codeFor(row);
    if(kind==="Projekt"&&!/^[A-Z0-9][A-Z0-9._-]{0,39}$/.test(code))throw Error("Projektkod saknas eller är ogiltig.");
    if(!text(row.task)||text(row.task).length>200)throw Error("Aktivitetsnamn saknas eller är för långt.");
    normalizeISOWeek(row.week);
@@ -51,7 +64,7 @@ export async function POST(req:Request){
     if(!existing){
      if(!privileged&&kind==="Projekt")return forbidden();
      projectsCreated++;
-    }else if(!privileged&&!scope.selfProjectIds.has(existing.id)&&!scope.projectLedIds.has(existing.id)){
+    }else if(!privileged&&code!=="INTERNAL-OVR"&&code!=="INTERNAL-VERK"&&!scope.selfProjectIds.has(existing.id)&&!scope.projectLedIds.has(existing.id)){
      return forbidden();
     }
    }
@@ -60,12 +73,12 @@ export async function POST(req:Request){
    const hours=row.hours??hoursForSchedule({...row,effort})??0;
    if(!Number.isFinite(hours)||hours<0||hours>100000)throw Error("Ogiltiga timmar.");
    activities.push({uid:"",week:row.week.replace("-V","-W"),name:row.task,kind,
-    link:text(row.projectName),projectCode:kind==="Projekt"?code:"",hours,
+    link:kind==="Övrigt"?"Övrigt arbete":text(row.projectName),projectCode:kind==="Projekt"?code:"",hours,
     status:row.status==="Flyttad"?"Planerad":row.status||"Planerad",priority:row.priority||"3",dueDate:row.deadline||"",
     comment:row.comment||"",firstWeek:(row.firstWeek||row.week).replace("-V","-W"),
     reason:row.moveReason||"",periodStart:dates.start,periodEnd:dates.end,effortPercent:effort});
   }
-  const preview={employeesCreated:person?0:1,projectsCreated,activitiesCreated:activities.length};
+  const preview={employeesCreated:person?0:1,projectsCreated,activitiesCreated:activities.length,assignedToInternal};
   if(!input.commit)return Response.json({preview,committed:false});
   const payload:FormValues={name:name||person?.name||"",email,activities,members:[]};
   const forwarded=new Request(req.url,{method:"POST",headers:req.headers,body:JSON.stringify(payload)});
@@ -80,8 +93,7 @@ export async function POST(req:Request){
   const registered:{projectCode:string;projectName:string;projectId:number;activityName:string;activityId:number;startDate:string;endDate:string}[]=[];
   const missing:string[]=[];
   for(const row of rows){
-   const code=text(row.workType)==="Verksamhet"?"INTERNAL-VERK":
-    text(row.workType)==="Övrigt"?"INTERNAL-OVR":text(row.projectCode).toUpperCase();
+   const code=codeFor(row);
    const expected=scheduleDates(row);
    const activity=await db.prepare(
     "SELECT a.id activityId,a.name activityName,a.start_date startDate,a.end_date endDate,p.id projectId,p.code projectCode,p.name projectName "+
