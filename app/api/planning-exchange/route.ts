@@ -30,7 +30,15 @@ export async function POST(req:Request){
    if(!r||typeof r!=="object"||PLAN_COLUMNS.some(k=>typeof r[k]!=="string"))
     throw Error("Felaktig tabellrad "+(index+2));
    const kind=r.record_type.trim().toLowerCase();
-   if(kind!=="activity"&&kind!=="person")throw Error("Okänd posttyp på rad "+(index+2));
+   if(kind!=="activity"&&kind!=="person"&&kind!=="project")throw Error("Okänd posttyp på rad "+(index+2));
+   if(kind==="project"){
+    const pcode=r.project_code.trim().toUpperCase(),pname=r.project_name.trim();
+    if(!code.test(pcode)||!pname||pname.length>150)throw Error("Ogiltigt projekt på rad "+(index+2));
+    const prior=projects.get(pcode);
+    if(prior&&prior.name!==pname)throw Error("Motstridigt projektnamn för "+pcode);
+    projects.set(pcode,{id:prior?.id??null,name:pname});
+    continue;
+   }
    if(kind==="person"){
     const mail=r.employee_email.trim().toLowerCase()||r.activity.trim().toLowerCase();
     if(!email(mail)||!r.employee_name.trim())throw Error("Personen behöver namn och e-post på rad "+(index+2));
