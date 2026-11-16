@@ -9,7 +9,7 @@ type Person={id:number;name:string;email:string};
 export default function WeeklyV2Page(){
  const [people,setPeople]=useState<Person[]>([]),[selected,setSelected]=useState(""),[rows,setRows]=useState<WeeklyV2Row[]>([]);
  const [error,setError]=useState(""),[message,setMessage]=useState(""),[loading,setLoading]=useState(false);
- const [preview,setPreview]=useState<{created:number;updated:number;unchanged:number;employeesCreated:number;projectsCreated:number;activitiesCreated:number;conflicts?:Array<{activityId:number;task:string;exportRevision:number;currentRevision:number}>}|null>(null);
+ const [preview,setPreview]=useState<{created:number;updated:number;unchanged:number;employeesCreated:number;projectsCreated:number;activitiesCreated:number;assignedToInternal?:number;conflicts?:Array<{activityId:number;task:string;exportRevision:number;currentRevision:number}>}|null>(null);
  const [filePerson,setFilePerson]=useState<{name:string;email:string}|null>(null);
  const [fromFile,setFromFile]=useState(false);
  const [acceptStale,setAcceptStale]=useState(false);
@@ -125,7 +125,7 @@ export default function WeeklyV2Page(){
     const p=await request("/api/weekly-v2",{employeeId:existing.id,rows:existingRows,commit:false});
     existingPreview=p.preview||existingPreview;
    }
-   let createdPreview={employeesCreated:0,projectsCreated:0,activitiesCreated:0};
+   let createdPreview={employeesCreated:0,projectsCreated:0,activitiesCreated:0,assignedToInternal:0};
    if(newRows.length||!existing){
     const p=await request("/api/weekly-v2/bootstrap",{name:person.name,email:person.email,rows:newRows,commit:false});
     createdPreview={...createdPreview,...p.preview};
@@ -135,7 +135,7 @@ export default function WeeklyV2Page(){
    if(!commit){
     setMessage((summary.conflicts?.length?"Obs: "+summary.conflicts.length+" aktiviteter avviker från sparad planering. ":"")+"Förhandsgranskning: "+summary.activitiesCreated+" nya aktiviteter, "+
       summary.projectsCreated+" nya projekt, "+summary.employeesCreated+" nya medarbetare, "+
-      summary.updated+" ändrade aktiviteter och "+summary.unchanged+" oförändrade.");
+      summary.updated+" ändrade aktiviteter och "+summary.unchanged+" oförändrade."+(summary.assignedToInternal?" "+summary.assignedToInternal+" aktiviteter utan projekt läggs på Övrigt arbete.":""));
     return;
    }
    if(!preview){throw Error("Klicka Förhandsgranska ändringar före Godkänn och spara.");}
@@ -201,7 +201,7 @@ export default function WeeklyV2Page(){
     <ul className="mt-2 space-y-1">{registered.map((r,i)=><li key={i}>Projekt <b>{r.projectName}</b> ({r.projectCode}, ID {r.projectId}) · Aktivitet <b>{r.activityName}</b> (ID {r.activityId}) · {r.startDate}–{r.endDate}</li>)}</ul>
    </div>}
    {filePerson&&<p className="mt-3 rounded-lg bg-blue-50 p-3 text-sm text-blue-900">Filens medarbetare: <b>{filePerson.name}</b> · {filePerson.email} {people.some(p=>p.email.toLowerCase()===filePerson.email.toLowerCase())?"(finns registrerad)":"(ny medarbetare – kräver administratör/gruppchef)"}</p>}
-   <p className="mt-3 text-sm text-amber-800">En aktivitet visas som en rad, även vid tio veckors varaktighet. Ändrad vecka/dag flyttar både start och slut; ändrad varaktighet ändrar bara slut. Vid godkänd import uppdateras Gantt och enkla resursperioder. Redan rapporterad tid ändras aldrig. För aktiviteter med särskilda resursperioder krävs manuell granskning. Saknade medarbetare, projekt och aktiviteter kan skapas från Excel enligt samma behörighetsregler som i version 1.</p>
+   <p className="mt-3 text-sm text-amber-800">Saknas projektkod på en ny aktivitet läggs den automatiskt på Övrigt arbete, som skapas om det saknas. Aktiviteten kan kopplas till rätt projekt senare. En aktivitet visas som en rad, även vid tio veckors varaktighet. Ändrad vecka/dag flyttar både start och slut; ändrad varaktighet ändrar bara slut. Vid godkänd import uppdateras Gantt och enkla resursperioder. Redan rapporterad tid ändras aldrig. För aktiviteter med särskilda resursperioder krävs manuell granskning. Saknade medarbetare, projekt och aktiviteter kan skapas från Excel enligt samma behörighetsregler som i version 1.</p>
   </section>
   <section className="rounded-xl border bg-white p-4 space-y-3">
    <h2 className="font-semibold">Välj planeringsvecka</h2>
