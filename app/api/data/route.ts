@@ -377,7 +377,7 @@ export async function POST(request:Request){try{const d=db();const user=await se
    else await d.prepare("DELETE FROM project_members WHERE project_id=? AND employee_id=?").bind(projectId,employeeId).run();
  }
  else if(action==="setProjectMemberships"){const employeeId=Number(b.employeeId),projectIds=Array.isArray(b.projectIds)?[...new Set(b.projectIds.map(Number).filter(Number.isInteger))]:[];if(!employeeId)return Response.json({error:"Medarbetare saknas."},{status:400});const q=[d.prepare("DELETE FROM project_members WHERE employee_id=?").bind(employeeId),...projectIds.map(projectId=>d.prepare("INSERT INTO project_members (project_id,employee_id) VALUES (?,?)").bind(projectId,employeeId))];await d.batch(q)}
- else if(action==="import")await importRows(d,Array.isArray(b.rows)?b.rows as Array<Record<string,string>>:[]);
+ else if(action==="import")return Response.json({error:"CSV-importen är avvecklad. Använd XLSX, XML eller MPX via /api/planning-exchange."},{status:410});
  else if(action==="restore")await restore(d,b.backup as Backup);
  else return Response.json({error:"Okänd åtgärd."},{status:400});return Response.json(await visibleSnapshot(d,user));
  }catch(e){console.error(e);return Response.json({error:e instanceof Error?e.message:"Kunde inte spara ändringen."},{status:500})}}
