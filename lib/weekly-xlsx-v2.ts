@@ -253,7 +253,11 @@ export async function readWeeklyV2Xlsx(file:File):Promise<{name:string;email:str
   // original calendar endpoints even when read by the restored 7-day version.
   let duration=str("D");
   if(usesFiveDayWorkweeks){
+   const explicitCalendar=/^(\d+)\s*kalenderdag(?:ar)?$/i.test(duration.trim());
    const n=legacyFiveDayDuration(duration);
+   if(explicitCalendar){
+    duration=n+" kalenderdagar";
+   }else{
    const w=parseWeekLabel(str("A"),referenceYear);
    const day=str("B");
    const begin=weekMonday(w);
@@ -267,6 +271,7 @@ export async function readWeeklyV2Xlsx(file:File):Promise<{name:string;email:str
     if(end.getUTCDay()!==0&&end.getUTCDay()!==6)left--;
    }
    duration=(Math.round((end.getTime()-begin.getTime())/86400000)+1)+" kalenderdagar";
+   }
   }
   const row:WeeklyV2Row={week:parseWeekLabel(str("A"),referenceYear),day:str("B"),task:name,duration,
    effort:num(str("E")),workType:str("F"),hours:num(str("G")),status:str("H"),
