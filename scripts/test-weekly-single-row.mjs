@@ -15,7 +15,7 @@ const mapping=[{uid:"employee-4-activity-8",activityId:8,startDate:"2026-09-28",
 const rows=asWeeklyRows(person,4,mapping);
 assert.equal(rows.length,1,"One long activity must be one XLSX row despite multiple legacy periods");
 assert.equal(rows[0].rowKey,"plan-4-8");
-assert.equal(rows[0].duration,"70 kalenderdagar");
+assert.equal(rows[0].duration,"10 veckor");
 assert.equal(rows[0].hours,200);
 assert.deepEqual(scheduleDates(rows[0]),{start:"2026-09-28",end:"2026-12-06"});
 const changed=asWeeklyRows(person,4,[{...mapping[0],startDate:"2026-10-06",endDate:"2026-12-14"}]);
