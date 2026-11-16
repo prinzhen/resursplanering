@@ -177,6 +177,11 @@ const column=(index:number)=>String.fromCharCode(65+index);
 
 /** Standard OOXML formula. Excel/LibreOffice recalculate the second sheet. */
 const formulaCell=(ref:string,formula:string,style=0)=>'<c r="'+ref+'" s="'+style+'"><f>'+enc(formula)+'</f><v>0</v></c>';
+/** OOXML shared formulas: one definition, 4999 lightweight references.
+ * Relative A5/B5 etc are adjusted automatically for each Excel row. */
+const sharedFormulaCell=(ref:string,formula:string,series:number,start:boolean)=>
+ '<c r="'+ref+'"><f t="shared" si="'+series+'"'+(start?' ref="'+ref.replace(/[0-9]+$/,"")+"5:"+ref.replace(/[0-9]+$/,"")+"5004"':'')+'>'+
+ (start?enc(formula):'')+'</f><v>0</v></c>';
 const excelCol=(n:number)=>{let result="";for(let x=n;x;x=Math.floor((x-1)/26))result=String.fromCharCode(65+(x-1)%26)+result;return result};
 const excelSerial=(iso:string)=>Math.round((Date.parse(iso+"T00:00:00Z")-Date.UTC(1899,11,30))/86400000);
 /** Formula fields V,W,X are local-only helpers for the visual load tab. */
@@ -262,10 +267,11 @@ export function createWeeklyV2Xlsx(rows:WeeklyV2Row[],base=currentWeekKey(),pers
  // Hidden recalculated helpers are separate from importable columns A:P.
  // Pre-create all 5000 rows so estimates refresh even when users add rows.
  for(let row=5;row<=5004;row++){
-  const additional=formulaCell("V"+row,dateHelperFormula(row))+
-   formulaCell("Y"+row,durationHelperFormula(row))+
-   formulaCell("W"+row,'IF(V'+row+'=0,0,V'+row+'+Y'+row+'-1)')+
-   formulaCell("X"+row,dailyLoadFormula(row));
+  const first=row===5;
+  const additional=sharedFormulaCell("V"+row,dateHelperFormula(row),0,first)+
+   sharedFormulaCell("Y"+row,durationHelperFormula(row),1,first)+
+   sharedFormulaCell("W"+row,'IF(V'+row+'=0,0,V'+row+'+Y'+row+'-1)',2,first)+
+   sharedFormulaCell("X"+row,dailyLoadFormula(row),3,first);
   const pos=body.findIndex(text=>text.startsWith('<row r="'+row+'">'));
   if(pos>=0)body[pos]=body[pos].replace("</row>",additional+"</row>");
   else body.push('<row r="'+row+'">'+additional+'</row>');
