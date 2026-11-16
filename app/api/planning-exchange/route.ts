@@ -153,8 +153,8 @@ export async function POST(req:Request){
   // allocations are deleted by a general import.
   for(const a of assignments.values()){
    const activity=activities.get(a.activityKey)!,r=activity.row;
-   const ref=a.existingId!==null?"id=?":"project_id=(SELECT id FROM projects WHERE code=? COLLATE NOCASE) AND code=?";
-   const qargs=a.existingId!==null?[a.existingId]:[r.project_code,r.activity_code];
+   const ref=activity.existingId!==null?"id=?":"project_id=(SELECT id FROM projects WHERE code=? COLLATE NOCASE) AND code=?";
+   const qargs=activity.existingId!==null?[activity.existingId]:[r.project_code,r.activity_code];
    const sql="INSERT INTO assignments(activity_id,employee_id,effort_percent,start_date,end_date,original_end_date,work_status) "+
     "SELECT t.id,e.id,?,?,?,?,? FROM activities t JOIN employees e ON lower(e.email)=lower(?) WHERE t."+ref+
     " ON CONFLICT(activity_id,employee_id) DO UPDATE SET effort_percent=excluded.effort_percent";
