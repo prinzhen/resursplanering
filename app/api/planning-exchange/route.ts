@@ -159,6 +159,18 @@ export async function POST(req:Request){
     "SELECT t.id,e.id,?,?,?,?,? FROM activities t JOIN employees e ON lower(e.email)=lower(?) WHERE t."+ref+
     " ON CONFLICT(activity_id,employee_id) DO UPDATE SET effort_percent=excluded.effort_percent";
    q.push(db.prepare(sql).bind(a.effort,r.start_date,r.end_date,r.end_date,"Planerad",a.email,...qargs));
+   // Newly created assignments require their first planning period.
+   // Existing multi-period allocations are never replaced by this importer.
+   q.push(db.prepare("INSERT INTO assignment_periods(assignment_id,start_date,end_date,effort_percent) "+
+    "SELECT s.id,s.start_date,s.end_date,s.effort_percent FROM assignments s "+
+    "JOIN employees e ON e.id=s.employee_id "+
+    "WHERE s.activity_id=(SELECT id FROM activities WHERE "+ref+") "+
+    "AND lower(e.email)=lower(?) AND NOT EXISTS "+
+    "(SELECT 1 FROM assignment_periods p WHERE p.assignment_id=s.id)")
+     .bind(...qargs,a.email));
+   q.push(db.prepare("INSERT OR IGNORE INTO project_members(project_id,employee_id) "+
+    "SELECT p.id,e.id FROM projects p JOIN employees e ON lower(e.email)=lower(?) "+
+    "WHERE p.code=? COLLATE NOCASE").bind(a.email,r.project_code));
   }
   if(q.length)await db.batch(q);
   return Response.json({preview,committed:true});
