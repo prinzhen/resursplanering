@@ -35,7 +35,7 @@ rollback(){
  exit "$code"
 }
 trap rollback EXIT
-for bin in git pnpm node python3 systemctl runuser curl;do
+for bin in git pnpm node python3 systemctl runuser curl timeout;do
  command -v "$bin" >/dev/null || { echo "Saknar $bin" >&2;exit 1; }
 done
 [[ -d "$APP/.git" && -d "$DATA" && ! -L "$APP" && ! -L "$DATA" ]] || { echo "Testinstallation saknas." >&2;exit 1; }
@@ -61,13 +61,10 @@ runuser -u "$OWNER" -- env HOME="/home/$OWNER" CI=true pnpm --dir "$STAGE" insta
  cd "$STAGE"
  runuser -u "$OWNER" -- env HOME="/home/$OWNER" CI=true pnpm build
  runuser -u "$OWNER" -- env HOME="/home/$OWNER" CI=true pnpm exec tsc --noEmit
- runuser -u "$OWNER" -- env HOME="/home/$OWNER" CI=true node scripts/test-weekly-v2.mjs
- runuser -u "$OWNER" -- env HOME="/home/$OWNER" CI=true node scripts/test-weekly-load.mjs
- runuser -u "$OWNER" -- env HOME="/home/$OWNER" CI=true node scripts/test-weekly-v2-integration.mjs
- runuser -u "$OWNER" -- env HOME="/home/$OWNER" CI=true node scripts/test-planning-exchange.mjs
- runuser -u "$OWNER" -- env HOME="/home/$OWNER" CI=true node scripts/test-role-access.mjs
- runuser -u "$OWNER" -- env HOME="/home/$OWNER" CI=true node scripts/test-release-readiness.mjs --quick
- runuser -u "$OWNER" -- env HOME="/home/$OWNER" CI=true node scripts/test-chef-filter.mjs
+ echo "Kör sammanhållen testsvit EN GÅNG (max 240 sekunder)."
+ timeout --signal=TERM --kill-after=10s 240s \
+  runuser -u "$OWNER" -- env HOME="/home/$OWNER" CI=true \
+  node scripts/test-release-readiness.mjs --quick
 )
 echo "[2/5] Säkerhetskopierar test-DB med SQLite online backup."
 install -d -m 0700 "$BACKUP/data"
@@ -111,7 +108,7 @@ done
 [[ "$(curl --max-time 4 -sS -o /dev/null -w '%{http_code}' http://127.0.0.1:3000/api/auth)" == 200 ]] ||
  { echo "Produktionens hälsokontroll misslyckades." >&2;exit 1; }
 SUCCESS=1
-echo "[5/5] KLART – veckoväljare och personexport uppdaterade på port 3200."
+echo "[5/5] KLART – testversionen på port 3200 uppdaterad och verifierad."
 echo "Gammal testkod: $OLD"
 echo "Säkerhetskopia av testdata: $BACKUP/data"
 echo "Koden använder Git-revision $VERSION"
