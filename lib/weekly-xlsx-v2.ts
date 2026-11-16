@@ -179,9 +179,12 @@ const column=(index:number)=>String.fromCharCode(65+index);
 const formulaCell=(ref:string,formula:string,style=0)=>'<c r="'+ref+'" s="'+style+'"><f>'+enc(formula)+'</f><v>0</v></c>';
 /** OOXML shared formulas: one definition, 4999 lightweight references.
  * Relative A5/B5 etc are adjusted automatically for each Excel row. */
-const sharedFormulaCell=(ref:string,formula:string,series:number,start:boolean)=>
- '<c r="'+ref+'"><f t="shared" si="'+series+'"'+(start?' ref="'+ref.replace(/[0-9]+$/,"")+"5:"+ref.replace(/[0-9]+$/,"")+"5004"':'')+'>'+
- (start?enc(formula):'')+'</f><v>0</v></c>';
+const sharedFormulaCell=(ref:string,formula:string,series:number,start:boolean)=>{
+ const columnName=ref.replace(/[0-9]+$/,"");
+ const range=start?' ref="'+columnName+'5:'+columnName+'5004"':"";
+ return '<c r="'+ref+'"><f t="shared" si="'+series+'"'+range+'>'+
+  (start?enc(formula):"")+'</f><v>0</v></c>';
+};
 const excelCol=(n:number)=>{let result="";for(let x=n;x;x=Math.floor((x-1)/26))result=String.fromCharCode(65+(x-1)%26)+result;return result};
 const excelSerial=(iso:string)=>Math.round((Date.parse(iso+"T00:00:00Z")-Date.UTC(1899,11,30))/86400000);
 /** Formula fields V,W,X are local-only helpers for the visual load tab. */
