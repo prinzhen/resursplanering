@@ -56,6 +56,32 @@ try{
  assert.equal(newActivity.startDate,"2026-09-29");
  assert.equal(newActivity.endDate,"2026-12-07");
  assert.ok(boot.result.assignments.some(x=>x.activityId===newActivity.id&&x.employeeId===newEmployee.id));
+ // Existing employee + new project + new activity is the main real-world flow.
+ const knownPerson={name:newEmployee.name,email:newPerson.email,rows:[
+  {...bootstrapRow,task:"Ny aktivitet i nytt projekt från Excel",duration:"1v3d",
+   week:"2026-V47",firstWeek:"2026-V47",projectCode:"N.90991",projectName:"Andra nya projektet",hours:40},
+ ]};
+ let previewKnown=await call("/api/weekly-v2/bootstrap",{...knownPerson,commit:false});
+ assert.equal(previewKnown.status,200,JSON.stringify(previewKnown.result));
+ assert.equal(previewKnown.result.preview.employeesCreated,0);
+ assert.equal(previewKnown.result.preview.projectsCreated,1);
+ assert.equal(previewKnown.result.preview.activitiesCreated,1);
+ let commitKnown=await call("/api/weekly-v2/bootstrap",{...knownPerson,commit:true});
+ assert.equal(commitKnown.status,200,JSON.stringify(commitKnown.result));
+ const afterKnown=await call("/api/data");
+ const addedProject=afterKnown.result.projects.find(p=>p.code==="N.90991");
+ assert.ok(addedProject,"New project must be in main project catalogue after personal Excel import");
+ assert.equal(addedProject.name,"Andra nya projektet","New project should retain Excel display name");
+ const addedTask=afterKnown.result.activities.find(a=>a.projectId===addedProject.id&&a.name==="Ny aktivitet i nytt projekt från Excel");
+ assert.ok(addedTask,"New activity must appear under new project");
+ assert.equal(addedTask.startDate,"2026-11-16");
+ assert.equal(addedTask.endDate,"2026-11-25","1v3d = 10 inclusive calendar days");
+ assert.ok(afterKnown.result.assignments.some(a=>a.activityId===addedTask.id&&a.employeeId===newEmployee.id),
+  "New activity must be assigned to the existing employee");
+ const afterKnownExport=await call("/api/individual?email="+encodeURIComponent(newPerson.email));
+ assert.equal(afterKnownExport.status,200,JSON.stringify(afterKnownExport.result));
+ assert.ok(afterKnownExport.result.activities.some(a=>a.name==="Ny aktivitet i nytt projekt från Excel"),
+  "New activity must be visible in next personal export");
  const snap=await call("/api/data");assert.equal(snap.status,200,JSON.stringify(snap.result));
  const erik=snap.result.employees.find(x=>x.name==="Erik Holm");assert.ok(erik);
  const activity=snap.result.activities.find(x=>x.name==="Systemdesign");assert.ok(activity);
