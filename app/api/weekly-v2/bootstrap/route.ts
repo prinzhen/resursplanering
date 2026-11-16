@@ -2,7 +2,7 @@ import {env} from "cloudflare:workers";
 import {sessionIdentity,unauthorized,forbidden,sameOrigin} from "@/lib/auth";
 import {accessScope} from "@/lib/permissions";
 import {POST as importIndividual} from "@/app/api/individual/route";
-import {scheduleDates} from "@/lib/activity-calendar";
+import {scheduleDates,hoursForSchedule} from "@/lib/activity-calendar";
 import {normalizeISOWeek,parseDurationDays,type WeeklyV2Row} from "@/lib/weekly-xlsx-v2";
 import type {FormValues,FormActivity} from "@/lib/individual-xlsx";
 export const dynamic="force-dynamic";
@@ -57,7 +57,7 @@ export async function POST(req:Request){
    }
    const effort=row.effort??0;
    if(!Number.isFinite(effort)||effort<0||effort>100)throw Error("Insats måste vara 0–100 %.");
-   const hours=row.hours??Math.round((duration/7)*40*effort)/100;
+   const hours=row.hours??hoursForSchedule({...row,effort})??0;
    if(!Number.isFinite(hours)||hours<0||hours>100000)throw Error("Ogiltiga timmar.");
    activities.push({uid:"",week:row.week.replace("-V","-W"),name:row.task,kind,
     link:text(row.projectName),projectCode:kind==="Projekt"?code:"",hours,
