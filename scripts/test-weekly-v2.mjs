@@ -10,6 +10,17 @@ assert.equal(normalizeISOWeek("2026-W40"),"2026-V40");
 assert.equal(normalizeISOWeek("2026-V53"),"2026-V53");
 assert.throws(()=>normalizeISOWeek("2026-V54"));
 assert.equal(parseDurationDays("3 veckor"),21);
+for(const [raw,expected] of [["1v",7],["1v3d",10],["1v 3d",10],["10",10],["10d",10],["2v4d",18],["7",7],["1 vecka 3 dagar",10],["1 vecka 3 d",10],["3 dagar",3]]){
+ assert.equal(parseDurationDays(raw),expected,"Varaktighet "+raw);
+}
+assert.equal(parseDurationDays(10),10,"Excel numeric duration should be interpreted as calendar days");
+assert.throws(()=>parseDurationDays("1v7d"),/0–6/);
+assert.throws(()=>parseDurationDays("0"),/1–3650/);
+assert.throws(()=>parseDurationDays("9999d"),/1–3650/);
+assert.throws(()=>parseDurationDays("2d3d"));
+assert.deepEqual(rowCalendarRange("2026-V47","Måndag","1v3d"),{start:"2026-11-16",end:"2026-11-25"});
+assert.deepEqual(rowCalendarRange("2026-V47","Måndag","10d"),{start:"2026-11-16",end:"2026-11-25"});
+
 assert.equal(durationLabel(7),"7 dagar");
 assert.equal(durationLabel(9),"1 vecka 2 dagar");
 assert.equal(parseDurationDays("1 vecka 2 dagar"),9,"Exported mixed durations must import");
