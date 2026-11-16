@@ -131,10 +131,7 @@ export async function POST(req:Request){
     .bind(w.projectCode,w.code,w.name));
   for(const [key,a] of activities){
    const r=a.row;
-   const workId=r.work_package_code?"(SELECT id FROM work_packages WHERE project_id=(SELECT id FROM projects WHERE code=? COLLATE NOCASE) AND code=?)":"NULL";
    // The update/insert SQL is fully determined by the server, never raw file values.
-   const wp=r.work_package_code?
-    await db.prepare("SELECT id FROM work_packages WHERE project_id=(SELECT id FROM projects WHERE code=? COLLATE NOCASE) AND code=?").bind(r.project_code,r.work_package_code).first<{id:number}>():null;
    if(a.existingId!==null){
     q.push(db.prepare("UPDATE activities SET name=?,description=?,start_date=?,end_date=?,estimated_hours=?,status=? WHERE id=? AND project_id=(SELECT id FROM projects WHERE code=? COLLATE NOCASE)")
      .bind(r.activity,r.description||null,r.start_date,r.end_date,r.estimated_hours?Number(r.estimated_hours):null,r.status||"Planerad",a.existingId,r.project_code));
@@ -151,7 +148,7 @@ export async function POST(req:Request){
    const ref=a.existingId!==null?"id=?":"project_id=(SELECT id FROM projects WHERE code=? COLLATE NOCASE) AND code=?";
    const qargs=a.existingId!==null?[a.existingId]:[r.project_code,r.activity_code];
    const sql="INSERT INTO assignments(activity_id,employee_id,effort_percent,start_date,end_date,original_end_date,work_status) "+
-    "SELECT t.id,e.id,?,?,?,? FROM activities t JOIN employees e ON lower(e.email)=lower(?) WHERE t."+ref+
+    "SELECT t.id,e.id,?,?,?,?,? FROM activities t JOIN employees e ON lower(e.email)=lower(?) WHERE t."+ref+
     " ON CONFLICT(activity_id,employee_id) DO UPDATE SET effort_percent=excluded.effort_percent";
    q.push(db.prepare(sql).bind(a.effort,r.start_date,r.end_date,r.end_date,"Planerad",a.email,...qargs));
   }
