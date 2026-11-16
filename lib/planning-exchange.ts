@@ -20,6 +20,16 @@ export function exchangeRows(data:PlanningSnapshot):ExchangeRow[]{
  const projects=new Map(data.projects.map(x=>[x.id,x])),people=new Map(data.employees.map(x=>[x.id,x]));
  const work=new Map(data.workPackages.map(x=>[x.id,x])),activities=new Map(data.activities.map(x=>[x.id,x]));
  const rows:ExchangeRow[]=[];
+ for(const p of data.projects){
+  const row=Object.fromEntries(PLAN_COLUMNS.map(k=>[k,""])) as ExchangeRow;
+  Object.assign(row,{record_type:"project",project_code:p.code,project_name:p.name});
+  rows.push(row);
+ }
+ for(const person of data.employees){
+  const row=Object.fromEntries(PLAN_COLUMNS.map(k=>[k,""])) as ExchangeRow;
+  Object.assign(row,{record_type:"person",employee_name:person.name,employee_email:person.email});
+  rows.push(row);
+ }
  for(const a of data.activities){
   const p=projects.get(a.projectId);if(!p)continue;
   const w=a.workPackageId?work.get(a.workPackageId):null;
