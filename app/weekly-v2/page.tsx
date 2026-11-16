@@ -133,7 +133,7 @@ export default function WeeklyV2Page(){
    const summary={...existingPreview,...createdPreview};
    setPreview(summary);
    if(!commit){
-    setMessage((summary.conflicts?.length?"Obs: "+summary.conflicts.length+" aktiviteter har nyare revisioner i verktyget. ":"")+"Förhandsgranskning: "+summary.activitiesCreated+" nya aktiviteter, "+
+    setMessage((summary.conflicts?.length?"Obs: "+summary.conflicts.length+" aktiviteter avviker från sparad planering. ":"")+"Förhandsgranskning: "+summary.activitiesCreated+" nya aktiviteter, "+
       summary.projectsCreated+" nya projekt, "+summary.employeesCreated+" nya medarbetare, "+
       summary.updated+" ändrade aktiviteter och "+summary.unchanged+" oförändrade.");
     return;
@@ -167,7 +167,7 @@ export default function WeeklyV2Page(){
    const selectedPerson=allowed.find(p=>p.email.toLowerCase()===email.toLowerCase());
    if(selectedPerson){
     setSelected(selectedPerson.email);
-    setMessage("Import genomförd. Nya personer, projekt och aktiviteter har registrerats. Exportera om för uppdaterade ID:n.");
+    setMessage("Import genomförd. Excel-filens aktuella prognos har sparats och Gantt har uppdaterats. Exportera en ny XLSX för senaste revisionsnummer och aktivitets-ID:n.");
    }else setMessage("Import genomförd. Ladda om sidan för att visa personen.");
   }catch(e){setError(e instanceof Error?e.message:String(e))}
   finally{setLoading(false)}
@@ -191,10 +191,10 @@ export default function WeeklyV2Page(){
     <button disabled={loading||!preview||((preview.conflicts?.length||0)>0&&!acceptStale)||!(preview.activitiesCreated+preview.projectsCreated+preview.employeesCreated+preview.created+preview.updated)} onClick={()=>importRows(true)} className="rounded-lg bg-emerald-700 px-4 py-2 text-white disabled:opacity-50">Godkänn och spara planeringsposter</button>
    </div>
    {(preview?.conflicts?.length||0)>0&&<div className="mt-3 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950">
-    <p className="font-semibold">{preview?.conflicts?.length} aktiviteter har ändrats i verktyget sedan Excelversionen exporterades.</p>
+    <p className="font-semibold">{preview?.conflicts?.length} aktiviteter har en annan sparad revision eller andra Gantt-datum än Excelunderlaget.</p>
     <ul className="mt-2 space-y-1">{preview?.conflicts?.map(c=><li key={c.activityId}>{c.task} – filrevision {c.exportRevision}, aktuell revision {c.currentRevision}</li>)}</ul>
     <label className="mt-3 flex items-start gap-2"><input type="checkbox" checked={acceptStale} onChange={e=>setAcceptStale(e.target.checked)}/>
-     <span>Jag har granskat konflikterna och vill att Excel-filens aktuella prognos ersätter den senaste planeringsversionen för dessa aktiviteter.</span></label>
+     <span>Jag har granskat avvikelserna och vill att Excel-filens startvecka, startdag och varaktighet ska ersätta den sparade prognosen för dessa aktiviteter.</span></label>
    </div>}
    {registered.length>0&&<div className="mt-3 rounded-lg border border-emerald-300 bg-emerald-50 p-3 text-sm text-emerald-950">
     <p className="font-semibold">Kontrollerat sparade projekt och aktiviteter ({registered.length})</p>
