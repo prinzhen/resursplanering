@@ -196,14 +196,20 @@ function dateHelperFormula(r:number){
  const first='DATE('+year+',1,4)';
  return 'IF(OR('+a+'="",C'+r+'=""),0,'+first+'-WEEKDAY('+first+',2)+1+('+week+'-1)*7+'+day+'-1)';
 }
-function durationHelperFormula(r:number){
- // Handles 10, 10d, 1v, 1v3d, "1 vecka 3 dagar", "3 veckor".
+function normalizedDurationFormula(r:number){
+ // Standard legacy-compatible Excel functions; no LET/TEXTSPLIT needed.
  const d="D"+r;
- let normalized='LOWER(TRIM('+d+'))';
+ let result='LOWER(TRIM('+d+'))';
  for(const [from,to] of [[" veckor","v"],[" vecka","v"],[" kalenderdagar","d"],[" kalenderdag","d"],[" dagar","d"],[" dag","d"],[" dygn","d"],[" ",""]]){
-  normalized='SUBSTITUTE('+normalized+',"'+from+'","'+to+'")';
+  result='SUBSTITUTE('+result+',"'+from+'","'+to+'")';
  }
- return 'IFERROR(LET(t,'+normalized+',v,IFERROR(FIND("v",t),0),IF(v>0,7*VALUE(LEFT(t,v-1))+IFERROR(VALUE(SUBSTITUTE(MID(t,v+1,99),"d","")),0),VALUE(SUBSTITUTE(t,"d","")))),0)';
+ return 'IF('+d+'="","",'+result+')';
+}
+function durationHelperFormula(r:number){
+ const y="Y"+r;
+ const week= 'FIND("v",'+y+')';
+ const extra='IFERROR(VALUE(SUBSTITUTE(MID('+y+','+week+'+1,99),"d","")),0)';
+ return 'IFERROR(IF('+y+'="",0,IF(ISNUMBER(SEARCH("v",'+y+')),7*VALUE(LEFT('+y+','+week+'-1))+'+extra+',VALUE(SUBSTITUTE('+y+',"d","")))),0)';
 }
 function dailyLoadFormula(r:number){
  const e="E"+r,g="G"+r,v="V"+r,w="W"+r,h="H"+r;
@@ -272,8 +278,9 @@ export function createWeeklyV2Xlsx(rows:WeeklyV2Row[],base=currentWeekKey(),pers
  for(let row=5;row<=5004;row++){
   const first=row===5;
   const additional=sharedFormulaCell("V"+row,dateHelperFormula(row),0,first)+
-   sharedFormulaCell("Y"+row,durationHelperFormula(row),1,first)+
-   sharedFormulaCell("W"+row,'IF(V'+row+'=0,0,V'+row+'+Y'+row+'-1)',2,first)+
+   sharedFormulaCell("Y"+row,normalizedDurationFormula(row),1,first)+
+   sharedFormulaCell("Z"+row,durationHelperFormula(row),4,first)+
+   sharedFormulaCell("W"+row,'IF(V'+row+'=0,0,V'+row+'+Z'+row+'-1)',2,first)+
    sharedFormulaCell("X"+row,dailyLoadFormula(row),3,first);
   const pos=body.findIndex(text=>text.startsWith('<row r="'+row+'">'));
   if(pos>=0)body[pos]=body[pos].replace("</row>",additional+"</row>");
@@ -295,7 +302,7 @@ export function createWeeklyV2Xlsx(rows:WeeklyV2Row[],base=currentWeekKey(),pers
   '<dataValidation type="list" allowBlank="1" sqref="I5:I5004"><formula1>"1,2,3,4,5"</formula1></dataValidation>',
  ].join("");
  const cols=WEEKLY_COLUMNS.map((v,i)=>'<col min="'+(i+1)+'" max="'+(i+1)+'" width="'+Math.min(45,Math.max(17,v.length+4))+'" customWidth="1"/>').join("");
- const sheet='<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetViews><sheetView workbookViewId="0"><pane ySplit="4" topLeftCell="A5" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews><cols>'+cols+'<col min="17" max="25" hidden="1"/></cols><sheetData>'+body.join("")+'</sheetData><autoFilter ref="A4:P'+Math.max(4,rows.length+4)+'"/><dataValidations count="4">'+validation+'</dataValidations></worksheet>';
+ const sheet='<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetViews><sheetView workbookViewId="0"><pane ySplit="4" topLeftCell="A5" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews><cols>'+cols+'<col min="17" max="26" hidden="1"/></cols><sheetData>'+body.join("")+'</sheetData><autoFilter ref="A4:P'+Math.max(4,rows.length+4)+'"/><dataValidations count="4">'+validation+'</dataValidations></worksheet>';
  const loadSheet=workloadSheet(base);
  const styles='<?xml version="1.0" encoding="UTF-8"?><styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><fonts count="2"><font><sz val="11"/></font><font><b/><sz val="11"/><color rgb="FFFFFFFF"/></font></fonts><fills count="3"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FF1E40AF"/></patternFill></fill></fills><borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="5"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="0" fontId="1" fillId="2" borderId="0" xfId="0"/><xf numFmtId="14" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="2" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/></cellXfs><dxfs count="3"><dxf><fill><patternFill patternType="solid"><fgColor rgb="FFFCA5A5"/><bgColor indexed="64"/></patternFill></fill></dxf><dxf><fill><patternFill patternType="solid"><fgColor rgb="FFBBF7D0"/><bgColor indexed="64"/></patternFill></fill></dxf><dxf><fill><patternFill patternType="solid"><fgColor rgb="FFFEF08A"/><bgColor indexed="64"/></patternFill></fill></dxf></dxfs></styleSheet>';
  return zip({
