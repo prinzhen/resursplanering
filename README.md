@@ -649,6 +649,49 @@ körs och att `GET /api/data` innehåller projekt. Snabbformuläret
 hämtar nu också valbara projekt oberoende via `GET /api/quick-activity`
 och visar ett separat meddelande om kontot saknar medarbetarkoppling.
 
+## Release-test: roller, Excel v2 och vanlig import/export
+
+Kör den samlade sviten efter en byggning. Testerna startar **egna temporära
+SQLite/D1-instanser** och använder inte driftens port 3000 eller databas.
+Kör **inte** med \`TEST_DATA_SOURCE\` satt.
+
+\`\`\`bash
+cd /opt/resursplanering-weekly-v2
+node scripts/test-release-readiness.mjs
+# För kortare regressionstest:
+node scripts/test-release-readiness.mjs --quick
+\`\`\`
+
+Resultat skrivs i \`test-release-readiness-report.json\` och kommandot returnerar
+exitkod 1 vid ett misslyckat test. Komplett körning täcker separat
+roll-/behörighetsmatris (admin, gruppchef, projektledare, TEAM-ledare,
+medarbetare, obehörig), personlig XLSX v2, skapande av person/projekt/
+aktivitet, dubbelimport, dateringar, Gantt, beläggning, historik,
+återställning, tidrapportering och vanlig projektutbytesimport.
+
+### Vanlig import/export (inte personlig veckoplanering)
+
+| Format | Import | Export | Begränsning |
+|---|---|---|---|
+| Excel \`.xlsx\` | Ja | Ja | Projekt, uppdrag, aktiviteter och resurser |
+| MS Project XML/MSPDI \`.xml\` | Ja | Ja | Avancerade kalendrar/beroenden representeras inte fullt ut |
+| MS Project Exchange \`.mpx\` | Ja | Ja | Grundläggande aktivitetsfält |
+| JSON \`.json\` | Separat återställningsflöde | Admin, säkerhetskopia | Inte vanlig projektimport |
+| Binär MS Project \`.mpp\` | Nej | Nej | Kräver separat MPXJ-konverterare |
+| CSV \`.csv\` | Nej | Nej | Avvecklat för projektplaneringsutbyte |
+
+**Obs:** Tidrapporteringsmodulen har en separat CSV-export som inte är
+en del av projektplaneringens vanliga import/export.
+
+Personlig Excel v2 används under \`/weekly-v2\`: namn och e-post identifierar
+medarbetaren, nya aktivitetsrader saknar ID och kan skapas via v1:s
+behörighetskontroller. Aktivitetens startvecka, startdag och varaktighet
+bestämmer alltid Gantt-datum.
+
+Blandad v2-import som både skapar nya objekt och uppdaterar befintliga sker
+ännu i två API-steg. En lyckad isolerad testsvit ersätter därför **inte**
+kravet på en enda databastransaktion för dessa två steg före produktionssättning.
+
 ## Lokal utveckling
 
 Kräver Node.js 22.13 eller senare och pnpm.
