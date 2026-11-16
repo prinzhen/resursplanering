@@ -74,6 +74,26 @@ export async function POST(req:Request){
    const message=await response.json().catch(()=>({error:"Registreringen misslyckades."})) as {error?:string};
    return Response.json({error:message.error||"Registreringen misslyckades."},{status:response.status});
   }
-  return Response.json({preview,committed:true,details:await response.json()});
+  const details=await response.json();
+  // Return concrete persisted IDs so the UI can verify exactly what was
+  // created (rather than only saying that an import succeeded).
+  const registered:{projectCode:string;projectName:string;projectId:number;activityName:string;activityId:number;startDate:string;endDate:string}[]=[];
+  const missing:string[]=[];
+  for(const row of rows){
+   const code=text(row.workType)==="Verksamhet"?"INTERNAL-VERK":
+    text(row.workType)==="Övrigt"?"INTERNAL-OVR":text(row.projectCode).toUpperCase();
+   const expected=scheduleDates(row);
+   const activity=await db.prepare(
+    "SELECT a.id activityId,a.name activityName,a.start_date startDate,a.end_date endDate,p.id projectId,p.code projectCode,p.name projectName "+
+    "FROM activities a JOIN projects p ON p.id=a.project_id JOIN assignments s ON s.activity_id=a.id "+
+    "JOIN employees e ON e.id=s.employee_id WHERE lower(e.email)=lower(?) AND p.code=? COLLATE NOCASE "+
+    "AND lower(a.name)=lower(?) AND a.start_date=? AND a.end_date=? ORDER BY a.id DESC LIMIT 1"
+   ).bind(email,code,text(row.task),expected.start,expected.end)
+    .first<{activityId:number;activityName:string;startDate:string;endDate:string;projectId:number;projectCode:string;projectName:string}>();
+   if(activity)registered.push(activity);
+   else missing.push(code+": "+text(row.task));
+  }
+  return Response.json({preview,committed:true,details,registered,
+   verified:missing.length===0,warnings:missing.length?["Registreringen genomfördes, men kontrollera följande poster manuellt: "+missing.join("; ")]:[]});
  }catch(e){console.error(e);return Response.json({error:e instanceof Error?e.message:"Kunde inte importera nya aktiviteter."},{status:400})}
 }
