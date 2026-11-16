@@ -159,7 +159,11 @@ export function validateWeeklyV2(row:WeeklyV2Row){
  if(row.day&&!WEEK_DAYS.some(x=>x.toLowerCase()===row.day.trim().toLowerCase()))throw Error("Felaktig veckodag.");
  parseDurationDays(row.duration);
  if(!row.task.trim())throw Error("Aktivitetsnamnet saknas.");
- if(!row.projectCode.trim())throw Error("Projektkoden saknas.");
+ // Missing project is permitted only for NEW activities. The import
+ // bootstrap places them in the current planning instance's internal
+ // catch-all project, so work estimates are never discarded.
+ if(!row.projectCode.trim()&&row.activityId.trim())
+  throw Error("Befintlig aktivitet saknar projektkod. Flytta den via projektplaneringen eller exportera på nytt.");
  if(row.effort!==null&&(!Number.isFinite(row.effort)||row.effort<0||row.effort>100))throw Error("Insats måste vara 0–100 %.");
  if(row.hours!==null&&(!Number.isFinite(row.hours)||row.hours<0))throw Error("Planerade timmar är ogiltiga.");
  if(row.deadline&&!/^\d{4}-\d{2}-\d{2}$/.test(row.deadline))throw Error("Klart senast ska vara ÅÅÅÅ-MM-DD.");
