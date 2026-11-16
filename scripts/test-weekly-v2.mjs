@@ -9,21 +9,22 @@ assert.deepEqual(WEEKLY_COLUMNS,[
 assert.equal(normalizeISOWeek("2026-W40"),"2026-V40");
 assert.equal(normalizeISOWeek("2026-V53"),"2026-V53");
 assert.throws(()=>normalizeISOWeek("2026-V54"));
-assert.equal(parseDurationDays("3 veckor"),21);
-for(const [raw,expected] of [["1v",7],["1v3d",10],["1v 3d",10],["10",10],["10d",10],["2v4d",18],["7",7],["1 vecka 3 dagar",10],["1 vecka 3 d",10],["3 dagar",3]]){
+assert.equal(parseDurationDays("3 veckor"),15);
+for(const [raw,expected] of [["1v",5],["1v3d",8],["1v 3d",8],["10",10],["10d",10],["2v4d",14],["7",7],["1 vecka 3 dagar",8],["1 vecka 3 d",8],["3 dagar",3],["7 kalenderdagar",7]]){
  assert.equal(parseDurationDays(raw),expected,"Varaktighet "+raw);
 }
-assert.equal(parseDurationDays(10),10,"Excel numeric duration should be interpreted as calendar days");
-assert.throws(()=>parseDurationDays("1v7d"),/0–6/);
+assert.equal(parseDurationDays(10),10,"Excel numeric duration should be interpreted as working days");
+assert.throws(()=>parseDurationDays("1v7d"),/0–4/);
 assert.throws(()=>parseDurationDays("0"),/1–3650/);
 assert.throws(()=>parseDurationDays("9999d"),/1–3650/);
 assert.throws(()=>parseDurationDays("2d3d"));
 assert.deepEqual(rowCalendarRange("2026-V47","Måndag","1v3d"),{start:"2026-11-16",end:"2026-11-25"});
-assert.deepEqual(rowCalendarRange("2026-V47","Måndag","10d"),{start:"2026-11-16",end:"2026-11-25"});
+assert.deepEqual(rowCalendarRange("2026-V47","Måndag","10d"),{start:"2026-11-16",end:"2026-11-27"});
+assert.deepEqual(rowCalendarRange("2026-V47","Måndag","7 kalenderdagar"),{start:"2026-11-16",end:"2026-11-22"});
 
-assert.equal(durationLabel(7),"7 dagar");
-assert.equal(durationLabel(9),"1 vecka 2 dagar");
-assert.equal(parseDurationDays("1 vecka 2 dagar"),9,"Exported mixed durations must import");
+assert.equal(durationLabel(7),"1 vecka 2 dagar");
+assert.equal(durationLabel(9),"1 vecka 4 dagar");
+assert.equal(parseDurationDays("1 vecka 2 dagar"),7,"Exported mixed durations must import");
 assert.equal(parseDurationDays(durationLabel(366)),366,"Long periods must round-trip");
 assert.equal(weekKeyForDate("2027-01-01"),"2026-V53","ISO rollover");
 assert.equal(currentWeekKey(new Date("2026-11-14T12:00:00Z")),"2026-V46");
@@ -44,10 +45,10 @@ assert.equal(parseWeekLabel("v.46",2026),"2026-V46","Short label resolves to XLS
 assert.throws(()=>parseWeekLabel("v.53",2027),"Invalid week must reject");
 
 
-assert.deepEqual(rowCalendarRange("2026-V40","Torsdag","3 dagar"),{start:"2026-10-01",end:"2026-10-03"});
+assert.deepEqual(rowCalendarRange("2026-V40","Torsdag","3 dagar"),{start:"2026-10-01",end:"2026-10-05"});
 assert.equal(estimatedHours({week:"2026-V47",day:"",duration:"3 veckor",effort:50}),60);
 assert.equal(estimatedHours({week:"2026-V47",day:"Måndag",duration:"1 dag",effort:100}),8);
-assert.equal(estimatedHours({week:"2026-V47",day:"Lördag",duration:"2 dagar",effort:100}),0);
+assert.throws(()=>estimatedHours({week:"2026-V47",day:"Lördag",duration:"2 dagar",effort:100}),/måndag–fredag/);
 assert.throws(()=>estimatedHours({week:"2026-V47",day:"",duration:"1 dag",effort:101}));
 assert.deepEqual(splitPeriodIntoWeeks("2026-11-16","2026-12-06",50),[
  {week:"2026-V47",day:"Måndag",hours:20},
