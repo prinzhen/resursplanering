@@ -152,6 +152,67 @@ try{
   estimated_hours:"20",status:"Planerad",employee_email:"sara@example.se",
   employee_name:"Sara Berg",effort_percent:"50"
  };
+ // Explicit v2 Excel permission matrix: all tests use a disposable database.
+ const weeklyBootstrap="/api/weekly-v2/bootstrap";
+ const newWeeklyRow={week:"2026-V47",day:"Måndag",task:"Nytt veckouppdrag",duration:"3 veckor",
+  effort:50,workType:"Projekt",hours:60,status:"Planerad",priority:"3",deadline:"",
+  projectCode:"WK-ACCESS",projectName:"Veckotest åtkomst",firstWeek:"2026-V47",
+  comment:"",moveReason:"",activityId:"",rowKey:"",rowRevision:0};
+ const workbook={name:"Ny Excelmedarbetare",email:"new-excel-role@example.se",rows:[newWeeklyRow]};
+ const anonWeekly=await api("",weeklyBootstrap,{...workbook,commit:true});
+ check("Anonymous cannot create weekly Excel records",()=>assert.equal(anonWeekly.status,401));
+ for(const [role,cookie] of [["ORDINARY STAFF",ordinary],["PROJECT/TEAM LEADER",leader],["NONMEMBER",nonmember]]){
+  const denied=await api(cookie,weeklyBootstrap,{...workbook,commit:true});
+  check(role+" cannot create unscoped employee via v2",()=>assert.equal(denied.status,403));
+ }
+ const snapshotWeeklyBefore=await ok(admin,"/api/data");
+ const previewWeekly=await ok(admin,weeklyBootstrap,{...workbook,commit:false});
+ check("ADMIN preview accurately counts missing person, project and activity",()=>{
+  assert.equal(previewWeekly.preview.employeesCreated,1);
+  assert.equal(previewWeekly.preview.projectsCreated,1);
+  assert.equal(previewWeekly.preview.activitiesCreated,1);
+ });
+ const snapshotWeeklyPreview=await ok(admin,"/api/data");
+ check("Weekly preview is read-only",()=>{
+  assert.deepEqual(snapshotWeeklyPreview.employees,snapshotWeeklyBefore.employees);
+  assert.deepEqual(snapshotWeeklyPreview.projects,snapshotWeeklyBefore.projects);
+  assert.deepEqual(snapshotWeeklyPreview.activities,snapshotWeeklyBefore.activities);
+ });
+ const invalidWeekly=await api(admin,weeklyBootstrap,{...workbook,
+  rows:[newWeeklyRow,{...newWeeklyRow,task:"Invalid second row",week:"2026-V99"}],commit:true});
+ check("Malformed weekly row rejects entire requested creation",()=>assert.equal(invalidWeekly.status,400));
+ const afterInvalidWeekly=await ok(admin,"/api/data");
+ check("Invalid weekly workbook creates neither person nor project",()=>{
+  assert.equal(afterInvalidWeekly.employees.some(p=>p.email===workbook.email),false);
+  assert.equal(afterInvalidWeekly.projects.some(p=>p.code==="WK-ACCESS"),false);
+ });
+ const managerWorkbook={name:"Ny gruppmedarbetare",email:"new-group-role@example.se",
+  rows:[{...newWeeklyRow,task:"Gruppchefens veckouppdrag",projectCode:"WK-MANAGER",projectName:"Chefprojekt"}]};
+ const managerPreview=await ok(manager,weeklyBootstrap,{...managerWorkbook,commit:false});
+ check("GROUP MANAGER may preview own new employee and project",()=>{
+  assert.equal(managerPreview.preview.employeesCreated,1);
+  assert.equal(managerPreview.preview.projectsCreated,1);
+ });
+ await ok(manager,weeklyBootstrap,{...managerWorkbook,commit:true});
+ const managerCreated=await ok(admin,"/api/data");
+ check("GROUP MANAGER new person assigned to importing group",()=>{
+  const created=managerCreated.employees.find(p=>p.email===managerWorkbook.email);
+  assert.ok(created);
+  assert.equal(created.managerId,anna);
+ });
+ const managerScope=await ok(manager,"/api/data");
+ check("GROUP MANAGER sees newly registered employee",()=>{
+  assert.ok(managerScope.employees.some(p=>p.email===managerWorkbook.email));
+ });
+ await ok(admin,weeklyBootstrap,{...workbook,commit:true});
+ const afterWeekly=await ok(admin,"/api/data");
+ check("ADMIN weekly import creates full three-week activity",()=>{
+  const project=afterWeekly.projects.find(p=>p.code==="WK-ACCESS");
+  const task=afterWeekly.activities.find(a=>a.projectId===project?.id&&a.name===newWeeklyRow.task);
+  assert.ok(task);
+  assert.equal(task.startDate,"2026-11-16");
+  assert.equal(task.endDate,"2026-12-06");
+ });
  const exchangeUrl="/api/planning-exchange";
  const anonymousExchange=await api("",exchangeUrl,{rows:[multiProjectRow],commit:true});
  check("Anonymous bulk exchange is denied",()=>assert.equal(anonymousExchange.status,401));
