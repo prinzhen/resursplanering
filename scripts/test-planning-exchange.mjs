@@ -10,13 +10,17 @@ const snapshot={
  assignments:[{id:9,activityId:20,employeeId:4,effortPercent:50,startDate:"2026-09-29",endDate:"2026-12-07"}]
 };
 const rows=exchangeRows(snapshot);
-assert.equal(rows.length,1);
+assert.equal(rows.length,3,"Export must include project, person and activity");
+assert.equal(rows.filter(x=>x.record_type==="project").length,1);
+assert.equal(rows.filter(x=>x.record_type==="person").length,1);
+const activityRow=rows.find(x=>x.record_type==="activity");
+assert.ok(activityRow);
 assert.deepEqual(PLAN_COLUMNS.slice(0,3),["record_type","project_code","project_name"]);
-assert.equal(rows[0].activity_code,"RP-ID-20");
-assert.equal(rows[0].start_date,"2026-09-29");
-assert.equal(rows[0].end_date,"2026-12-07");
-assert.equal(rows[0].employee_email,"test@example.se");
-assert.equal(rows[0].effort_percent,"50");
+assert.equal(activityRow.activity_code,"RP-ID-20");
+assert.equal(activityRow.start_date,"2026-09-29");
+assert.equal(activityRow.end_date,"2026-12-07");
+assert.equal(activityRow.employee_email,"test@example.se");
+assert.equal(activityRow.effort_percent,"50");
 const file=writePlanningXlsx(rows);
 assert.ok(file.size>500);
 const bytes=new Uint8Array(await file.arrayBuffer());
