@@ -82,6 +82,8 @@ for(let offset=0;offset+30<=bytes.length&&view.getUint32(offset,true)===0x04034b
  offset=start+size;
 }
 assert.ok(sheet,"Missing sheet");
+assert.ok(blob.size<8_000_000,"Exported workbook must remain within v2 import limit");
+assert.ok(new TextEncoder().encode(sheet).length<6_000_000,"Planning sheet must remain within import ZIP reader limit");
 assert.ok(workbook.includes('sheet name="Beläggning"'),"Workbook must include independent weekly load sheet");
 assert.ok(workbook.includes('fullCalcOnLoad="1"'),"Excel must recalculate all formula cells on open");
 assert.ok(loadSheet.includes("BELÄGGNING PER VECKA"),"Weekly load sheet must be present");
