@@ -40,12 +40,13 @@ export async function GET(req:Request){
 export async function POST(req:Request){
  try{
   const d=db(),user=await sessionIdentity(req,d);if(!user)return unauthorized();if(!sameOrigin(req))return forbidden();
-  const body=await req.json() as {employeeId:number;rows:WeeklyV2Row[];commit?:boolean};
+  const body=await req.json() as {employeeId:number;rows:WeeklyV2Row[];commit?:boolean;acceptStaleRevisions?:boolean};
   const employeeId=Number(body?.employeeId);
   if(!Number.isSafeInteger(employeeId)||employeeId<1||!Array.isArray(body.rows)||body.rows.length>500)
    return Response.json({error:"Ogiltig import (max 500 rader)"},{status:400});
   const scope=await accessScope(d,user);if(!scope.employeeIds.has(employeeId))return forbidden();
   const seen=new Set<string>(),activitiesSeen=new Set<number>();
+  const conflicts:{activityId:number;task:string;exportRevision:number;currentRevision:number}[]=[];
   const changes:{value:Plan;before:Plan|null;action:"new"|"update"|"unchanged";oldStart:string;oldEnd:string;newStart:string;newEnd:string;updateDates:boolean;assignmentIds:number[]}[]=[];
   for(const row of body.rows){
    if(seen.has(row.rowKey||""))throw Error("Dubbel planeringsrad i filen");
@@ -77,7 +78,13 @@ export async function POST(req:Request){
     value.hours=total;
    }
 
-   if(before&&before.revision!==value.revision)throw Error("Konflikt: planeringsraden har ändrats sedan exporten. Exportera på nytt.");
+   if(before&&before.revision!==value.revision){
+    conflicts.push({activityId,task:row.task,exportRevision:value.revision,currentRevision:before.revision});
+    // Preview must show the discrepancy rather than failing before user
+    // can inspect and explicitly choose the Excel estimate as authoritative.
+    if(body.commit&&!body.acceptStaleRevisions)
+     throw Error("Filen har äldre revisioner. Förhandsgranska konflikterna och bekräfta att Exceluppgifterna ska ersätta senaste planeringen.");
+   }
    const action=before?(fields.every(k=>(before[k]??null)===(value[k]??null))?"unchanged":"update"):"new";
    const updateDates=original.startDate!==dates.start||original.endDate!==dates.end;
    const ass=await d.prepare("SELECT id,employee_id employeeId,completed_at completedAt,start_date startDate,end_date endDate FROM assignments WHERE activity_id=?").bind(activityId).all<{id:number;employeeId:number;completedAt:string|null;startDate:string;endDate:string}>();
@@ -116,8 +123,9 @@ export async function POST(req:Request){
    changes.push({value,before,action,oldStart:original.startDate,oldEnd:original.endDate,
     newStart:dates.start,newEnd:dates.end,updateDates,assignmentIds});
   }
-  const preview={created:changes.filter(x=>x.action==="new").length,updated:changes.filter(x=>x.action==="update").length,unchanged:changes.filter(x=>x.action==="unchanged").length};
+  const preview={created:changes.filter(x=>x.action==="new").length,updated:changes.filter(x=>x.action==="update").length,unchanged:changes.filter(x=>x.action==="unchanged").length,conflicts};
   if(!body.commit)return Response.json({preview,committed:false});
+  if(conflicts.length&&!body.acceptStaleRevisions)return Response.json({error:"Aktiviteter har nyare revisioner i verktyget. Bekräfta uttryckligen att Excel ska ersätta dem.",preview},{status:409});
   const q:D1PreparedStatement[]=[];
   for(const {value:x,before,action,updateDates,oldStart,oldEnd,newStart,newEnd,assignmentIds} of changes){
    // Consolidate legacy per-week rows for this person/activity while retaining
