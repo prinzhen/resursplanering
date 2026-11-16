@@ -174,6 +174,74 @@ const cell=(ref:string,v:string|number|null|undefined,style=0)=>{
  return '<c r="'+ref+'" s="'+style+'" t="inlineStr"><is><t xml:space="preserve">'+enc(v)+'</t></is></c>';
 };
 const column=(index:number)=>String.fromCharCode(65+index);
+
+/** Standard OOXML formula. Excel/LibreOffice recalculate the second sheet. */
+const formulaCell=(ref:string,formula:string,style=0)=>'<c r="'+ref+'" s="'+style+'"><f>'+enc(formula)+'</f><v>0</v></c>';
+const excelCol=(n:number)=>{let result="";for(let x=n;x;x=Math.floor((x-1)/26))result=String.fromCharCode(65+(x-1)%26)+result;return result};
+const excelSerial=(iso:string)=>Math.round((Date.parse(iso+"T00:00:00Z")-Date.UTC(1899,11,30))/86400000);
+/** Formula fields V,W,X are local-only helpers for the visual load tab. */
+function dateHelperFormula(r:number){
+ const a="A"+r,b="B"+r;
+ const year='IFERROR(VALUE(LEFT('+a+',4)),$T$1)';
+ const week='IFERROR(VALUE(MID('+a+',FIND(".",'+a+')+1,2)),0)';
+ const day='IF('+b+'="Tisdag",2,IF('+b+'="Onsdag",3,IF('+b+'="Torsdag",4,IF('+b+'="Fredag",5,IF('+b+'="Lördag",6,IF('+b+'="Söndag",7,1))))))';
+ const first='DATE('+year+',1,4)';
+ return 'IF(OR('+a+'="",C'+r+'=""),0,'+first+'-WEEKDAY('+first+',2)+1+('+week+'-1)*7+'+day+'-1)';
+}
+function durationHelperFormula(r:number){
+ // Handles 10, 10d, 1v, 1v3d, "1 vecka 3 dagar", "3 veckor".
+ const d="D"+r;
+ let normalized='LOWER(TRIM('+d+'))';
+ for(const [from,to] of [[" veckor","v"],[" vecka","v"],[" kalenderdagar","d"],[" kalenderdag","d"],[" dagar","d"],[" dag","d"],[" dygn","d"],[" ",""]]){
+  normalized='SUBSTITUTE('+normalized+',"'+from+'","'+to+'")';
+ }
+ return 'IFERROR(LET(t,'+normalized+',v,IFERROR(FIND("v",t),0),IF(v>0,7*VALUE(LEFT(t,v-1))+IFERROR(VALUE(SUBSTITUTE(MID(t,v+1,99),"d","")),0),VALUE(SUBSTITUTE(t,"d","")))),0)';
+}
+function dailyLoadFormula(r:number){
+ const e="E"+r,g="G"+r,v="V"+r,w="W"+r,h="H"+r;
+ return 'IF(OR('+v+'=0,'+w+'<'+v+','+h+'="Pausad",'+h+'="Fryst",'+h+'="Klar"),0,IFERROR(IF('+e+'<>"",'+e+',IF('+g+'<>"",'+g+'/NETWORKDAYS('+v+','+w+')/8*100,0)),0))';
+}
+/** 28 weekly columns: previous week, current week and 26 weeks ahead. */
+function workloadSheet(base:string){
+ const weeks=Array.from({length:28},(_,i)=>shiftISOWeek(base,i-1));
+ const headers=weeks.map((key,i)=>{
+  const col=excelCol(i+2),monday=weekMonday(key).toISOString().slice(0,10);
+  return {col,key,serial:excelSerial(monday)};
+ });
+ const loadFormula=(col:string)=>{
+  const days=Array.from({length:5},(_,day)=>{
+   const d=col+'$5+'+day;
+   return 'SUMPRODUCT((Veckoplanering!$V$5:$V$5004>0)*(Veckoplanering!$V$5:$V$5004<='+d+')*(Veckoplanering!$W$5:$W$5004>='+d+')*Veckoplanering!$X$5:$X$5004)';
+  });
+  return 'ROUND(('+days.join('+')+')/5,1)';
+ };
+ const row=(r:number,values:string[])=>'<row r="'+r+'">'+values.join("")+'</row>';
+ const body=[
+  row(1,[cell("A1","BELÄGGNING PER VECKA",1)]),
+  row(2,[cell("A2","Beräknas automatiskt från Veckoplanering. Ändra aktiviteter i första fliken.")]),
+  row(3,[cell("A3","Omfattning: 1 vecka bakåt, aktuell vecka och 26 veckor framåt. Måndag–fredag, 40 h/vecka.")]),
+  row(4,[cell("A4","Mått",1),...headers.map(h=>cell(h.col+"4",h.key,1))]),
+  row(5,[cell("A5","Veckans måndag"),...headers.map(h=>cell(h.col+"5",h.serial,2))]),
+  row(6,[cell("A6","Beläggning %",1),...headers.map(h=>formulaCell(h.col+"6",loadFormula(h.col),3))]),
+  row(7,[cell("A7","Planerade timmar",1),...headers.map(h=>formulaCell(h.col+"7",h.col+"6*40/100",4))]),
+  row(8,[cell("A8","Tillgängligt (h)",1),...headers.map(h=>cell(h.col+"8",40))]),
+  row(9,[cell("A9","Ledig kapacitet (h)",1),...headers.map(h=>formulaCell(h.col+"9",h.col+"8-"+h.col+"7",4))]),
+  row(11,[cell("A11","Grön: 80–100 % · Gul: under 80 % · Röd: över 100 %")]),
+  row(12,[cell("A12","Endast aktiviteter i denna arbetsbok. Fliken ingår inte i importen.")])
+ ];
+ const last=headers.at(-1)!.col;
+ return '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'+
+ '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'+
+ '<sheetViews><sheetView workbookViewId="0"><pane xSplit="1" ySplit="5" topLeftCell="B6" activePane="bottomRight" state="frozen"/></sheetView></sheetViews>'+
+ '<cols><col min="1" max="1" width="31" customWidth="1"/><col min="2" max="29" width="16" customWidth="1"/></cols>'+
+ '<sheetData>'+body.join("")+'</sheetData>'+
+ '<conditionalFormatting sqref="B6:'+last+'6">'+
+ '<cfRule type="cellIs" dxfId="0" priority="1" operator="greaterThan"><formula>100</formula></cfRule>'+
+ '<cfRule type="cellIs" dxfId="1" priority="2" operator="between"><formula>80</formula><formula>100</formula></cfRule>'+
+ '<cfRule type="cellIs" dxfId="2" priority="3" operator="lessThan"><formula>80</formula></cfRule>'+
+ '</conditionalFormatting></worksheet>';
+}
+
 export function createWeeklyV2Xlsx(rows:WeeklyV2Row[],base=currentWeekKey(),person:{name:string;email:string}={name:"",email:""}):Blob{
  if(rows.length>5000)throw Error("Max 5000 rader per export.");
  const exportYear=Number(normalizeISOWeek(base).slice(0,4));
@@ -191,6 +259,17 @@ export function createWeeklyV2Xlsx(rows:WeeklyV2Row[],base=currentWeekKey(),pers
   body.push('<row r="'+ref+'">'+values.map((v,n)=>cell(column(n)+ref,v)).join("")+
    cell("Q"+ref,row.rowKey||"")+cell("R"+ref,row.rowRevision??0)+'</row>');
  });
+ // Hidden recalculated helpers are separate from importable columns A:P.
+ // Pre-create all 5000 rows so estimates refresh even when users add rows.
+ for(let row=5;row<=5004;row++){
+  const additional=formulaCell("V"+row,dateHelperFormula(row))+
+   formulaCell("Y"+row,durationHelperFormula(row))+
+   formulaCell("W"+row,'IF(V'+row+'=0,0,V'+row+'+Y'+row+'-1)')+
+   formulaCell("X"+row,dailyLoadFormula(row));
+  const pos=body.findIndex(text=>text.startsWith('<row r="'+row+'">'));
+  if(pos>=0)body[pos]=body[pos].replace("</row>",additional+"</row>");
+  else body.push('<row r="'+row+'">'+additional+'</row>');
+ }
  // The dropdown starts at the CURRENT Swedish calendar week and includes
  // future and past weeks, including year boundaries. Hidden helper column S.
  weekOptions(base).forEach((week,i)=>{
@@ -207,15 +286,17 @@ export function createWeeklyV2Xlsx(rows:WeeklyV2Row[],base=currentWeekKey(),pers
   '<dataValidation type="list" allowBlank="1" sqref="I5:I5004"><formula1>"1,2,3,4,5"</formula1></dataValidation>',
  ].join("");
  const cols=WEEKLY_COLUMNS.map((v,i)=>'<col min="'+(i+1)+'" max="'+(i+1)+'" width="'+Math.min(45,Math.max(17,v.length+4))+'" customWidth="1"/>').join("");
- const sheet='<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetViews><sheetView workbookViewId="0"><pane ySplit="4" topLeftCell="A5" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews><cols>'+cols+'<col min="17" max="21" hidden="1"/></cols><sheetData>'+body.join("")+'</sheetData><autoFilter ref="A4:P'+Math.max(4,rows.length+4)+'"/><dataValidations count="4">'+validation+'</dataValidations></worksheet>';
- const styles='<?xml version="1.0" encoding="UTF-8"?><styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><fonts count="2"><font><sz val="11"/></font><font><b/><sz val="11"/><color rgb="FFFFFFFF"/></font></fonts><fills count="3"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FF1E40AF"/></patternFill></fill></fills><borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="2"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="0" fontId="1" fillId="2" borderId="0" xfId="0"/></cellXfs></styleSheet>';
+ const sheet='<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetViews><sheetView workbookViewId="0"><pane ySplit="4" topLeftCell="A5" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews><cols>'+cols+'<col min="17" max="25" hidden="1"/></cols><sheetData>'+body.join("")+'</sheetData><autoFilter ref="A4:P'+Math.max(4,rows.length+4)+'"/><dataValidations count="4">'+validation+'</dataValidations></worksheet>';
+ const loadSheet=workloadSheet(base);
+ const styles='<?xml version="1.0" encoding="UTF-8"?><styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><fonts count="2"><font><sz val="11"/></font><font><b/><sz val="11"/><color rgb="FFFFFFFF"/></font></fonts><fills count="3"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FF1E40AF"/></patternFill></fill></fills><borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="5"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="0" fontId="1" fillId="2" borderId="0" xfId="0"/><xf numFmtId="14" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="2" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/></cellXfs><dxfs count="3"><dxf><fill><patternFill patternType="solid"><fgColor rgb="FFFCA5A5"/><bgColor indexed="64"/></patternFill></fill></dxf><dxf><fill><patternFill patternType="solid"><fgColor rgb="FFBBF7D0"/><bgColor indexed="64"/></patternFill></fill></dxf><dxf><fill><patternFill patternType="solid"><fgColor rgb="FFFEF08A"/><bgColor indexed="64"/></patternFill></fill></dxf></dxfs></styleSheet>';
  return zip({
-  "[Content_Types].xml":'<?xml version="1.0" encoding="UTF-8"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/></Types>',
+  "[Content_Types].xml":'<?xml version="1.0" encoding="UTF-8"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/><Override PartName="/xl/worksheets/sheet2.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/></Types>',
   "_rels/.rels":'<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>',
-  "xl/workbook.xml":'<?xml version="1.0" encoding="UTF-8"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Veckoplanering" sheetId="1" r:id="rId1"/></sheets></workbook>',
-  "xl/_rels/workbook.xml.rels":'<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>',
+  "xl/workbook.xml":'<?xml version="1.0" encoding="UTF-8"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Veckoplanering" sheetId="1" r:id="rId1"/><sheet name="Beläggning" sheetId="2" r:id="rId3"/></sheets><calcPr calcId="191029" fullCalcOnLoad="1" forceFullCalc="1" calcMode="auto"/></workbook>',
+  "xl/_rels/workbook.xml.rels":'<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/><Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet2.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>',
   "xl/styles.xml":styles,
   "xl/worksheets/sheet1.xml":sheet,
+  "xl/worksheets/sheet2.xml":loadSheet,
  });
 }
 /** Read legacy five-working-day XLSX precisely, without changing calendar semantics. */
