@@ -1,6 +1,8 @@
 "use client";
+import {weeklyOverridePercent,type WeeklyLoadRow} from "@/lib/weekly-load";
 import {useEffect,useMemo,useRef,useState} from "react";
 import {sortEmployeeProjects} from "@/lib/project-sort";
+import {exchangeRows,writePlanningXlsx,readPlanningXlsx,readMspdi,writeMspdi,readMpx,writeMpx,detectExchangeFile,type ExchangeRow} from "@/lib/planning-exchange";
 import {filterChefEmployees} from "@/lib/chef-filter";
 import {ganttState,ganttColor} from "@/lib/gantt-status";
 import QuickActivityDialog from "@/components/quick-activity-dialog";
@@ -14,12 +16,17 @@ type Employee={id:number;name:string;email:string;role:string;managerId:number|n
 type DeleteImpact={kind:"project"|"workPackage"|"activity";id:number;entryCount:number;activeEntryCount:number;deletedEntryCount:number;runningEntryCount:number;totalSeconds:number;fingerprint:string};
 type DeleteDestination={id:number;name:string;code:string|null;projectId:number;projectCode:string;projectName:string};
 type DeletePreview={impact:DeleteImpact;targets:DeleteDestination[]};
-type Data={viewer?:Viewer;projectDirectory?:Project[];employees:Employee[];projects:Project[];workPackages:WorkPackage[];activities:WorkActivity[];assignments:Assignment[];assignmentPeriods:EffortPeriod[];activityPriorityHistory?:ActivityPriorityEvent[];projectMembers:ProjectMember[];employeeProjectOrders:EmployeeProjectOrder[];employeeGroups:EmployeeGroup[];employeeGroupMembers:EmployeeGroupMember[];
+type Data={weeklyPlanRows?:WeeklyLoadRow[];viewer?:Viewer;projectDirectory?:Project[];employees:Employee[];projects:Project[];workPackages:WorkPackage[];activities:WorkActivity[];assignments:Assignment[];assignmentPeriods:EffortPeriod[];activityPriorityHistory?:ActivityPriorityEvent[];projectMembers:ProjectMember[];employeeProjectOrders:EmployeeProjectOrder[];employeeGroups:EmployeeGroup[];employeeGroupMembers:EmployeeGroupMember[];
  employeeDirectory?:{id:number;name:string}[];
  projectLeaders?:{projectId:number;employeeId:number;employeeName?:string}[];
  teamLeaders?:{teamId:number;employeeId:number;employeeName?:string}[];
  workPackageLeaders?:{workPackageId:number;employeeId:number;employeeName?:string}[];};const empty:Data={employees:[],projects:[],workPackages:[],activities:[],assignments:[],assignmentPeriods:[],projectMembers:[],employeeProjectOrders:[],employeeGroups:[],employeeGroupMembers:[]};
-const monthFmt=new Intl.DateTimeFormat("sv-SE",{month:"short",year:"2-digit"}),dateFmt=new Intl.DateTimeFormat("sv-SE",{day:"numeric",month:"short",year:"numeric"});const createMonths=(startOffset:number)=>Array.from({length:7},(_,i)=>{const d=new Date(new Date().getFullYear(),new Date().getMonth()+startOffset+i,1);return{key:`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`,label:monthFmt.format(d).replace(".","")}});const initials=(n:string)=>n.split(" ").map(x=>x[0]).join("").slice(0,2);const esc=(v:unknown)=>`"${String(v??"").replaceAll('"','""')}"`;function parseCsv(t:string){const lines=t.replace(/^\uFEFF/,"").trim().split(/\r?\n/);if(lines.length<2)return[];const s=(lines[0].match(/;/g)||[]).length>(lines[0].match(/,/g)||[]).length?";":",";const split=(line:string)=>{const out:string[]=[];let cur="",q=false;for(let i=0;i<line.length;i++){const c=line[i];if(c==='"'&&line[i+1]==='"'){cur+='"';i++}else if(c==='"')q=!q;else if(c===s&&!q){out.push(cur);cur=""}else cur+=c}out.push(cur);return out};const h=split(lines[0]).map(x=>x.trim().toLowerCase());return lines.slice(1).filter(Boolean).map(l=>Object.fromEntries(split(l).map((v,i)=>[h[i],v.trim()]))) as Array<Record<string,string>>}function download(name:string,content:string,type:string){const u=URL.createObjectURL(new Blob([content],{type})),a=document.createElement("a");a.href=u;a.download=name;a.click();URL.revokeObjectURL(u)}function assignmentPeriods(a:Assignment,d:Data):EffortPeriod[]{
+const monthFmt=new Intl.DateTimeFormat("sv-SE",{month:"short",year:"2-digit"}),dateFmt=new Intl.DateTimeFormat("sv-SE",{day:"numeric",month:"short",year:"numeric"});const createMonths=(startOffset:number)=>Array.from({length:7},(_,i)=>{const d=new Date(new Date().getFullYear(),new Date().getMonth()+startOffset+i,1);return{key:`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`,label:monthFmt.format(d).replace(".","")}});const initials=(n:string)=>n.split(" ").map(x=>x[0]).join("").slice(0,2);function download(name:string,content:string,type:string){const u=URL.createObjectURL(new Blob([content],{type})),a=document.createElement("a");a.href=u;a.download=name;a.click();URL.revokeObjectURL(u)}function downloadBinary(name:string,blob:Blob){
+ const url=URL.createObjectURL(blob),link=document.createElement("a");
+ link.href=url;link.download=name;document.body.appendChild(link);link.click();link.remove();
+ setTimeout(()=>URL.revokeObjectURL(url),1000);
+}
+function assignmentPeriods(a:Assignment,d:Data):EffortPeriod[]{
  const selected=d.assignmentPeriods.filter(p=>p.assignmentId===a.id).sort((x,y)=>x.startDate.localeCompare(y.startDate));
  return selected.length?selected:[{id:-a.id,assignmentId:a.id,startDate:a.startDate,endDate:a.endDate,effortPercent:a.effortPercent}];
 }
@@ -42,14 +49,14 @@ function loadOnDate(data:Data,employeeId:number,day:string){
   .filter(a=>day<today||(!a.completedAt&&!["Fryst","Pausad"].includes(a.workStatus||"")))
   .reduce((total,a)=>{
    if(a.completedAt&&day>a.completedAt)return total;
-   return total+assignmentPeriods(a,data)
-    .filter(p=>p.startDate<=day&&p.endDate>=day)
+   const weekly=weeklyOverridePercent(data.weeklyPlanRows||[],a.activityId,a.employeeId,day);
+   if(weekly!==undefined)return total+weekly;
+   return total+assignmentPeriods(a,data).filter(p=>p.startDate<=day&&p.endDate>=day)
     .reduce((sum,p)=>sum+p.effortPercent,0);
   },0);
 }
 function currentLoad(d:Data,employeeId:number,day=new Date().toISOString().slice(0,10)){
- return d.assignments.filter(a=>a.employeeId===employeeId&&!a.completedAt&&!["Fryst","Pausad"].includes(a.workStatus||""))
-   .reduce((sum,a)=>sum+assignmentPeriods(a,d).filter(p=>p.startDate<=day&&p.endDate>=day).reduce((n,p)=>n+p.effortPercent,0),0);
+ return loadOnDate(d,employeeId,day);
 }
 function workingDays(start:string,end:string){
  if(start>end)return 0;const from=new Date(start+"T00:00:00Z"),to=new Date(end+"T00:00:00Z");
@@ -59,16 +66,29 @@ function workingDays(start:string,end:string){
 }
 function workload(data:Data,employeeId:number,start:string,end:string){
  const total=workingDays(start,end);if(!total)return 0;
+ const today=new Date().toISOString().slice(0,10);
  let weighted=0;
  for(const a of data.assignments){
-  // Current status must not erase recorded planning from past months.
-  // For today/future, continue to exclude paused/frozen assignments.
-  const historical=end<new Date().toISOString().slice(0,10);
+  const historical=end<today;
   if(a.employeeId!==employeeId||(!historical&&["Fryst","Pausad"].includes(a.workStatus||"")))continue;
-  for(const p of assignmentPeriods(a,data)){
-   const effectiveEnd=a.completedAt&&a.completedAt<p.endDate?a.completedAt:p.endDate;
-   const first=p.startDate>start?p.startDate:start,last=effectiveEnd<end?effectiveEnd:end;
-   weighted+=p.effortPercent*workingDays(first,last);
+  const periods=assignmentPeriods(a,data);
+  const hasWeekly=(data.weeklyPlanRows||[]).some(x=>x.activityId===a.activityId&&x.employeeId===employeeId);
+  if(!hasWeekly){
+   for(const p of periods){
+    const effectiveEnd=a.completedAt&&a.completedAt<p.endDate?a.completedAt:p.endDate;
+    const first=p.startDate>start?p.startDate:start,last=effectiveEnd<end?effectiveEnd:end;
+    weighted+=p.effortPercent*workingDays(first,last);
+   }
+   continue;
+  }
+  const d=new Date(start+"T00:00:00Z"),last=new Date(end+"T00:00:00Z");
+  while(d<=last){
+   const weekday=d.getUTCDay(),day=d.toISOString().slice(0,10);
+   if(weekday!==0&&weekday!==6&&(!a.completedAt||day<=a.completedAt)){
+    const override=weeklyOverridePercent(data.weeklyPlanRows||[],a.activityId,employeeId,day);
+    weighted+=override??periods.filter(p=>p.startDate<=day&&p.endDate>=day).reduce((sum,p)=>sum+p.effortPercent,0);
+   }
+   d.setUTCDate(d.getUTCDate()+1);
   }
  }
  return Math.round(weighted/total);
@@ -139,7 +159,43 @@ export default function Home(){const[data,setData]=useState<Data>(empty),[scope,
   finally{setDeleteBusy(false)}
  };
  const openEdit=(kind:"project"|"work"|"activity",item:Project|WorkPackage|WorkActivity)=>{setEditing(item);setDialog(kind)};const close=()=>{setDialog(null);setEditing(null)};
- const importFile=async()=>{const f=fileRef.current?.files?.[0];if(!f){setError("Välj en fil först.");return}try{const raw=await f.text();if(f.name.toLowerCase().endsWith(".json")){const backup=JSON.parse(raw);await post({action:"restore",backup},"Säkerhetskopian återställdes")}else{const rows=parseCsv(raw);if(!rows.length)throw new Error("CSV-filen innehåller inga rader");await post({action:"import",rows},`${rows.length} rader importerades`)}}catch(e){setError(e instanceof Error?e.message:"Filen kunde inte importeras")}};
+ const [exchangePreview,setExchangePreview]=useState<null|{projectsCreated:number;peopleCreated:number;workPackagesCreated:number;activitiesCreated:number;activitiesUpdated:number;assignments:number;warnings:string[]}>(null);
+ const [exchangePrepared,setExchangePrepared]=useState<{fingerprint:string;rows:ExchangeRow[]}|null>(null);
+ const importFile=async(commit=false)=>{
+  const file=fileRef.current?.files?.[0];if(!file){setError("Välj en fil först.");return}
+  setError("");
+  try{
+   const kind=detectExchangeFile(file.name);
+   if(kind==="mpp")throw Error("Binär MPP-import kräver MPXJ-konverterare. Exportera projektet som XML/MSPDI eller MPX tills konverteraren är installerad.");
+   if(kind==="json"){
+    if(!commit)throw Error("JSON är en fullständig säkerhetskopia. Använd återställningskommandot separat för att undvika att skriva över planeringen.");
+    throw Error("Fullständig JSON-återställning är avstängd i den vanliga importdialogen.");
+   }
+   const bytes=await file.arrayBuffer();
+   const fingerprint=Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256",bytes))).map(x=>x.toString(16).padStart(2,"0")).join("");
+   let rows:ExchangeRow[];
+   if(kind==="xlsx")rows=await readPlanningXlsx(new File([bytes],file.name));
+   else if(kind==="xml")rows=readMspdi(new TextDecoder().decode(bytes));
+   else rows=readMpx(new TextDecoder().decode(bytes));
+   if(commit&&(!exchangePrepared||exchangePrepared.fingerprint!==fingerprint))
+    throw Error("Filen har ändrats sedan förhandsgranskningen. Förhandsgranska på nytt.");
+   const response=await fetch("/api/planning-exchange",{method:"POST",
+    headers:{"content-type":"application/json"},body:JSON.stringify({rows,commit})});
+   const result=await response.json() as {error?:string;preview:{projectsCreated:number;peopleCreated:number;workPackagesCreated:number;activitiesCreated:number;activitiesUpdated:number;assignments:number;warnings:string[]}};
+   if(!response.ok)throw Error(result.error||"Importen misslyckades.");
+   setExchangePreview(result.preview);
+   if(commit){
+    setExchangePrepared(null);setExchangePreview(null);
+    const refreshed=await fetch("/api/data",{cache:"no-store"});
+    if(refreshed.ok)setData(await refreshed.json());
+    setNotice("Projektplaneringen importerades och sparades atomärt.");
+    close();
+   }else{
+    setExchangePrepared({fingerprint,rows});
+    setNotice("Förhandsgranskningen är klar. Kontrollera sammanfattningen före sparande.");
+   }
+  }catch(e){setError(e instanceof Error?e.message:"Filen kunde inte importeras")}
+ };
  return <main className="app-shell min-h-screen text-slate-950"><header className="app-header sticky top-0 z-30 border-b backdrop-blur-xl"><div className="mx-auto flex h-16 max-w-[1500px] items-center gap-3 px-4 sm:px-6"><div className="brand-mark"><Gauge/></div><div className="mr-auto"><div className="font-semibold">Resursplanering</div><div className="app-subtitle text-xs">Projekt, uppdrag och aktiviteter</div></div><div className="flex items-center gap-2"><label htmlFor="chef-scope" className="app-subtitle hidden text-sm sm:inline">Chefsvy</label><NativeSelect id="chef-scope" aria-label="Filtrera chefsvy efter grupp, TEAM eller medarbetare" className="header-select w-48 sm:w-64" value={scope} onChange={e=>setScope(e.target.value)}>
  <NativeSelectOption value="all">Alla medarbetare</NativeSelectOption>
  <NativeSelectOptGroup label="GRUPP">
@@ -165,7 +221,7 @@ export default function Home(){const[data,setData]=useState<Data>(empty),[scope,
  <TabsContent value="time"><TimeTrackingPanel/></TabsContent>
  <TabsContent value="employees"><EmployeeGrid data={data} employees={visible} onSelect={id=>setDetail({type:"employee",id,mode:"list"})} onRemove={setRemove}/></TabsContent>
  <TabsContent value="groups"><GroupGrid data={data} onSelect={id=>setDetail({type:"group",id,mode:"list"})} onEdit={group=>{setEditingGroup(group);setDialog("group")}} onRemove={setRemove}/></TabsContent></Tabs></div>
- <ProjectDialog open={dialog==="project"} close={close} item={editing as Project|null} projects={data.projects} onSubmit={e=>submit(e,editing?"updateProject":"project",editing?"Projektet uppdaterades":"Projektet skapades")}/><WorkDialog open={dialog==="work"} close={close} item={editing as WorkPackage|null} projects={data.projects} onSubmit={e=>submit(e,editing?"updateWorkPackage":"workPackage",editing?"Uppdraget uppdaterades":"Uppdraget skapades")}/>{quick!==null&&<QuickActivityDialog key={JSON.stringify(quick)} data={data} preset={quick} close={()=>setQuick(null)} onCreated={async(id,proposal)=>{await refresh();setQuick(null);setDetail({type:"activity",id,mode:"list"});setNotice(proposal?"Aktivitetsförslag skickat – inväntar godkännande.":"Aktiviteten skapades för dig.");}}/>}<ActivityDialog open={dialog==="activity"} close={close} item={editing as WorkActivity|null} data={data} onSubmit={e=>submit(e,editing?"updateActivity":"activity",editing?"Aktiviteten uppdaterades":"Aktiviteten skapades")}/><EmployeeDialog open={dialog==="employee"} close={close} employees={data.employees} onSubmit={e=>submit(e,"employee","Medarbetaren skapades")}/><GroupDialog key={editingGroup?.id??"new"} open={dialog==="group"} close={()=>{setDialog(null);setEditingGroup(null)}} group={editingGroup} people={data.employees} members={data.employeeGroupMembers} save={async payload=>{const ok=await post({action:"saveEmployeeGroup",...payload},editingGroup?"TEAM uppdaterades":"TEAM skapades");if(ok)setEditingGroup(null);return ok}}/><AssignmentDialog open={dialog==="assignment"} close={close} data={data} onSubmit={e=>submit(e,"assignment","Bemanningen sparades")}/><ExportDialog open={dialog==="export"} close={close} data={data}/><ImportDialog open={dialog==="import"} close={close} fileRef={fileRef} run={importFile}/>
+ <ProjectDialog open={dialog==="project"} close={close} item={editing as Project|null} projects={data.projects} onSubmit={e=>submit(e,editing?"updateProject":"project",editing?"Projektet uppdaterades":"Projektet skapades")}/><WorkDialog open={dialog==="work"} close={close} item={editing as WorkPackage|null} projects={data.projects} onSubmit={e=>submit(e,editing?"updateWorkPackage":"workPackage",editing?"Uppdraget uppdaterades":"Uppdraget skapades")}/>{quick!==null&&<QuickActivityDialog key={JSON.stringify(quick)} data={data} preset={quick} close={()=>setQuick(null)} onCreated={async(id,proposal)=>{await refresh();setQuick(null);setDetail({type:"activity",id,mode:"list"});setNotice(proposal?"Aktivitetsförslag skickat – inväntar godkännande.":"Aktiviteten skapades för dig.");}}/>}<ActivityDialog open={dialog==="activity"} close={close} item={editing as WorkActivity|null} data={data} onSubmit={e=>submit(e,editing?"updateActivity":"activity",editing?"Aktiviteten uppdaterades":"Aktiviteten skapades")}/><EmployeeDialog open={dialog==="employee"} close={close} employees={data.employees} onSubmit={e=>submit(e,"employee","Medarbetaren skapades")}/><GroupDialog key={editingGroup?.id??"new"} open={dialog==="group"} close={()=>{setDialog(null);setEditingGroup(null)}} group={editingGroup} people={data.employees} members={data.employeeGroupMembers} save={async payload=>{const ok=await post({action:"saveEmployeeGroup",...payload},editingGroup?"TEAM uppdaterades":"TEAM skapades");if(ok)setEditingGroup(null);return ok}}/><AssignmentDialog open={dialog==="assignment"} close={close} data={data} onSubmit={e=>submit(e,"assignment","Bemanningen sparades")}/><ExportDialog open={dialog==="export"} close={close} data={data}/><ImportDialog open={dialog==="import"} close={close} fileRef={fileRef} run={importFile} preview={exchangePreview} canCommit={!!exchangePrepared} reset={()=>{setExchangePreview(null);setExchangePrepared(null)}}/>
  <DetailSheet detail={detail} data={data} onCreate={setQuick} onSaveLeadership={saveLeadership} close={()=>setDetail(null)} setMode={mode=>detail&&setDetail({...detail,mode})} onSelect={setDetail} onSaveProjects={(employeeId,projectIds)=>post({action:"setProjectMemberships",employeeId,projectIds},"Personens projekt uppdaterades")} onSaveProjectOrder={(employeeId,projectIds)=>post({action:"setEmployeeProjectOrder",employeeId,projectIds},"Projektordningen sparades")} onResetProjectOrder={employeeId=>post({action:"resetEmployeeProjectOrder",employeeId},"Standardordningen återställdes")} onSaveAssignments={(activityId,resources)=>post({action:"setActivityAssignments",activityId,resources},"Bemanningen uppdaterades")} onSaveActivityStatus={(activityId,status)=>post({action:"setActivityStatus",activityId,status},"Aktivitetsstatus uppdaterad")} onSaveAssignmentStatus={(activityId,employeeId,status)=>post({action:"setAssignmentStatus",activityId,employeeId,status},"Personens status uppdaterad")} onSavePeriods={(activityId,employeeId,periods)=>post({action:"setAssignmentPeriods",activityId,employeeId,periods},"Resursens bemanningsperioder uppdaterades")} onEditActivity={activity=>{setDetail(null);openEdit("activity",activity)}} onSaveKanban={(card,status)=>card.employeeId===null?post({action:"setActivityStatus",activityId:card.activityId,status},"Aktiviteten flyttades till "+status):post({action:"setAssignmentStatus",activityId:card.activityId,employeeId:card.employeeId,status},"Personens aktivitet flyttades till "+status)}/><AlertDialog open={!!remove} onOpenChange={o=>!o&&setRemove(null)}>
   <AlertDialogContent className="max-w-lg">
    <AlertDialogHeader><AlertDialogTitle>Ta bort {remove?.label}?</AlertDialogTitle>
@@ -639,5 +695,75 @@ function ActivityDialog({open,close,item,data,onSubmit}:{open:boolean;close:()=>
 function EmployeeDialog({open,close,employees,onSubmit}:{open:boolean;close:()=>void;employees:Employee[];onSubmit:(e:React.FormEvent<HTMLFormElement>)=>void}){return <Dialog open={open} onOpenChange={o=>!o&&close()}><DialogContent><form onSubmit={onSubmit} className="grid gap-4"><DialogHeader><DialogTitle>Ny medarbetare</DialogTitle><DialogDescription>Lägg till kapacitet och ansvarig chef.</DialogDescription></DialogHeader><div className="grid gap-4 sm:grid-cols-2"><Field label="Namn"><Input name="name" required/></Field><Field label="E-post"><Input name="email" type="email" required/></Field><Field label="Roll"><Input name="role" defaultValue="Medarbetare" required/></Field><Field label="Kapacitet (%)"><Input name="capacityPercent" type="number" min="10" max="100" defaultValue="100" required/></Field></div><Field label="Ansvarig chef"><NativeSelect className="w-full" name="managerId"><NativeSelectOption value="">Ingen</NativeSelectOption>{employees.map(e=><NativeSelectOption key={e.id} value={e.id}>{e.name}</NativeSelectOption>)}</NativeSelect></Field><DialogFooter><Button type="button" variant="outline" onClick={close}>Avbryt</Button><Button type="submit">Spara</Button></DialogFooter></form></DialogContent></Dialog>}
 function AssignmentDialog({open,close,data,onSubmit}:{open:boolean;close:()=>void;data:Data;onSubmit:(e:React.FormEvent<HTMLFormElement>)=>void}){const[projectId,setProjectId]=useState(""),[workId,setWorkId]=useState("all");const work=data.workPackages.filter(w=>w.projectId===Number(projectId)),activities=data.activities.filter(a=>a.projectId===Number(projectId)&&(workId==="all"||a.workPackageId===Number(workId)));const dismiss=()=>{setProjectId("");setWorkId("all");close()};return <Dialog open={open} onOpenChange={o=>!o&&dismiss()}><DialogContent><form onSubmit={onSubmit} className="grid gap-4"><DialogHeader><DialogTitle>Bemanna aktivitet</DialogTitle><DialogDescription>Välj först projekt och vid behov uppdrag. Då visas bara aktiviteter i den valda delen av strukturen.</DialogDescription></DialogHeader><Field label="Projekt"><NativeSelect className="w-full" value={projectId} onChange={e=>{setProjectId(e.target.value);setWorkId("all")}} required><NativeSelectOption value="">Välj projekt</NativeSelectOption>{data.projects.map(p=><NativeSelectOption key={p.id} value={p.id}>{p.code} · {p.name}</NativeSelectOption>)}</NativeSelect></Field><Field label="Uppdrag"><NativeSelect className="w-full" value={workId} onChange={e=>setWorkId(e.target.value)} disabled={!projectId}><NativeSelectOption value="all">Alla aktiviteter i projektet</NativeSelectOption>{work.map(w=><NativeSelectOption key={w.id} value={w.id}>{w.code} · {w.name}</NativeSelectOption>)}</NativeSelect></Field><Field label="Aktivitet eller underaktivitet"><NativeSelect className="w-full" name="activityId" key={`${projectId}-${workId}`} disabled={!projectId} required><NativeSelectOption value="">{projectId?"Välj aktivitet":"Välj projekt först"}</NativeSelectOption>{activities.map(a=>{const parent=data.activities.find(x=>x.id===a.parentActivityId);return <NativeSelectOption key={a.id} value={a.id}>{a.parentActivityId?`↳ ${parent?.name} / `:""}{a.code?`${a.code} · `:""}{a.name}</NativeSelectOption>})}</NativeSelect></Field><Field label="Medarbetare"><NativeSelect className="w-full" name="employeeId" required><NativeSelectOption value="">Välj medarbetare</NativeSelectOption>{data.employees.map(e=><NativeSelectOption key={e.id} value={e.id}>{e.name} · {e.role}</NativeSelectOption>)}</NativeSelect></Field><Field label="Insats av full tid (%)"><Input name="effortPercent" type="number" min="1" max="200" defaultValue="20" required/></Field><DialogFooter><Button type="button" variant="outline" onClick={dismiss}>Avbryt</Button><Button type="submit">Spara bemanning</Button></DialogFooter></form></DialogContent></Dialog>}
 
-function ExportDialog({open,close,data}:{open:boolean;close:()=>void;data:Data}){const[kind,setKind]=useState("activities"),[project,setProject]=useState("all"),[work,setWork]=useState("all"),[person,setPerson]=useState("all"),[group,setGroup]=useState("all");const run=()=>{if(kind==="backup"){download(`resursplanering-backup-${new Date().toISOString().slice(0,10)}.json`,JSON.stringify({version:3,exportedAt:new Date().toISOString(),data},null,2),"application/json");close();return}if(kind==="people"){const ids=group==="all"?null:new Set(data.employees.filter(e=>e.managerId===Number(group)||e.id===Number(group)).map(e=>e.id));const people=data.employees.filter(e=>(person==="all"||e.id===Number(person))&&(!ids||ids.has(e.id)));const h=["record_type","name","email","role","manager_email","capacity_percent"],rows=people.map(e=>["person",e.name,e.email,e.role,data.employees.find(m=>m.id===e.managerId)?.email||"",e.capacityPercent]);download("medarbetare.csv",[h,...rows].map(r=>r.map(esc).join(";")).join("\n"),"text/csv;charset=utf-8");close();return}let acts=data.activities.filter(a=>(project==="all"||a.projectId===Number(project))&&(work==="all"||a.workPackageId===Number(work)));const groupIds=group==="all"?null:new Set(data.employees.filter(e=>e.managerId===Number(group)||e.id===Number(group)).map(e=>e.id));const h=["record_type","project_code","project_name","project_description","project_status","work_package_code","work_package_name","work_package_description","activity_code","activity","parent_activity_code","description","start_date","end_date","estimated_hours","status","employee_email","employee_name","effort_percent"];const rows:unknown[][]=[];for(const a of acts){const p=data.projects.find(x=>x.id===a.projectId),w=data.workPackages.find(x=>x.id===a.workPackageId),parent=data.activities.find(x=>x.id===a.parentActivityId);let ass=data.assignments.filter(x=>x.activityId===a.id&&(person==="all"||x.employeeId===Number(person))&&(!groupIds||groupIds.has(x.employeeId)));if((person!=="all"||groupIds)&&!ass.length)continue;if(!ass.length)ass=[{id:0,activityId:a.id,employeeId:0,effortPercent:0,startDate:a.startDate,endDate:a.endDate,completedAt:null,workStatus:null}];for(const s of ass){const e=data.employees.find(x=>x.id===s.employeeId);rows.push(["activity",p?.code,p?.name,p?.description,p?.status,w?.code,w?.name,w?.description,a.code,a.name,parent?.code,a.description,a.startDate,a.endDate,a.estimatedHours,a.status,e?.email,e?.name,s.id?s.effortPercent:""])}}download("aktiviteter.csv",[h,...rows].map(r=>r.map(esc).join(";")).join("\n"),"text/csv;charset=utf-8");close()};return <Dialog open={open} onOpenChange={o=>!o&&close()}><DialogContent className="sm:max-w-xl"><DialogHeader><DialogTitle>Exportera data</DialogTitle><DialogDescription>CSV är anpassat för Excel. JSON bevarar hela databasen som säkerhetskopia.</DialogDescription></DialogHeader><Field label="Vad vill du exportera?"><NativeSelect className="w-full" value={kind} onChange={e=>setKind(e.target.value)}><NativeSelectOption value="activities">Aktiviteter och underaktiviteter</NativeSelectOption><NativeSelectOption value="people">Medarbetare</NativeSelectOption><NativeSelectOption value="backup">Hela databasen – säkerhetskopia</NativeSelectOption></NativeSelect></Field>{kind==="activities"&&<div className="grid gap-4 sm:grid-cols-2"><Field label="Projekt"><NativeSelect className="w-full" value={project} onChange={e=>setProject(e.target.value)}><NativeSelectOption value="all">Alla projekt</NativeSelectOption>{data.projects.map(p=><NativeSelectOption key={p.id} value={p.id}>{p.code} · {p.name}</NativeSelectOption>)}</NativeSelect></Field><Field label="Uppdrag"><NativeSelect className="w-full" value={work} onChange={e=>setWork(e.target.value)}><NativeSelectOption value="all">Alla uppdrag</NativeSelectOption>{data.workPackages.filter(w=>project==="all"||w.projectId===Number(project)).map(w=><NativeSelectOption key={w.id} value={w.id}>{w.code} · {w.name}</NativeSelectOption>)}</NativeSelect></Field></div>}{kind!=="backup"&&<div className="grid gap-4 sm:grid-cols-2"><Field label="Person"><NativeSelect className="w-full" value={person} onChange={e=>setPerson(e.target.value)}><NativeSelectOption value="all">Alla personer</NativeSelectOption>{data.employees.map(e=><NativeSelectOption key={e.id} value={e.id}>{e.name}</NativeSelectOption>)}</NativeSelect></Field><Field label="Chefsgrupp"><NativeSelect className="w-full" value={group} onChange={e=>setGroup(e.target.value)}><NativeSelectOption value="all">Alla grupper</NativeSelectOption>{data.employees.filter(e=>data.employees.some(x=>x.managerId===e.id)).map(e=><NativeSelectOption key={e.id} value={e.id}>{e.name}s grupp</NativeSelectOption>)}</NativeSelect></Field></div>}<div className="rounded-xl bg-blue-50 p-3 text-sm text-blue-800">{kind==="backup"?"Säkerhetskopian innehåller projekt, uppdrag, aktiviteter, personer och all bemanning.":"Varje rad kan redigeras i Excel och importeras tillbaka till verktyget."}</div><DialogFooter><Button variant="outline" onClick={close}>Avbryt</Button><Button onClick={run}><Download/>Exportera</Button></DialogFooter></DialogContent></Dialog>}
-function ImportDialog({open,close,fileRef,run}:{open:boolean;close:()=>void;fileRef:React.RefObject<HTMLInputElement|null>;run:()=>void}){return <Dialog open={open} onOpenChange={o=>!o&&close()}><DialogContent><DialogHeader><DialogTitle>Importera CSV eller säkerhetskopia</DialogTitle><DialogDescription>CSV lägger till eller uppdaterar poster. En JSON-säkerhetskopia ersätter hela databasen.</DialogDescription></DialogHeader><Field label="Fil"><Input ref={fileRef} type="file" accept=".csv,.json,text/csv,application/json"/></Field><div className="csv-example">CSV: project_code; project_name; work_package_code; activity_code; activity; parent_activity_code; start_date; end_date; employee_email; effort_percent</div><div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900"><strong>Observera:</strong> Import av JSON återställer databasen exakt som den såg ut när säkerhetskopian skapades.</div><DialogFooter><Button variant="outline" onClick={close}>Avbryt</Button><Button onClick={run}><FileUp/>Importera fil</Button></DialogFooter></DialogContent></Dialog>}
+function ExportDialog({open,close,data}:{open:boolean;close:()=>void;data:Data}){
+ const [format,setFormat]=useState<"xlsx"|"xml"|"mpx"|"json">("xlsx");
+ const [project,setProject]=useState("all");
+ const run=()=>{
+  const all=exchangeRows(data);
+  const selected=project==="all"?all:all.filter(row=>data.projects.find(p=>p.id===Number(project))?.code===row.project_code);
+  if(format==="json"){
+   if(!data.viewer?.isAdmin){window.alert("Endast administratör får exportera en fullständig JSON-säkerhetskopia.");return}
+   download("resursplanering-backup-"+new Date().toISOString().slice(0,10)+".json",
+    JSON.stringify({version:4,exportedAt:new Date().toISOString(),data},null,2),"application/json");
+  }else if(format==="xlsx"){
+   downloadBinary("resursplanering-projekt.xlsx",writePlanningXlsx(selected));
+  }else if(format==="xml"){
+   // MSPDI represents one project. Require the project selection to be
+   // explicit, rather than combining unrelated projects into one XML project.
+   if(project==="all"){window.alert("Välj ett projekt innan XML/MSPDI-export.");return}
+   download("resursplanering-projekt.xml",writeMspdi(selected),"application/xml");
+  }else{
+   if(project==="all"){window.alert("Välj ett projekt innan MPX-export.");return}
+   download("resursplanering-projekt.mpx",writeMpx(selected),"text/plain;charset=utf-8");
+  }
+  close();
+ };
+ return <Dialog open={open} onOpenChange={o=>!o&&close()}><DialogContent className="sm:max-w-xl">
+  <DialogHeader><DialogTitle>Exportera projektplanering</DialogTitle>
+   <DialogDescription>Vanlig utbytesexport, fristående från personlig Excel v2. CSV har tagits bort.</DialogDescription></DialogHeader>
+  <Field label="Format"><NativeSelect className="w-full" value={format} onChange={e=>setFormat(e.target.value as typeof format)}>
+   <NativeSelectOption value="xlsx">Excel (.xlsx)</NativeSelectOption>
+   <NativeSelectOption value="xml">Microsoft Project XML / MSPDI (.xml)</NativeSelectOption>
+   <NativeSelectOption value="mpx">Microsoft Project Exchange (.mpx) – grundläggande aktivitetsfält</NativeSelectOption>
+   {data.viewer?.isAdmin&&<NativeSelectOption value="json">Fullständig JSON-säkerhetskopia</NativeSelectOption>}
+  </NativeSelect></Field>
+  {format!=="json"&&<Field label="Projekt"><NativeSelect className="w-full" value={project} onChange={e=>setProject(e.target.value)}>
+   <NativeSelectOption value="all">Alla projekt (endast Excel)</NativeSelectOption>
+   {data.projects.map(p=><NativeSelectOption key={p.id} value={p.id}>{p.code} · {p.name}</NativeSelectOption>)}
+  </NativeSelect></Field>}
+  <div className="rounded-xl bg-blue-50 p-3 text-sm text-blue-800">
+   Excel stödjer projekt, uppdrag, aktiviteter och resurstilldelning.
+   XML/MSPDI och MPX exporterar grundläggande aktivitets- och resursfält, men inte alla avancerade beroenden eller kalendrar.
+   Endast administratör kan exportera JSON för separat återställning. Vanliga medarbetare exporterar sin behörighetsavgränsade planering.
+  </div>
+  <DialogFooter><Button variant="outline" onClick={close}>Avbryt</Button><Button onClick={run}><Download/>Exportera</Button></DialogFooter>
+ </DialogContent></Dialog>;
+}
+function ImportDialog({open,close,fileRef,run,preview,canCommit,reset}:{
+ open:boolean;close:()=>void;fileRef:React.RefObject<HTMLInputElement|null>;
+ run:(commit:boolean)=>Promise<void>;
+ preview:null|{projectsCreated:number;peopleCreated:number;workPackagesCreated:number;activitiesCreated:number;activitiesUpdated:number;assignments:number;warnings:string[]};
+ canCommit:boolean;reset:()=>void;
+}){
+ return <Dialog open={open} onOpenChange={o=>{if(!o){reset();close()}}}><DialogContent className="sm:max-w-xl">
+  <DialogHeader><DialogTitle>Importera projektplanering</DialogTitle>
+   <DialogDescription>Excel XLSX, Microsoft Project XML/MSPDI eller MPX. CSV accepteras inte längre.
+    Personlig Excel v2 importeras i den separata veckoplaneringen.</DialogDescription></DialogHeader>
+  <Field label="Planeringsfil"><Input ref={fileRef} type="file" accept=".xlsx,.xml,.mpx" onChange={reset}/></Field>
+  <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+   Organisationsövergripande import kräver administratör. Förhandsgranskning gör inga ändringar.
+   Binära MPP-filer stöds inte ännu (MPXJ-konverterare saknas); exportera XML/MSPDI eller MPX i stället.
+   Kalender- och beroendedata som formatet inte kan mappa importeras inte.
+  </div>
+  {preview&&<div className="rounded-xl border p-3 text-sm">
+   <p><strong>Förhandsgranskning:</strong> {preview.projectsCreated} nya projekt, {preview.peopleCreated} nya medarbetare,
+    {preview.workPackagesCreated} nya uppdrag, {preview.activitiesCreated} nya aktiviteter,
+    {preview.activitiesUpdated} uppdaterade aktiviteter och {preview.assignments} resurskopplingar.</p>
+   {preview.warnings.map((w,i)=><p key={i} className="mt-1 text-amber-800">{w}</p>)}
+  </div>}
+  <DialogFooter><Button variant="outline" onClick={()=>{reset();close()}}>Avbryt</Button>
+   <Button variant="outline" onClick={()=>run(false)}><FileUp/>Förhandsgranska</Button>
+   <Button disabled={!canCommit} onClick={()=>run(true)}>Godkänn och importera</Button>
+  </DialogFooter>
+ </DialogContent></Dialog>;
+}

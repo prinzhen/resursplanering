@@ -1,0 +1,168 @@
+import {env} from "cloudflare:workers";
+import {sessionIdentity,unauthorized,forbidden,sameOrigin} from "@/lib/auth";
+import {accessScope,authorizePlanningAction} from "@/lib/permissions";
+import {normalizeISOWeek,parseDurationDays,WEEK_DAYS,type WeeklyV2Row} from "@/lib/weekly-xlsx-v2";
+import {scheduleDates} from "@/lib/activity-calendar";
+export const dynamic="force-dynamic";
+const db=()=>{if(!env.DB)throw Error("Databasen saknas");return env.DB};
+type Plan={rowKey:string;employeeId:number;activityId:number;week:string;weekday:number|null;durationDays:number;effort:number|null;hours:number|null;workType:string;status:string;priority:number|null;deadline:string|null;firstWeek:string;comment:string;moveReason:string;revision:number};
+const fields=["week","weekday","durationDays","effort","hours","workType","status","priority","deadline","firstWeek","comment","moveReason"] as const;
+const select="SELECT row_key rowKey,employee_id employeeId,activity_id activityId,iso_week week,weekday,duration_days durationDays,effort_percent effort,planned_hours hours,work_type workType,status,priority,deadline,first_planned_week firstWeek,comment,move_reason moveReason,revision FROM weekly_plan_rows";
+const safeDate=(x:string)=>!x||(/^\d{4}-\d{2}-\d{2}$/.test(x)&&!Number.isNaN(Date.parse(x+"T00:00:00Z"))&&new Date(x+"T00:00:00Z").toISOString().slice(0,10)===x);
+function parse(row:WeeklyV2Row,employeeId:number,activityId:number):Plan{
+ if(!/^[A-Za-z0-9_.:-]{5,180}$/.test(row.rowKey||""))throw Error("Radnyckel saknas i dold kolumn Q. Exportera ny XLSX.");
+ const weekday=row.day?WEEK_DAYS.findIndex(x=>x.toLowerCase()===row.day.trim().toLowerCase()):null;
+ if(weekday!==null&&weekday<1)throw Error("Ogiltig veckodag");
+ const effort=row.effort,hours=row.hours,priority=row.priority.trim()?Number(row.priority):null;
+ if(effort!==null&&(!Number.isFinite(effort)||effort<0||effort>100))throw Error("Insats måste vara 0–100 %");
+ if(hours!==null&&(!Number.isFinite(hours)||hours<0||hours>100000))throw Error("Planerade timmar är ogiltiga");
+ if(priority!==null&&(!Number.isInteger(priority)||priority<1||priority>5))throw Error("Prioritet ska vara 1–5");
+ if(!safeDate(row.deadline))throw Error("Ogiltigt datum i Klart senast");
+ const revision=Number(row.rowRevision??0);
+ if(!Number.isInteger(revision)||revision<0)throw Error("Ogiltig revision");
+ return {rowKey:row.rowKey!,employeeId,activityId,week:normalizeISOWeek(row.week),weekday,
+  durationDays:parseDurationDays(row.duration),effort,hours,workType:row.workType.trim().slice(0,100),
+  status:row.status.trim().slice(0,40)||"Planerad",priority,deadline:row.deadline||null,
+  firstWeek:normalizeISOWeek(row.firstWeek||row.week),comment:row.comment.slice(0,500),
+  moveReason:row.moveReason.slice(0,500),revision};
+}
+export async function GET(req:Request){
+ try{
+  const d=db(),user=await sessionIdentity(req,d);if(!user)return unauthorized();
+  const employeeId=Number(new URL(req.url).searchParams.get("employeeId"));
+  if(!Number.isSafeInteger(employeeId)||employeeId<1)return Response.json({error:"Medarbetare saknas"},{status:400});
+  const scope=await accessScope(d,user);if(!scope.employeeIds.has(employeeId))return forbidden();
+  const result=await d.prepare("SELECT w.row_key rowKey,w.employee_id employeeId,w.activity_id activityId,w.iso_week week,w.weekday,w.duration_days durationDays,w.effort_percent effort,w.planned_hours hours,w.work_type workType,w.status,w.priority,w.deadline,w.first_planned_week firstWeek,w.comment,w.move_reason moveReason,w.revision,a.project_id projectId,a.name task,p.code projectCode,p.name projectName FROM weekly_plan_rows w JOIN activities a ON a.id=w.activity_id JOIN projects p ON p.id=a.project_id WHERE w.employee_id=? ORDER BY w.iso_week,w.weekday,w.id LIMIT 5000").bind(employeeId).all<Record<string,unknown>>();
+  const identities=await d.prepare("SELECT s.activity_id activityId,a.project_id projectId,a.start_date startDate,a.end_date endDate,COALESCE(i.item_uid,'employee-'||s.employee_id||'-activity-'||s.activity_id) uid FROM assignments s JOIN activities a ON a.id=s.activity_id LEFT JOIN individual_form_items i ON i.employee_id=s.employee_id AND i.activity_id=s.activity_id WHERE s.employee_id=?").bind(employeeId).all<{activityId:number;projectId:number;startDate:string;endDate:string;uid:string}>();
+  return Response.json({rows:result.results.filter(r=>scope.projectIds.has(Number(r.projectId))),identities:identities.results.filter(x=>scope.projectIds.has(x.projectId)).map(({uid,activityId,startDate,endDate})=>({uid,activityId,startDate,endDate}))},{headers:{"cache-control":"no-store"}});
+ }catch(e){console.error(e);return Response.json({error:"Kunde inte läsa veckoplanering"},{status:500})}
+}
+export async function POST(req:Request){
+ try{
+  const d=db(),user=await sessionIdentity(req,d);if(!user)return unauthorized();if(!sameOrigin(req))return forbidden();
+  const body=await req.json() as {employeeId:number;rows:WeeklyV2Row[];commit?:boolean;acceptStaleRevisions?:boolean};
+  const employeeId=Number(body?.employeeId);
+  if(!Number.isSafeInteger(employeeId)||employeeId<1||!Array.isArray(body.rows)||body.rows.length>500)
+   return Response.json({error:"Ogiltig import (max 500 rader)"},{status:400});
+  const scope=await accessScope(d,user);if(!scope.employeeIds.has(employeeId))return forbidden();
+  const seen=new Set<string>(),activitiesSeen=new Set<number>();
+  const conflicts:{activityId:number;task:string;exportRevision:number;currentRevision:number}[]=[];
+  const changes:{value:Plan;before:Plan|null;action:"new"|"update"|"unchanged";oldStart:string;oldEnd:string;newStart:string;newEnd:string;updateDates:boolean;assignmentIds:number[]}[]=[];
+  for(const row of body.rows){
+   if(seen.has(row.rowKey||""))throw Error("Dubbel planeringsrad i filen");
+   seen.add(row.rowKey||"");
+   const match=/^(?:activity-(\d+)|employee-(\d+)-activity-(\d+))$/.exec(row.activityId);
+   if(!match||match[2]&&Number(match[2])!==employeeId)throw Error("Ogiltigt eller felkopplat aktivitets-ID: "+row.activityId);
+   const activityId=Number(match[1]||match[3]);
+   const a=await d.prepare("SELECT a.name,a.project_id projectId,p.code projectCode FROM assignments s JOIN activities a ON a.id=s.activity_id JOIN projects p ON p.id=a.project_id WHERE s.employee_id=? AND a.id=?").bind(employeeId,activityId).first<{name:string;projectId:number;projectCode:string}>();
+   if(!a||!scope.projectIds.has(a.projectId))return forbidden();
+   if(a.name.trim()!==row.task.trim()||a.projectCode.toUpperCase()!==row.projectCode.trim().toUpperCase())throw Error("Aktivitet/projektkod matchar inte aktivitets-ID");
+   if(!await authorizePlanningAction(d,user,"setAssignmentPeriods",{employeeId,activityId}))return forbidden();
+   if(activitiesSeen.has(activityId))throw Error("Samma aktivitet finns på flera rader. Exportera den nya mallen med en rad per aktivitet.");
+   activitiesSeen.add(activityId);
+   const value=parse(row,employeeId,activityId);
+   if(value.rowKey!=="plan-"+employeeId+"-"+activityId)
+    throw Error("Filens radnyckel kommer från en äldre flerradsmall. Exportera en ny XLSX med en rad per aktivitet.");
+   const dates=scheduleDates(row);
+   const original=await d.prepare("SELECT start_date startDate,end_date endDate FROM activities WHERE id=?").bind(activityId).first<{startDate:string;endDate:string}>();
+   if(!original)throw Error("Aktiviteten saknas.");
+   const before=await d.prepare(select+" WHERE row_key=?").bind(value.rowKey).first<Plan>();
+   if(before&&(before.employeeId!==employeeId||before.activityId!==activityId))throw Error("Radnyckeln hör till annan aktivitet");
+   // When start/day/duration changes, recompute planned hours if the user
+   // kept the previous hours unchanged. A deliberate edit to hours survives.
+   if(before&&value.effort!==null&&value.hours===before.hours&&
+      (value.week!==before.week||value.weekday!==before.weekday||value.durationDays!==before.durationDays)){
+    const total=(()=>{let days=0,d=new Date(dates.start+"T00:00:00Z"),end=new Date(dates.end+"T00:00:00Z");
+      while(d<=end){const wd=d.getUTCDay();if(wd!==0&&wd!==6)days++;d.setUTCDate(d.getUTCDate()+1)}
+      return Math.round(days*8*value.effort)/100})();
+    value.hours=total;
+   }
+
+   if(before&&before.revision!==value.revision){
+    conflicts.push({activityId,task:row.task,exportRevision:value.revision,currentRevision:before.revision});
+    // Preview must show the discrepancy rather than failing before user
+    // can inspect and explicitly choose the Excel estimate as authoritative.
+    if(body.commit&&!body.acceptStaleRevisions)
+     throw Error("Filen har äldre revisioner. Förhandsgranska konflikterna och bekräfta att Exceluppgifterna ska ersätta senaste planeringen.");
+   }
+   const updateDates=original.startDate!==dates.start||original.endDate!==dates.end;
+   const action=before?(fields.every(k=>(before[k]??null)===(value[k]??null))&&!updateDates?"unchanged":"update"):"new";
+   const ass=await d.prepare("SELECT id,employee_id employeeId,completed_at completedAt,start_date startDate,end_date endDate FROM assignments WHERE activity_id=?").bind(activityId).all<{id:number;employeeId:number;completedAt:string|null;startDate:string;endDate:string}>();
+   const assignmentIds=ass.results.map(a=>a.id);
+   if(updateDates){
+    if(ass.results.length>1&&!user.isAdmin&&!scope.projectLedIds.has(a.projectId))
+     throw Error("Aktiviteten delas av flera personer. Endast administratör eller projektledare får flytta gemensamma Gantt-datum.");
+    if(ass.results.some(x=>x.completedAt))
+     throw Error("Aktiviteten har avslutade tilldelningar. Ändra datumen i projektplaneringen efter särskild granskning.");
+    const periods=await d.prepare("SELECT s.id assignmentId,p.start_date startDate,p.end_date endDate FROM assignments s JOIN assignment_periods p ON p.assignment_id=s.id WHERE s.activity_id=?").bind(activityId).all<{assignmentId:number;startDate:string;endDate:string}>();
+    for(const a of ass.results){
+     const own=periods.results.filter(p=>p.assignmentId===a.id);
+     if(own.length>1)throw Error("Aktiviteten har flera historiska beläggningsperioder. Flytta inte datumen via Excel förrän periodhistoriken granskats.");
+     if(a.startDate!==original.startDate||a.endDate!==original.endDate||
+        own.some(p=>p.startDate!==original.startDate||p.endDate!==original.endDate))
+      throw Error("Aktiviteten har individuellt anpassade resursdatum. Ändra dem först i projektplaneringen för att inte förlora personens beläggning.");
+    }
+    if(before){
+     // weekly_plan_rows.duration_days contains a COUNT, not a duration
+     // semantic version. Rows written by the short-lived five-day release
+     // must be accepted when the persisted Gantt range matches either model.
+     const old=scheduleDates({week:before.week,day:WEEK_DAYS[before.weekday??0]||"",duration:before.durationDays+" dagar"});
+     const legacyEnd=new Date(old.start+"T00:00:00Z");
+     if(legacyEnd.getUTCDay()!==0&&legacyEnd.getUTCDay()!==6){
+      for(let remaining=before.durationDays-1;remaining>0;){
+       legacyEnd.setUTCDate(legacyEnd.getUTCDate()+1);
+       if(legacyEnd.getUTCDay()!==0&&legacyEnd.getUTCDay()!==6)remaining--;
+      }
+     }
+     const oldMatches=(old.start===original.startDate&&old.end===original.endDate)||
+       (old.start===original.startDate&&legacyEnd.toISOString().slice(0,10)===original.endDate);
+     if(!oldMatches&&(dates.start!==original.startDate||dates.end!==original.endDate)){
+      // Project Gantt may have moved without incrementing weekly_plan_rows
+      // revision. Present it as a conflict for explicit confirmation too.
+      if(!conflicts.some(c=>c.activityId===activityId))
+       conflicts.push({activityId,task:row.task,exportRevision:value.revision,currentRevision:before.revision});
+      if(body.commit&&!body.acceptStaleRevisions)
+       throw Error("Gantt-planen har ändrats sedan senaste Excelversionen. Förhandsgranska och välj om Excelprognosen ska ersätta plandatumen.");
+     }
+    }
+   }
+   changes.push({value,before,action,oldStart:original.startDate,oldEnd:original.endDate,
+    newStart:dates.start,newEnd:dates.end,updateDates,assignmentIds});
+  }
+  const preview={created:changes.filter(x=>x.action==="new").length,updated:changes.filter(x=>x.action==="update").length,unchanged:changes.filter(x=>x.action==="unchanged").length,...(conflicts.length?{conflicts}:{})};
+  if(!body.commit)return Response.json({preview,committed:false});
+  if(conflicts.length&&!body.acceptStaleRevisions)return Response.json({error:"Aktiviteter har nyare revisioner i verktyget. Bekräfta uttryckligen att Excel ska ersätta dem.",preview},{status:409});
+  const q:D1PreparedStatement[]=[];
+  for(const {value:x,before,action,updateDates,oldStart,oldEnd,newStart,newEnd,assignmentIds} of changes){
+   // Consolidate legacy per-week rows for this person/activity while retaining
+   // the immutable audit history under their former row keys.
+   q.push(d.prepare("DELETE FROM weekly_plan_rows WHERE employee_id=? AND activity_id=? AND row_key<>?")
+    .bind(x.employeeId,x.activityId,x.rowKey));
+   if(action==="unchanged"&&!updateDates)continue;
+   if(updateDates){
+    q.push(d.prepare("UPDATE activities SET start_date=?,end_date=? WHERE id=? AND start_date=? AND end_date=?")
+      .bind(newStart,newEnd,x.activityId,oldStart,oldEnd));
+    // Keep one-period assignments synchronized, but do not rewrite historical
+    // multi-period assignments or modify actual time entries.
+    q.push(d.prepare("UPDATE assignments SET start_date=CASE WHEN start_date=? THEN ? ELSE start_date END,end_date=CASE WHEN end_date=? THEN ? ELSE end_date END,original_end_date=CASE WHEN original_end_date=? THEN ? ELSE original_end_date END WHERE activity_id=? AND completed_at IS NULL")
+      .bind(oldStart,newStart,oldEnd,newEnd,oldEnd,newEnd,x.activityId));
+    for(const assignmentId of assignmentIds)
+     q.push(d.prepare("UPDATE assignment_periods SET start_date=?,end_date=? WHERE assignment_id=? AND start_date=? AND end_date=? AND (SELECT COUNT(*) FROM assignment_periods WHERE assignment_id=?)=1")
+       .bind(newStart,newEnd,assignmentId,oldStart,oldEnd,assignmentId));
+   }
+   if(action==="unchanged")continue;
+   const revision=before?before.revision+1:1;
+   if(before){
+    q.push(d.prepare("UPDATE weekly_plan_rows SET iso_week=?,weekday=?,duration_days=?,effort_percent=?,planned_hours=?,work_type=?,status=?,priority=?,deadline=?,first_planned_week=?,comment=?,move_reason=?,revision=?,updated_at=CURRENT_TIMESTAMP WHERE row_key=? AND revision=?")
+    .bind(x.week,x.weekday,x.durationDays,x.effort,x.hours,x.workType,x.status,x.priority,x.deadline,x.firstWeek,x.comment,x.moveReason,revision,x.rowKey,before.revision));
+   }else{
+    q.push(d.prepare("INSERT INTO weekly_plan_rows(row_key,employee_id,activity_id,iso_week,weekday,duration_days,effort_percent,planned_hours,work_type,status,priority,deadline,first_planned_week,comment,move_reason,revision) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1)")
+    .bind(x.rowKey,x.employeeId,x.activityId,x.week,x.weekday,x.durationDays,x.effort,x.hours,x.workType,x.status,x.priority,x.deadline,x.firstWeek,x.comment,x.moveReason));
+   }
+   q.push(d.prepare("INSERT INTO weekly_plan_row_history(row_key,revision,action,before_json,after_json,changed_by_account_id) VALUES(?,?,?,?,?,?)")
+    .bind(x.rowKey,revision,action,before?JSON.stringify(before):null,JSON.stringify({...x,revision}),user.accountId));
+  }
+  if(q.length)await d.batch(q);
+  return Response.json({preview,committed:true});
+ }catch(e){console.error(e);return Response.json({error:e instanceof Error?e.message:"Importen misslyckades"},{status:400})}
+}

@@ -11,9 +11,21 @@ import {tmpdir} from "node:os";
 import {join} from "node:path";
 import {setTimeout as sleep} from "node:timers/promises";
 import {DatabaseSync} from "node:sqlite";
+import {createServer} from "node:net";
 
 const dir=await mkdtemp(join(tmpdir(),"resursplanering-roles-"));
-const port=32141,base=`http://127.0.0.1:${port}`;
+// Do not reuse a fixed port: a leftover Wrangler worker from a cancelled
+// test could answer HTTP 200 while this instance has no SQLite database.
+const port=await new Promise((resolve,reject)=>{
+ const listener=createServer();
+ listener.once("error",reject);
+ listener.listen(0,"127.0.0.1",()=>{
+  const address=listener.address();
+  const number=typeof address==="object"&&address?address.port:null;
+  listener.close(error=>error?reject(error):resolve(number));
+ });
+});
+const base=`http://127.0.0.1:${port}`;
 const password="CI-Role-Matrix-Only!2026";
 let logs="";
 let passes=0;
@@ -27,7 +39,11 @@ for(const stream of [server.stdout,server.stderr])stream.on("data",chunk=>{
  if(logs.length>75000)logs=logs.slice(-75000);
 });
 function check(label,fn){fn();passes++;console.log("PASS role-matrix:",label)}
-async function api(cookie,path,body){
+async function api(cookie,path,body,{retryKnownDenied=false}={}){
+ // Only safe reads, read-only previews, and explicit EXPECTED denial checks
+ // may retry if Wrangler returns a transient worker-restarted HTTP 503.
+ // Mutating POST requests are deliberately NOT replayed.
+
  const options={headers:{"accept":"application/json"}};
  if(cookie)options.headers.cookie=cookie;
  if(body!==undefined){
@@ -35,8 +51,23 @@ async function api(cookie,path,body){
   options.headers["content-type"]="application/json";
   options.body=JSON.stringify(body);
  }
- const response=await fetch(base+path,options);
- const raw=await response.text();
+ const safeRetry=body===undefined||body?.commit===false||retryKnownDenied;
+ let response,raw="";
+ for(let attempt=0;attempt<(safeRetry?3:1);attempt++){
+  try{
+   response=await fetch(base+path,{...options,signal:AbortSignal.timeout(15000)});
+   raw=await response.text();
+  }catch(e){
+   if(safeRetry&&attempt<2){await sleep(500);continue}
+   throw Error("HTTP-testet misslyckades på "+path+": "+String(e));
+  }
+  if(safeRetry&&response.status===503&&raw.includes("worker restarted mid-request")&&attempt<2){
+   console.warn("Transient Wrangler restart for "+path+" (retry "+(attempt+1)+"/2)");
+   await sleep(800);continue
+  }
+  break;
+ }
+ if(!response)throw Error("Ingen HTTP-respons på "+path);
  let value;
  try{value=JSON.parse(raw)}catch{throw Error(`Non-JSON response for ${path} HTTP ${response.status}: ${raw.slice(0,500)}`)}
  return {status:response.status,data:value};
@@ -79,7 +110,23 @@ try{
   try{if((await fetch(base+"/api/auth",{signal:AbortSignal.timeout(1200)})).status===200){ready=true;break}}catch{}
   await sleep(1000);
  }
- if(!ready)throw Error("Isolated test server failed to become ready");
+ if(!ready)throw Error("Isolated test server failed to become ready: "+logs.slice(-4000));
+ // HTTP readiness alone is not enough: make sure THIS test instance completed
+ // its SQLite migrations. Do not provision accounts against a missing file.
+ let dbReady=false;
+ for(let i=0;i<30;i++){
+  if(server.exitCode!==null)throw Error("Test server exited while waiting for SQLite: "+logs.slice(-4000));
+  try{
+   const location=await onlyDatabase(join(dir,"data"));
+   const probe=new DatabaseSync(location,{readOnly:true});
+   try{
+    dbReady=!!probe.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='user_accounts'").get();
+   }finally{probe.close()}
+   if(dbReady)break;
+  }catch{}
+  await sleep(250);
+ }
+ if(!dbReady)throw Error("Isolated SQLite database was not initialized before admin provisioning. Port "+port+"; server logs: "+logs.slice(-4000));
  const provision=spawnSync("python3",["scripts/provision-account.py","--data-dir",join(dir,"data"),"--email","role-admin@example.se","--admin","--password-stdin"],{input:password+"\n",encoding:"utf8"});
  if(provision.status!==0)throw Error("Admin provisioning failed: "+provision.stdout+" "+provision.stderr);
  const anon=await api("","/api/quick-activity");
@@ -100,7 +147,7 @@ try{
   assert.deepEqual(noLinkCatalog.projects.map(p=>p.id).sort((a,b)=>a-b),[...projectIds].sort((a,b)=>a-b));
   assert.equal(noLinkCatalog.needsEmployeeLink,true);
  });
- const invalidBeforeLink=await api(admin,"/api/quick-activity",{projectId:1,name:"Nekad utan person",description:"Spårbarhet",startDate:"2026-11-10",endDate:"2026-11-20"});
+ const invalidBeforeLink=await api(admin,"/api/quick-activity",{projectId:1,name:"Nekad utan person",description:"Spårbarhet",startDate:"2026-11-10",endDate:"2026-11-20"},{retryKnownDenied:true});
  check("Unlinked admin cannot create untraceable activity",()=>assert.equal(invalidBeforeLink.status,403));
  await ok(admin,"/api/data",{action:"employee",name:"Rolltest Admin",email:"role-admin@example.se",role:"Administratör",capacityPercent:100});
  const linked=await ok(admin,"/api/data");
@@ -137,6 +184,121 @@ try{
  const leader=await connected("erik@example.se");
  const ordinary=await connected("sara@example.se");
  const nonmember=await connected("johan@example.se");
+ // Generic multi-project import must not bypass RBAC via direct HTTP POST.
+ const multiProjectRow={
+  record_type:"activity",project_code:"TEST-XCH",project_name:"Utbyte test",
+  work_package_code:"",work_package_name:"",activity_code:"XCH-01",activity:"Planerad integration",
+  parent_activity_code:"",description:"Behörighetstest",start_date:"2026-11-16",end_date:"2026-11-20",
+  estimated_hours:"20",status:"Planerad",employee_email:"sara@example.se",
+  employee_name:"Sara Berg",effort_percent:"50"
+ };
+ // Explicit v2 Excel permission matrix: all tests use a disposable database.
+ const weeklyBootstrap="/api/weekly-v2/bootstrap";
+ const newWeeklyRow={week:"2026-V47",day:"Måndag",task:"Nytt veckouppdrag",duration:"3 veckor",
+  effort:50,workType:"Projekt",hours:60,status:"Planerad",priority:"3",deadline:"",
+  projectCode:"WK-ACCESS",projectName:"Veckotest åtkomst",firstWeek:"2026-V47",
+  comment:"",moveReason:"",activityId:"",rowKey:"",rowRevision:0};
+ const workbook={name:"Ny Excelmedarbetare",email:"new-excel-role@example.se",rows:[newWeeklyRow]};
+ const anonWeekly=await api("",weeklyBootstrap,{...workbook,commit:true},{retryKnownDenied:true});
+ check("Anonymous cannot create weekly Excel records",()=>assert.equal(anonWeekly.status,401));
+ for(const [role,cookie] of [["ORDINARY STAFF",ordinary],["PROJECT/TEAM LEADER",leader],["NONMEMBER",nonmember]]){
+  const denied=await api(cookie,weeklyBootstrap,{...workbook,commit:true},{retryKnownDenied:true});
+  check(role+" cannot create unscoped employee via v2",()=>assert.equal(denied.status,403));
+ }
+ const snapshotWeeklyBefore=await ok(admin,"/api/data");
+ const previewWeekly=await ok(admin,weeklyBootstrap,{...workbook,commit:false});
+ check("ADMIN preview accurately counts missing person, project and activity",()=>{
+  assert.equal(previewWeekly.preview.employeesCreated,1);
+  assert.equal(previewWeekly.preview.projectsCreated,1);
+  assert.equal(previewWeekly.preview.activitiesCreated,1);
+ });
+ const snapshotWeeklyPreview=await ok(admin,"/api/data");
+ check("Weekly preview is read-only",()=>{
+  assert.deepEqual(snapshotWeeklyPreview.employees,snapshotWeeklyBefore.employees);
+  assert.deepEqual(snapshotWeeklyPreview.projects,snapshotWeeklyBefore.projects);
+  assert.deepEqual(snapshotWeeklyPreview.activities,snapshotWeeklyBefore.activities);
+ });
+ const invalidWeekly=await api(admin,weeklyBootstrap,{...workbook,
+  rows:[newWeeklyRow,{...newWeeklyRow,task:"Invalid second row",week:"2026-V99"}],commit:true});
+ check("Malformed weekly row rejects entire requested creation",()=>assert.equal(invalidWeekly.status,400));
+ const afterInvalidWeekly=await ok(admin,"/api/data");
+ check("Invalid weekly workbook creates neither person nor project",()=>{
+  assert.equal(afterInvalidWeekly.employees.some(p=>p.email===workbook.email),false);
+  assert.equal(afterInvalidWeekly.projects.some(p=>p.code==="WK-ACCESS"),false);
+ });
+ const managerWorkbook={name:"Ny gruppmedarbetare",email:"new-group-role@example.se",
+  rows:[{...newWeeklyRow,task:"Gruppchefens veckouppdrag",projectCode:"WK-MANAGER",projectName:"Chefprojekt"}]};
+ const managerPreview=await ok(manager,weeklyBootstrap,{...managerWorkbook,commit:false});
+ check("GROUP MANAGER may preview own new employee and project",()=>{
+  assert.equal(managerPreview.preview.employeesCreated,1);
+  assert.equal(managerPreview.preview.projectsCreated,1);
+ });
+ await ok(manager,weeklyBootstrap,{...managerWorkbook,commit:true});
+ const managerCreated=await ok(admin,"/api/data");
+ check("GROUP MANAGER new person assigned to importing group",()=>{
+  const created=managerCreated.employees.find(p=>p.email===managerWorkbook.email);
+  assert.ok(created);
+  assert.equal(created.managerId,anna);
+ });
+ const managerScope=await ok(manager,"/api/data");
+ check("GROUP MANAGER sees newly registered employee",()=>{
+  assert.ok(managerScope.employees.some(p=>p.email===managerWorkbook.email));
+ });
+ await ok(admin,weeklyBootstrap,{...workbook,commit:true});
+ const afterWeekly=await ok(admin,"/api/data");
+ check("ADMIN weekly import creates full three-week activity",()=>{
+  const project=afterWeekly.projects.find(p=>p.code==="WK-ACCESS");
+  const task=afterWeekly.activities.find(a=>a.projectId===project?.id&&a.name===newWeeklyRow.task);
+  assert.ok(task);
+  assert.equal(task.startDate,"2026-11-16");
+  assert.equal(task.endDate,"2026-12-06");
+ });
+ const exchangeUrl="/api/planning-exchange";
+ const anonymousExchange=await api("",exchangeUrl,{rows:[multiProjectRow],commit:true},{retryKnownDenied:true});
+ check("Anonymous bulk exchange is denied",()=>assert.equal(anonymousExchange.status,401));
+ for(const [role,cookie] of [["GROUP MANAGER",manager],["PROJECT/TEAM LEADER",leader],["ORDINARY STAFF",ordinary],["NONMEMBER",nonmember]]){
+  const denied=await api(cookie,exchangeUrl,{rows:[multiProjectRow],commit:true},{retryKnownDenied:true});
+  check(role+" cannot bypass bulk-import rights with direct API call",()=>assert.equal(denied.status,403));
+ }
+ const beforePreview=await ok(admin,"/api/data");
+ const safePreview=await ok(admin,exchangeUrl,{rows:[multiProjectRow],commit:false});
+ check("ADMIN preview describes new project and activity without changing database",()=>{
+  assert.equal(safePreview.preview.projectsCreated,1);
+  assert.equal(safePreview.preview.activitiesCreated,1);
+  assert.equal(safePreview.committed,false);
+ });
+ const previewSnapshot=await ok(admin,"/api/data");
+ check("Preview is read-only and creates no employee, project or activity",()=>{
+  assert.deepEqual(previewSnapshot.projects,beforePreview.projects);
+  assert.deepEqual(previewSnapshot.activities,beforePreview.activities);
+  assert.deepEqual(previewSnapshot.employees,beforePreview.employees);
+ });
+ const invalidBulk=[multiProjectRow,{...multiProjectRow,activity_code:"XCH-02",activity:"Invalid row",start_date:"2026-11-31"}];
+ const refused=await api(admin,exchangeUrl,{rows:invalidBulk,commit:true},{retryKnownDenied:true});
+ check("Invalid bulk import is rejected before any writes",()=>assert.equal(refused.status,400));
+ const afterInvalid=await ok(admin,"/api/data");
+ check("Invalid date cannot partially create project or activities",()=>assert.ok(!afterInvalid.projects.some(p=>p.code==="TEST-XCH")));
+ const committed=await ok(admin,exchangeUrl,{rows:[multiProjectRow],commit:true});
+ check("ADMIN can commit validated ordinary project exchange",()=>assert.equal(committed.committed,true));
+ const afterExchange=await ok(admin,"/api/data");
+ const importedProject=afterExchange.projects.find(p=>p.code==="TEST-XCH");
+ const importedTask=afterExchange.activities.find(a=>a.projectId===importedProject?.id&&a.code==="XCH-01");
+ check("Atomic import creates exactly one new project, activity and assignment",()=>{
+  assert.ok(importedProject&&importedTask);
+  assert.equal(afterExchange.projects.filter(p=>p.code==="TEST-XCH").length,1);
+  assert.equal(afterExchange.assignments.filter(a=>a.activityId===importedTask.id&&a.employeeId===sara).length,1);
+  const importedAssignment=afterExchange.assignments.find(a=>a.activityId===importedTask.id&&a.employeeId===sara);
+  assert.equal(afterExchange.assignmentPeriods.filter(p=>p.assignmentId===importedAssignment.id).length,1);
+  assert.ok(afterExchange.projectMembers.some(p=>p.employeeId===sara&&p.projectId===importedProject.id));
+ });
+ await ok(admin,exchangeUrl,{rows:[multiProjectRow],commit:true});
+ const afterRepeat=await ok(admin,"/api/data");
+ check("Importing same activity twice is idempotent",()=>{
+  assert.equal(afterRepeat.activities.filter(a=>a.projectId===importedProject.id&&a.code==="XCH-01").length,1);
+  assert.equal(afterRepeat.assignments.filter(a=>a.activityId===importedTask.id&&a.employeeId===sara).length,1);
+ });
+ const noCsv=await api(admin,"/api/data",{action:"import",rows:[multiProjectRow]},{retryKnownDenied:true});
+ check("Legacy CSV import cannot bypass the reviewed exchange workflow",()=>assert.equal(noCsv.status,410));
  const managerState=await ok(manager,"/api/data");
  check("GROUP MANAGER role is retained with real employee identity",()=>{
   assert.equal(managerState.viewer.isGroupManager,true);
@@ -169,7 +331,7 @@ try{
   assert.ok(!normalCatalog.projects.some(p=>p.id===2));
  });
  const deniedProject=await api(ordinary,"/api/quick-activity",{projectId:2,recipientId:erik,name:"Förbjudet annan projekttillhörighet",
-  description:"Ska nekas",startDate:"2026-11-10",endDate:"2026-11-20",effortPercent:30});
+  description:"Ska nekas",startDate:"2026-11-10",endDate:"2026-11-20",effortPercent:30},{retryKnownDenied:true});
  check("ORDINARY STAFF cannot bypass project membership with direct POST",()=>assert.equal(deniedProject.status,403));
  const ordinarySelf=await ok(ordinary,"/api/quick-activity",{projectId:1,name:"Egen rolltest aktivitet",
   description:"Egen aktivitet av vanlig anställd",startDate:"2026-11-10",endDate:"2026-11-20",effortPercent:20});
@@ -206,7 +368,7 @@ try{
  const inbox=await ok(nonmember,"/api/requests");
  const pendingRequest=inbox.requests.find(r=>r.activityId===adminProposal.activityId&&r.recipientId===johan&&r.status==="pending");
  check("Recipient sees proposal addressed to them",()=>assert.ok(pendingRequest));
- const illegalApproval=await api(admin,"/api/requests",{action:"answer",id:pendingRequest.id,approve:true});
+ const illegalApproval=await api(admin,"/api/requests",{action:"answer",id:pendingRequest.id,approve:true},{retryKnownDenied:true});
  check("ADMIN cannot approve proposal on someone else's behalf",()=>assert.equal(illegalApproval.status,403));
  await ok(nonmember,"/api/requests",{action:"answer",id:pendingRequest.id,approve:true});
  const approved=await ok(admin,"/api/data");
@@ -217,10 +379,10 @@ try{
  // Fallback for real-world legacy administrators: a separate login owns the
  // SAME person record, while the old administrator login keeps its privileges.
  const deniedWorkLogin=await api(ordinary,"/api/access",{action:"createPersonalLogin",employeeId:sara,
-  email:"new-staff@example.se",password:"A long temporary passphrase 2026",isGroupManager:false,projectIds:[1]});
+  email:"new-staff@example.se",password:"A long temporary passphrase 2026",isGroupManager:false,projectIds:[1]},{retryKnownDenied:true});
  check("ORDINARY STAFF cannot create personal logins",()=>assert.equal(deniedWorkLogin.status,403));
  const duplicateWorker=await api(admin,"/api/access",{action:"createPersonalLogin",employeeId:sara,
-  email:"sara-second@example.se",password:"A long temporary passphrase 2026",projectIds:[1]});
+  email:"sara-second@example.se",password:"A long temporary passphrase 2026",projectIds:[1]},{retryKnownDenied:true});
  check("ADMIN cannot steal a person from an existing standard login",()=>assert.equal(duplicateWorker.status,409));
  const identityBeforeSplit=await ok(admin,"/api/access");
  const staffBeforeSplit=approved.employees.filter(e=>e.id===adminPerson.id);
@@ -267,7 +429,7 @@ try{
  await ok(admin,"/api/access",{action:"setEmployeePassword",employeeId:adminPerson.id,password:changedWorkPassword});
  const oldWorkSession=await api(workCookie,"/api/data");
  check("Resetting work login password invalidates previous work sessions",()=>assert.equal(oldWorkSession.status,401));
- const originalWorkLogin=await api("","/api/auth",{action:"login",email:"role-admin-work@example.se",password});
+ const originalWorkLogin=await api("","/api/auth",{action:"login",email:"role-admin-work@example.se",password},{retryKnownDenied:true});
  check("Old work password is revoked",()=>assert.equal(originalWorkLogin.status,401));
  const recoveredAuth=await api("","/api/auth",{action:"login",email:"role-admin-work@example.se",password:changedWorkPassword});
  check("Dedicated work login can reset password without claiming admin email",()=>assert.equal(recoveredAuth.status,200));
@@ -277,10 +439,10 @@ try{
   assert.equal(afterResetAccounts.accounts.find(x=>x.email==="role-admin-work@example.se")?.employeeId,adminPerson.id);
  });
  const badPassword=await api(admin,"/api/access",{action:"createPersonalLogin",employeeId:anna,
-  email:"weak@example.se",password:"short",projectIds:[1]});
+  email:"weak@example.se",password:"short",projectIds:[1]},{retryKnownDenied:true});
  check("Password shorter than 12 characters is denied for new login",()=>assert.equal(badPassword.status,400));
  const workConflict=await api(admin,"/api/access",{action:"createPersonalLogin",employeeId:adminPerson.id,
-  email:"another-personal@example.se",password:password,projectIds:[1]});
+  email:"another-personal@example.se",password:password,projectIds:[1]},{retryKnownDenied:true});
  check("Admin cannot duplicate the existing personal account",()=>assert.equal(workConflict.status,409));
 
  // Work-time reporting regression suite, using the SAME isolated database.
@@ -301,11 +463,11 @@ try{
   assert.equal(ticking.employeeId,sara);
   assert.ok(Math.abs(ticking.startedAt-timeRunning.serverTime)<5);
  });
- const duplicateTimer=await api(ordinary,"/api/time-entries",{action:"start",activityId:1});
+ const duplicateTimer=await api(ordinary,"/api/time-entries",{action:"start",activityId:1},{retryKnownDenied:true});
  check("Only one active timer can exist per employee",()=>assert.equal(duplicateTimer.status,409));
- const foreignStop=await api(leader,"/api/time-entries",{action:"stop",id:ticking.id});
+ const foreignStop=await api(leader,"/api/time-entries",{action:"stop",id:ticking.id},{retryKnownDenied:true});
  check("Other employee cannot stop a colleague's timer",()=>assert.equal(foreignStop.status,409));
- const forbiddenTimeActivity=await api(ordinary,"/api/time-entries",{action:"manual",activityId:2,workDate:"2026-11-02",durationMinutes:30});
+ const forbiddenTimeActivity=await api(ordinary,"/api/time-entries",{action:"manual",activityId:2,workDate:"2026-11-02",durationMinutes:30},{retryKnownDenied:true});
  check("Staff cannot log hours on unauthorized projects",()=>assert.equal(forbiddenTimeActivity.status,403));
  await ok(ordinary,"/api/time-entries",{action:"stop",id:ticking.id});
  const timeStopped=await ok(ordinary,"/api/time-entries");
@@ -316,7 +478,7 @@ try{
  });
  const otherView=await ok(leader,"/api/time-entries");
  check("Individual staff cannot read another person's tracked time",()=>assert.ok(!otherView.entries.some(e=>e.id===ticking.id)));
- const otherChange=await api(leader,"/api/time-entries",{action:"update",id:ticking.id,workDate:"2026-11-02",durationMinutes:60});
+ const otherChange=await api(leader,"/api/time-entries",{action:"update",id:ticking.id,workDate:"2026-11-02",durationMinutes:60},{retryKnownDenied:true});
  check("Individual staff cannot modify another person's hours",()=>assert.equal(otherChange.status,404));
  await ok(ordinary,"/api/time-entries",{action:"update",id:ticking.id,workDate:"2026-11-02",durationMinutes:90,note:"Korrigerade timmar"});
  const correctedTime=await ok(ordinary,"/api/time-entries");
@@ -334,7 +496,7 @@ try{
   assert.equal(manualTime.durationSeconds,4500);
   assert.equal(manualTime.workDate,"2026-11-03");
  });
- const anonymousDelete=await api(leader,"/api/time-entries",{action:"delete",id:manualTime.id});
+ const anonymousDelete=await api(leader,"/api/time-entries",{action:"delete",id:manualTime.id},{retryKnownDenied:true});
  check("Other employees cannot delete time reporting history",()=>assert.equal(anonymousDelete.status,404));
  await ok(ordinary,"/api/time-entries",{action:"delete",id:manualTime.id});
  const afterDelete=(await ok(ordinary,"/api/time-entries")).entries;
@@ -553,6 +715,24 @@ try{
    assert.equal(afterActivityMove.prepare("PRAGMA foreign_key_check").all().length,0);
   });
  }finally{afterActivityMove.close()}
+ // A normal employee can submit unclassified work to the internal
+ // catch-all without administrative rights or an existing project membership.
+ const orphanWork={name:"Sara Berg",email:"sara@example.se",rows:[{
+  week:"2026-V48",day:"Måndag",task:"Oklassificerat veckouppdrag för Sara",
+  duration:"1v",effort:50,workType:"Projekt",hours:null,status:"Planerad",
+  priority:"3",deadline:"",projectCode:"",projectName:"",firstWeek:"2026-V48",
+  comment:"Behöver senare klassificeras",moveReason:"",activityId:"",rowKey:"",rowRevision:0
+ }]};
+ const unclassifiedPreview=await ok(ordinary,"/api/weekly-v2/bootstrap",{...orphanWork,commit:false});
+ check("ORDINARY STAFF may report work without project",()=>{
+  assert.equal(unclassifiedPreview.preview.assignedToInternal,1);
+ });
+ const unclassifiedSave=await ok(ordinary,"/api/weekly-v2/bootstrap",{...orphanWork,commit:true});
+ check("ORDINARY STAFF can create their OWN internal unclassified activity",()=>{
+  assert.equal(unclassifiedSave.verified,true);
+  assert.equal(unclassifiedSave.registered.length,1);
+  assert.equal(unclassifiedSave.registered[0].projectCode,"INTERNAL-OVR");
+ });
  const db=new DatabaseSync(await onlyDatabase(join(dir,"data")),{readOnly:true});
  try{
   check("Time adjustments are audited, including delete",()=>{

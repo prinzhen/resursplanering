@@ -649,6 +649,98 @@ körs och att `GET /api/data` innehåller projekt. Snabbformuläret
 hämtar nu också valbara projekt oberoende via `GET /api/quick-activity`
 och visar ett separat meddelande om kontot saknar medarbetarkoppling.
 
+## Release-test: roller, Excel v2 och vanlig import/export
+
+Kör den samlade sviten efter en byggning. Testerna startar **egna temporära
+SQLite/D1-instanser** och använder inte driftens port 3000 eller databas.
+Kör **inte** med `TEST_DATA_SOURCE` satt.
+
+```bash
+cd /opt/resursplanering-weekly-v2
+node scripts/test-release-readiness.mjs
+# För kortare regressionstest:
+node scripts/test-release-readiness.mjs --quick
+```
+
+Resultat skrivs i `test-release-readiness-report.json` och kommandot returnerar
+exitkod 1 vid ett misslyckat test. Komplett körning täcker separat
+roll-/behörighetsmatris (admin, gruppchef, projektledare, TEAM-ledare,
+medarbetare, obehörig), personlig XLSX v2, skapande av person/projekt/
+aktivitet, dubbelimport, dateringar, Gantt, beläggning, historik,
+återställning, tidrapportering och vanlig projektutbytesimport.
+
+### Vanlig import/export (inte personlig veckoplanering)
+
+| Format | Import | Export | Begränsning |
+|---|---|---|---|
+| Excel `.xlsx` | Ja | Ja | Projekt, uppdrag, aktiviteter och resurser |
+| MS Project XML/MSPDI `.xml` | Ja | Ja | Avancerade kalendrar/beroenden representeras inte fullt ut |
+| MS Project Exchange `.mpx` | Ja | Ja | Grundläggande aktivitetsfält |
+| JSON `.json` | Separat återställningsflöde | Admin, säkerhetskopia | Inte vanlig projektimport |
+| Binär MS Project `.mpp` | Nej | Nej | Kräver separat MPXJ-konverterare |
+| CSV `.csv` | Nej | Nej | Avvecklat för projektplaneringsutbyte |
+
+**Obs:** Tidrapporteringsmodulen har en separat CSV-export som inte är
+en del av projektplaneringens vanliga import/export.
+
+**Projekt saknas i personlig Excel v2:** Nya aktivitetsrader utan
+projektkod läggs automatiskt i det interna uppsamlingsprojektet
+`Övrigt arbete` (`INTERNAL-OVR`). Om projektet saknas skapas det
+vid godkänd import. Förhandsgranskningen visar hur många aktiviteter
+som hamnar där. Aktivitetens namn, datum, timmar, prioritet och
+medarbetartilldelning bevaras så att den senare kan klassificeras
+om till ett riktigt projekt via projektredigering. Vid återimport
+används samma interna projekt och tidigare aktivitet matchas för
+att undvika dubbletter.
+
+**Organisationsgräns:** Nuvarande databasschema saknar separat
+`organization_id` på medarbetare och projekt. Uppsamlingsprojektet
+gäller därför den aktuella planeringsinstallationen (en organisation
+per databas); automatisk uppdelning i olika organisationer inom
+samma databas kräver en separat schema-/behörighetsutökning.
+
+Personlig Excel v2 används under `/weekly-v2`: namn och e-post identifierar
+medarbetaren, nya aktivitetsrader saknar ID och kan skapas via v1:s
+behörighetskontroller. Aktivitetens startvecka, startdag och varaktighet
+bestämmer alltid Gantt-datum.
+
+**XLSX v2 – fliken Beläggning:** Personliga Excel-exporter innehåller två
+blad: `Veckoplanering` med de 16 importbara aktivitetskolumnerna och
+`Beläggning` med veckoupplösning (föregående vecka, aktuell vecka och
+26 kommande veckor). Beläggningen visas per vecka i procent, beräknade
+timmar och ledig kapacitet mot 40 timmar/vecka och färgmarkeras (<80 %,
+80–100 %, >100 %). Beräkningen är enbart Excel-formler som läser samma
+arbetsboks aktivitetsblad och räknas om när startvecka, startdag,
+varaktighet eller insats ändras. 1 kalendervecka är 7 dagar för
+Gantt-datum; beläggning omfattar endast måndag–fredag. `Insats` används
+först som veckans beläggningsgrad; om den är tom kan `Planerade timmar`
+fördelas jämnt över aktivitetens arbetsdagar. Fliken `Beläggning` kan
+inte importera data till databasen och läses aldrig av v2-importen.
+Interna Excel-hjälpformler i dold metadata används endast för översikten.
+
+**Kalenderdagar för Gantt och Excel v2:** `1v` = 7 kalenderdagar,
+`1v3d` = 10 kalenderdagar och `10` / `10d` = 10 kalenderdagar.
+Varaktigheten kan börja och sluta på helger. Beläggning och beräknade
+arbetstimmar räknar fortfarande normalt bara måndag–fredag (8 h/dag,
+40 h/vecka). Nya XLSX-filer får dold märkning `KALENDERDAGAR-7`.
+Tidigare 7-dagarsfiler läses som tidigare och filer märkta
+`ARBETSDAGAR-5` översätts till motsvarande faktiska kalenderperiod.
+Databasens redan sparade start/slutdatum ändras inte vid uppgradering.
+Vid Excelimport kontrolleras äldre varaktigheter mot både 5- och 7-dagarsmodellen
+för att förhindra falska Gantt-konflikter; verkliga datumkonflikter stoppas.
+
+Vid import av en ny prognos har Excelradens vecka, dag och varaktighet
+företräde framför äldre Gantt-datum efter användarens godkännande.
+Om filens radrevision eller Gantt-baslinje skiljer sig från databasens visar
+förhandsgranskningen exakt vilka aktiviteter som berörs och kräver att
+användaren uttryckligen markerar att Exceluppgifterna får ersätta
+senast sparad planering. Dessa överskrivningar revisionsloggas. Importen
+får inte automatiskt kringgå historiska eller delade resursperioder.
+
+Blandad v2-import som både skapar nya objekt och uppdaterar befintliga sker
+ännu i två API-steg. En lyckad isolerad testsvit ersätter därför **inte**
+kravet på en enda databastransaktion för dessa två steg före produktionssättning.
+
 ## Lokal utveckling
 
 Kräver Node.js 22.13 eller senare och pnpm.
