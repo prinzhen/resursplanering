@@ -8,7 +8,7 @@ export const PLAN_COLUMNS=["record_type","project_code","project_name","work_pac
  "activity_code","activity","parent_activity_code","description","start_date","end_date",
  "estimated_hours","status","employee_email","employee_name","effort_percent"] as const;
 export type ExchangeRow=Record<(typeof PLAN_COLUMNS)[number],string>;
-type Named={id:number;name:string;[key:string]:unknown};
+type Named={id:number;name:string};
 export type PlanningSnapshot={
  projects:Array<Named&{code:string}>;
  workPackages:Array<Named&{projectId:number;code:string}>;
@@ -28,7 +28,7 @@ export function exchangeRows(data:PlanningSnapshot):ExchangeRow[]{
   const matches=attached.length?attached:[null];
   for(const assignment of matches){
    const person=assignment?people.get(assignment.employeeId):null;
-   rows.push(Object.fromEntries(Object.keys(PLAN_COLUMNS).length?PLAN_COLUMNS.map(k=>[k,""]):[]) as ExchangeRow);
+   rows.push(Object.fromEntries(PLAN_COLUMNS.map(k=>[k,""])) as ExchangeRow);
    const row=rows.at(-1)!;
    Object.assign(row,{record_type:"activity",project_code:p.code,project_name:p.name,
     work_package_code:w?.code||"",work_package_name:w?.name||"",
@@ -47,7 +47,6 @@ export function exchangeRows(data:PlanningSnapshot):ExchangeRow[]{
 }
 const e=(s:unknown)=>String(s??"").replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;").replaceAll('"',"&quot;");
 const textCell=(ref:string,val:string)=>'<c r="'+ref+'" t="inlineStr"><is><t xml:space="preserve">'+e(val)+'</t></is></c>';
-const letter=(index:number)=>String.fromCharCode(65+index)+(index>=26?"":"");
 export function writePlanningXlsx(rows:ExchangeRow[]):Blob{
  if(rows.length>5000)throw Error("Max 5000 planeringsrader.");
  const cellRef=(n:number)=>{let v=n+1,s="";while(v){v--;s=String.fromCharCode(65+v%26)+s;v=Math.floor(v/26)}return s};
