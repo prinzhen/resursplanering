@@ -20,6 +20,7 @@ RUN pnpm exec tsc --noEmit
 RUN node scripts/test-chef-filter.mjs
 RUN node scripts/test-effort-history.mjs
 RUN node scripts/test-individual-xlsx-layout.mjs
+RUN node scripts/test-planning-exchange.mjs
 RUN node scripts/test-weekly-v2.mjs
 RUN node scripts/test-activity-calendar.mjs
 RUN node scripts/test-weekly-single-row.mjs
