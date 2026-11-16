@@ -12,6 +12,7 @@ export default function WeeklyV2Page(){
  const [preview,setPreview]=useState<{created:number;updated:number;unchanged:number;employeesCreated:number;projectsCreated:number;activitiesCreated:number}|null>(null);
  const [filePerson,setFilePerson]=useState<{name:string;email:string}|null>(null);
  const [fromFile,setFromFile]=useState(false);
+ const [registered,setRegistered]=useState<Array<{projectCode:string;projectName:string;projectId:number;activityName:string;activityId:number;startDate:string;endDate:string}>>([]);
  const [selectedWeek,setSelectedWeek]=useState(()=>currentWeekKey());
  const [showAllWeeks,setShowAllWeeks]=useState(false);
  const weeks=useMemo(()=>weekOptions(currentWeekKey()),[]);
@@ -85,6 +86,7 @@ export default function WeeklyV2Page(){
  };
  const openFile=async(file:File|null)=>{if(!file)return;setError("");try{
   const parsed=await readWeeklyV2Xlsx(file);
+  setRegistered([]);
   const email=parsed.email||selected;
   const known=people.find(p=>p.email.toLowerCase()===email.toLowerCase());
   if(!email)throw Error("E-postadress saknas i filen. Fyll i e-post i Excel och exportera/importera igen.");
@@ -113,7 +115,7 @@ export default function WeeklyV2Page(){
    const request=async(url:string,body:unknown)=>{
     const response=await fetch(url,{method:"POST",headers:{"content-type":"application/json"},
      body:JSON.stringify(body)});
-    const result=await response.json() as {error?:string;preview?:{created:number;updated:number;unchanged:number;employeesCreated:number;projectsCreated:number;activitiesCreated:number}};
+    const result=await response.json() as {error?:string;preview?:{created:number;updated:number;unchanged:number;employeesCreated:number;projectsCreated:number;activitiesCreated:number};verified?:boolean;warnings?:string[];registered?:Array<{projectCode:string;projectName:string;projectId:number;activityName:string;activityId:number;startDate:string;endDate:string}>};
     if(!response.ok)throw Error(result.error||"Importen avbröts");
     return result;
    };
@@ -137,9 +139,13 @@ export default function WeeklyV2Page(){
    }
    if(!preview){throw Error("Klicka Förhandsgranska ändringar före Godkänn och spara.");}
    let created=false;
+   let createdRecords:typeof registered=[];
    try{
     if(newRows.length||!existing){
-     await request("/api/weekly-v2/bootstrap",{name:person.name,email:person.email,rows:newRows,commit:true});
+     const result=await request("/api/weekly-v2/bootstrap",{name:person.name,email:person.email,rows:newRows,commit:true});
+     createdRecords=result.registered||[];
+     if(result.verified===false)throw Error("Importen genomfördes, men kontroll av sparade aktiviteter misslyckades: "+(result.warnings||[]).join(" "));
+
      created=true;
     }
     if(existingRows.length&&existing){
@@ -149,6 +155,7 @@ export default function WeeklyV2Page(){
     if(created)throw Error("De nya posterna kan ha registrerats, men uppdatering av befintliga aktiviteter misslyckades. Kontrollera databasen och exportera på nytt innan du försöker igen. "+String(e));
     throw e;
    }
+   setRegistered(createdRecords);
    setFromFile(false);setPreview(null);
    const email=person.email;
    const list=await fetch("/api/data",{cache:"no-store"}).then(r=>r.json()) as {
@@ -166,7 +173,7 @@ export default function WeeklyV2Page(){
  };
  return <main className="min-h-screen bg-slate-50 p-5 text-slate-900"><div className="mx-auto max-w-6xl space-y-5">
   <header className="flex flex-wrap justify-between gap-4"><div><p className="text-sm font-medium text-blue-700">Resursplanering · Utvecklingsversion</p><h1 className="text-3xl font-semibold">Veckoplanering XLSX v2</h1>
-   <p className="mt-2 text-sm text-slate-600">16 kolumner: vecka, valfri dag, varaktighet i dagar/veckor och planerad insats. Standard 8 h/dag och 40 h/vecka.</p></div>
+   <p className="mt-2 text-sm text-slate-600">16 kolumner: vecka, valfri arbetsdag, varaktighet (1v = 5 arbetsdagar, 1v3d = 8, 10 eller 10d = 10) och planerad insats. Standard 8 h/arbetsdag och 40 h/vecka.</p></div>
    <a className="rounded-lg border bg-white px-4 py-2 text-sm" href="/individual">← Befintlig veckoplanering</a></header>
   {error&&<p role="alert" className="rounded-lg border border-red-300 bg-red-50 p-4 text-red-800">{error}</p>}
   {message&&<p className="rounded-lg border border-blue-200 bg-blue-50 p-4 text-blue-900">{message}</p>}
@@ -182,6 +189,10 @@ export default function WeeklyV2Page(){
     <button disabled={loading||!fromFile} onClick={()=>importRows(false)} className="rounded-lg border border-blue-400 px-4 py-2 disabled:opacity-50">Förhandsgranska ändringar</button>
     <button disabled={loading||!preview||!(preview.activitiesCreated+preview.projectsCreated+preview.employeesCreated+preview.created+preview.updated)} onClick={()=>importRows(true)} className="rounded-lg bg-emerald-700 px-4 py-2 text-white disabled:opacity-50">Godkänn och spara planeringsposter</button>
    </div>
+   {registered.length>0&&<div className="mt-3 rounded-lg border border-emerald-300 bg-emerald-50 p-3 text-sm text-emerald-950">
+    <p className="font-semibold">Kontrollerat sparade projekt och aktiviteter ({registered.length})</p>
+    <ul className="mt-2 space-y-1">{registered.map((r,i)=><li key={i}>Projekt <b>{r.projectName}</b> ({r.projectCode}, ID {r.projectId}) · Aktivitet <b>{r.activityName}</b> (ID {r.activityId}) · {r.startDate}–{r.endDate}</li>)}</ul>
+   </div>}
    {filePerson&&<p className="mt-3 rounded-lg bg-blue-50 p-3 text-sm text-blue-900">Filens medarbetare: <b>{filePerson.name}</b> · {filePerson.email} {people.some(p=>p.email.toLowerCase()===filePerson.email.toLowerCase())?"(finns registrerad)":"(ny medarbetare – kräver administratör/gruppchef)"}</p>}
    <p className="mt-3 text-sm text-amber-800">En aktivitet visas som en rad, även vid tio veckors varaktighet. Ändrad vecka/dag flyttar både start och slut; ändrad varaktighet ändrar bara slut. Vid godkänd import uppdateras Gantt och enkla resursperioder. Redan rapporterad tid ändras aldrig. För aktiviteter med särskilda resursperioder krävs manuell granskning. Saknade medarbetare, projekt och aktiviteter kan skapas från Excel enligt samma behörighetsregler som i version 1.</p>
   </section>
