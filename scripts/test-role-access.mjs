@@ -147,7 +147,7 @@ try{
   assert.deepEqual(noLinkCatalog.projects.map(p=>p.id).sort((a,b)=>a-b),[...projectIds].sort((a,b)=>a-b));
   assert.equal(noLinkCatalog.needsEmployeeLink,true);
  });
- const invalidBeforeLink=await api(admin,"/api/quick-activity",{projectId:1,name:"Nekad utan person",description:"Spårbarhet",startDate:"2026-11-10",endDate:"2026-11-20"});
+ const invalidBeforeLink=await api(admin,"/api/quick-activity",{projectId:1,name:"Nekad utan person",description:"Spårbarhet",startDate:"2026-11-10",endDate:"2026-11-20"},{retryKnownDenied:true});
  check("Unlinked admin cannot create untraceable activity",()=>assert.equal(invalidBeforeLink.status,403));
  await ok(admin,"/api/data",{action:"employee",name:"Rolltest Admin",email:"role-admin@example.se",role:"Administratör",capacityPercent:100});
  const linked=await ok(admin,"/api/data");
@@ -199,7 +199,7 @@ try{
   projectCode:"WK-ACCESS",projectName:"Veckotest åtkomst",firstWeek:"2026-V47",
   comment:"",moveReason:"",activityId:"",rowKey:"",rowRevision:0};
  const workbook={name:"Ny Excelmedarbetare",email:"new-excel-role@example.se",rows:[newWeeklyRow]};
- const anonWeekly=await api("",weeklyBootstrap,{...workbook,commit:true});
+ const anonWeekly=await api("",weeklyBootstrap,{...workbook,commit:true},{retryKnownDenied:true});
  check("Anonymous cannot create weekly Excel records",()=>assert.equal(anonWeekly.status,401));
  for(const [role,cookie] of [["ORDINARY STAFF",ordinary],["PROJECT/TEAM LEADER",leader],["NONMEMBER",nonmember]]){
   const denied=await api(cookie,weeklyBootstrap,{...workbook,commit:true},{retryKnownDenied:true});
@@ -254,10 +254,10 @@ try{
   assert.equal(task.endDate,"2026-12-06");
  });
  const exchangeUrl="/api/planning-exchange";
- const anonymousExchange=await api("",exchangeUrl,{rows:[multiProjectRow],commit:true});
+ const anonymousExchange=await api("",exchangeUrl,{rows:[multiProjectRow],commit:true},{retryKnownDenied:true});
  check("Anonymous bulk exchange is denied",()=>assert.equal(anonymousExchange.status,401));
  for(const [role,cookie] of [["GROUP MANAGER",manager],["PROJECT/TEAM LEADER",leader],["ORDINARY STAFF",ordinary],["NONMEMBER",nonmember]]){
-  const denied=await api(cookie,exchangeUrl,{rows:[multiProjectRow],commit:true});
+  const denied=await api(cookie,exchangeUrl,{rows:[multiProjectRow],commit:true},{retryKnownDenied:true});
   check(role+" cannot bypass bulk-import rights with direct API call",()=>assert.equal(denied.status,403));
  }
  const beforePreview=await ok(admin,"/api/data");
@@ -274,7 +274,7 @@ try{
   assert.deepEqual(previewSnapshot.employees,beforePreview.employees);
  });
  const invalidBulk=[multiProjectRow,{...multiProjectRow,activity_code:"XCH-02",activity:"Invalid row",start_date:"2026-11-31"}];
- const refused=await api(admin,exchangeUrl,{rows:invalidBulk,commit:true});
+ const refused=await api(admin,exchangeUrl,{rows:invalidBulk,commit:true},{retryKnownDenied:true});
  check("Invalid bulk import is rejected before any writes",()=>assert.equal(refused.status,400));
  const afterInvalid=await ok(admin,"/api/data");
  check("Invalid date cannot partially create project or activities",()=>assert.ok(!afterInvalid.projects.some(p=>p.code==="TEST-XCH")));
@@ -297,7 +297,7 @@ try{
   assert.equal(afterRepeat.activities.filter(a=>a.projectId===importedProject.id&&a.code==="XCH-01").length,1);
   assert.equal(afterRepeat.assignments.filter(a=>a.activityId===importedTask.id&&a.employeeId===sara).length,1);
  });
- const noCsv=await api(admin,"/api/data",{action:"import",rows:[multiProjectRow]});
+ const noCsv=await api(admin,"/api/data",{action:"import",rows:[multiProjectRow]},{retryKnownDenied:true});
  check("Legacy CSV import cannot bypass the reviewed exchange workflow",()=>assert.equal(noCsv.status,410));
  const managerState=await ok(manager,"/api/data");
  check("GROUP MANAGER role is retained with real employee identity",()=>{
@@ -331,7 +331,7 @@ try{
   assert.ok(!normalCatalog.projects.some(p=>p.id===2));
  });
  const deniedProject=await api(ordinary,"/api/quick-activity",{projectId:2,recipientId:erik,name:"Förbjudet annan projekttillhörighet",
-  description:"Ska nekas",startDate:"2026-11-10",endDate:"2026-11-20",effortPercent:30});
+  description:"Ska nekas",startDate:"2026-11-10",endDate:"2026-11-20",effortPercent:30},{retryKnownDenied:true});
  check("ORDINARY STAFF cannot bypass project membership with direct POST",()=>assert.equal(deniedProject.status,403));
  const ordinarySelf=await ok(ordinary,"/api/quick-activity",{projectId:1,name:"Egen rolltest aktivitet",
   description:"Egen aktivitet av vanlig anställd",startDate:"2026-11-10",endDate:"2026-11-20",effortPercent:20});
@@ -368,7 +368,7 @@ try{
  const inbox=await ok(nonmember,"/api/requests");
  const pendingRequest=inbox.requests.find(r=>r.activityId===adminProposal.activityId&&r.recipientId===johan&&r.status==="pending");
  check("Recipient sees proposal addressed to them",()=>assert.ok(pendingRequest));
- const illegalApproval=await api(admin,"/api/requests",{action:"answer",id:pendingRequest.id,approve:true});
+ const illegalApproval=await api(admin,"/api/requests",{action:"answer",id:pendingRequest.id,approve:true},{retryKnownDenied:true});
  check("ADMIN cannot approve proposal on someone else's behalf",()=>assert.equal(illegalApproval.status,403));
  await ok(nonmember,"/api/requests",{action:"answer",id:pendingRequest.id,approve:true});
  const approved=await ok(admin,"/api/data");
@@ -379,10 +379,10 @@ try{
  // Fallback for real-world legacy administrators: a separate login owns the
  // SAME person record, while the old administrator login keeps its privileges.
  const deniedWorkLogin=await api(ordinary,"/api/access",{action:"createPersonalLogin",employeeId:sara,
-  email:"new-staff@example.se",password:"A long temporary passphrase 2026",isGroupManager:false,projectIds:[1]});
+  email:"new-staff@example.se",password:"A long temporary passphrase 2026",isGroupManager:false,projectIds:[1]},{retryKnownDenied:true});
  check("ORDINARY STAFF cannot create personal logins",()=>assert.equal(deniedWorkLogin.status,403));
  const duplicateWorker=await api(admin,"/api/access",{action:"createPersonalLogin",employeeId:sara,
-  email:"sara-second@example.se",password:"A long temporary passphrase 2026",projectIds:[1]});
+  email:"sara-second@example.se",password:"A long temporary passphrase 2026",projectIds:[1]},{retryKnownDenied:true});
  check("ADMIN cannot steal a person from an existing standard login",()=>assert.equal(duplicateWorker.status,409));
  const identityBeforeSplit=await ok(admin,"/api/access");
  const staffBeforeSplit=approved.employees.filter(e=>e.id===adminPerson.id);
@@ -427,9 +427,9 @@ try{
  // distinct email and leaving the administrator account untouched.
  const changedWorkPassword="New-Dedicated-Work-Password!2026";
  await ok(admin,"/api/access",{action:"setEmployeePassword",employeeId:adminPerson.id,password:changedWorkPassword});
- const oldWorkSession=await api(workCookie,"/api/data");
+ const oldWorkSession=await api(workCookie,"/api/data",{retryKnownDenied:true});
  check("Resetting work login password invalidates previous work sessions",()=>assert.equal(oldWorkSession.status,401));
- const originalWorkLogin=await api("","/api/auth",{action:"login",email:"role-admin-work@example.se",password});
+ const originalWorkLogin=await api("","/api/auth",{action:"login",email:"role-admin-work@example.se",password},{retryKnownDenied:true});
  check("Old work password is revoked",()=>assert.equal(originalWorkLogin.status,401));
  const recoveredAuth=await api("","/api/auth",{action:"login",email:"role-admin-work@example.se",password:changedWorkPassword});
  check("Dedicated work login can reset password without claiming admin email",()=>assert.equal(recoveredAuth.status,200));
@@ -439,10 +439,10 @@ try{
   assert.equal(afterResetAccounts.accounts.find(x=>x.email==="role-admin-work@example.se")?.employeeId,adminPerson.id);
  });
  const badPassword=await api(admin,"/api/access",{action:"createPersonalLogin",employeeId:anna,
-  email:"weak@example.se",password:"short",projectIds:[1]});
+  email:"weak@example.se",password:"short",projectIds:[1]},{retryKnownDenied:true});
  check("Password shorter than 12 characters is denied for new login",()=>assert.equal(badPassword.status,400));
  const workConflict=await api(admin,"/api/access",{action:"createPersonalLogin",employeeId:adminPerson.id,
-  email:"another-personal@example.se",password:password,projectIds:[1]});
+  email:"another-personal@example.se",password:password,projectIds:[1]},{retryKnownDenied:true});
  check("Admin cannot duplicate the existing personal account",()=>assert.equal(workConflict.status,409));
 
  // Work-time reporting regression suite, using the SAME isolated database.
@@ -463,11 +463,11 @@ try{
   assert.equal(ticking.employeeId,sara);
   assert.ok(Math.abs(ticking.startedAt-timeRunning.serverTime)<5);
  });
- const duplicateTimer=await api(ordinary,"/api/time-entries",{action:"start",activityId:1});
+ const duplicateTimer=await api(ordinary,"/api/time-entries",{action:"start",activityId:1},{retryKnownDenied:true});
  check("Only one active timer can exist per employee",()=>assert.equal(duplicateTimer.status,409));
- const foreignStop=await api(leader,"/api/time-entries",{action:"stop",id:ticking.id});
+ const foreignStop=await api(leader,"/api/time-entries",{action:"stop",id:ticking.id},{retryKnownDenied:true});
  check("Other employee cannot stop a colleague's timer",()=>assert.equal(foreignStop.status,409));
- const forbiddenTimeActivity=await api(ordinary,"/api/time-entries",{action:"manual",activityId:2,workDate:"2026-11-02",durationMinutes:30});
+ const forbiddenTimeActivity=await api(ordinary,"/api/time-entries",{action:"manual",activityId:2,workDate:"2026-11-02",durationMinutes:30},{retryKnownDenied:true});
  check("Staff cannot log hours on unauthorized projects",()=>assert.equal(forbiddenTimeActivity.status,403));
  await ok(ordinary,"/api/time-entries",{action:"stop",id:ticking.id});
  const timeStopped=await ok(ordinary,"/api/time-entries");
@@ -478,7 +478,7 @@ try{
  });
  const otherView=await ok(leader,"/api/time-entries");
  check("Individual staff cannot read another person's tracked time",()=>assert.ok(!otherView.entries.some(e=>e.id===ticking.id)));
- const otherChange=await api(leader,"/api/time-entries",{action:"update",id:ticking.id,workDate:"2026-11-02",durationMinutes:60});
+ const otherChange=await api(leader,"/api/time-entries",{action:"update",id:ticking.id,workDate:"2026-11-02",durationMinutes:60},{retryKnownDenied:true});
  check("Individual staff cannot modify another person's hours",()=>assert.equal(otherChange.status,404));
  await ok(ordinary,"/api/time-entries",{action:"update",id:ticking.id,workDate:"2026-11-02",durationMinutes:90,note:"Korrigerade timmar"});
  const correctedTime=await ok(ordinary,"/api/time-entries");
@@ -496,7 +496,7 @@ try{
   assert.equal(manualTime.durationSeconds,4500);
   assert.equal(manualTime.workDate,"2026-11-03");
  });
- const anonymousDelete=await api(leader,"/api/time-entries",{action:"delete",id:manualTime.id});
+ const anonymousDelete=await api(leader,"/api/time-entries",{action:"delete",id:manualTime.id},{retryKnownDenied:true});
  check("Other employees cannot delete time reporting history",()=>assert.equal(anonymousDelete.status,404));
  await ok(ordinary,"/api/time-entries",{action:"delete",id:manualTime.id});
  const afterDelete=(await ok(ordinary,"/api/time-entries")).entries;
