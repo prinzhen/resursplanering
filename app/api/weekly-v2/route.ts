@@ -85,8 +85,8 @@ export async function POST(req:Request){
     if(body.commit&&!body.acceptStaleRevisions)
      throw Error("Filen har äldre revisioner. Förhandsgranska konflikterna och bekräfta att Exceluppgifterna ska ersätta senaste planeringen.");
    }
-   const action=before?(fields.every(k=>(before[k]??null)===(value[k]??null))?"unchanged":"update"):"new";
    const updateDates=original.startDate!==dates.start||original.endDate!==dates.end;
+   const action=before?(fields.every(k=>(before[k]??null)===(value[k]??null))&&!updateDates?"unchanged":"update"):"new";
    const ass=await d.prepare("SELECT id,employee_id employeeId,completed_at completedAt,start_date startDate,end_date endDate FROM assignments WHERE activity_id=?").bind(activityId).all<{id:number;employeeId:number;completedAt:string|null;startDate:string;endDate:string}>();
    const assignmentIds=ass.results.map(a=>a.id);
    if(updateDates){
