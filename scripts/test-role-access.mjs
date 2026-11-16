@@ -427,7 +427,7 @@ try{
  // distinct email and leaving the administrator account untouched.
  const changedWorkPassword="New-Dedicated-Work-Password!2026";
  await ok(admin,"/api/access",{action:"setEmployeePassword",employeeId:adminPerson.id,password:changedWorkPassword});
- const oldWorkSession=await api(workCookie,"/api/data",{retryKnownDenied:true});
+ const oldWorkSession=await api(workCookie,"/api/data");
  check("Resetting work login password invalidates previous work sessions",()=>assert.equal(oldWorkSession.status,401));
  const originalWorkLogin=await api("","/api/auth",{action:"login",email:"role-admin-work@example.se",password},{retryKnownDenied:true});
  check("Old work password is revoked",()=>assert.equal(originalWorkLogin.status,401));
