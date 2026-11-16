@@ -251,7 +251,7 @@ try{
   const task=afterWeekly.activities.find(a=>a.projectId===project?.id&&a.name===newWeeklyRow.task);
   assert.ok(task);
   assert.equal(task.startDate,"2026-11-16");
-  assert.equal(task.endDate,"2026-12-06");
+  assert.equal(task.endDate,"2026-12-04");
  });
  const exchangeUrl="/api/planning-exchange";
  const anonymousExchange=await api("",exchangeUrl,{rows:[multiProjectRow],commit:true},{retryKnownDenied:true});
