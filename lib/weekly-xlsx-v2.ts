@@ -95,7 +95,7 @@ export function parseDurationDays(value:string|number):number{
  const v=String(value??"").trim().toLowerCase().replace(/\s+/g," ");
  if(/^\d+$/.test(v)){
   const days=Number(v);
-  if(!Number.isSafeInteger(days)||days<1||days>3650)throw Error("Varaktighet måste vara 1–3650 kalenderdagar.");
+  if(!Number.isSafeInteger(days)||days<1||days>3650)throw Error("Varaktighet måste vara 1–3650 dagar.");
   return days;
  }
  const legacy=/^(\d+)\s*kalenderdag(?:ar)?$/.exec(v);
@@ -112,7 +112,7 @@ export function parseDurationDays(value:string|number):number{
  if(m[3]!==undefined&&(!weeks||rest>4))
   throw Error("Ange 0–4 extra arbetsdagar efter veckor (exempel: 1v3d).");
  if(!Number.isSafeInteger(days)||days<1||days>3650)
-  throw Error("Varaktighet måste vara 1–3650 kalenderdagar.");
+  throw Error("Varaktighet måste vara 1–3650 dagar.");
  return days;
 }
 export function durationLabel(days:number):string{
@@ -128,7 +128,7 @@ export function rowCalendarRange(week:string,day:string,duration:string|number){
  start.setUTCDate(start.getUTCDate()+(index===0?0:index-1));
  const count=parseDurationDays(duration);
  const end=new Date(start);
- if(/^\\d+\\s*kalenderdag(?:ar)?$/i.test(String(duration).trim())){
+ if(/^\d+\s*kalenderdag(?:ar)?$/i.test(String(duration).trim())){
   end.setUTCDate(end.getUTCDate()+count-1);
  }else{
   if(start.getUTCDay()===0||start.getUTCDay()===6)
