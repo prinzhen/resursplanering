@@ -93,7 +93,8 @@ assert.ok(loadSheet.includes('r="AC4"')&&loadSheet.includes("2027-V19"),"Last lo
 assert.ok(loadSheet.includes('r="B6"')&&loadSheet.includes("SUMPRODUCT"),"Weekly total must be a live Excel formula");
 assert.ok(loadSheet.includes("Veckoplanering!$V$5:$V$5004"),"Weekly load must read only exported activity rows");
 assert.ok(loadSheet.includes("Veckoplanering!$X$5:$X$5004"),"Weekly load must derive effort from first sheet");
-assert.ok(sheet.includes('r="V5"')&&sheet.includes('r="W5"')&&sheet.includes('r="X5"')&&sheet.includes('r="Y5"'),"Every exported row gets date and load helper formulas");
+assert.ok(sheet.includes('r="V5"')&&sheet.includes('r="W5"')&&sheet.includes('r="X5"')&&sheet.includes('r="Y5"')&&sheet.includes('r="Z5"'),"Every exported row gets date and load helper formulas");
+assert.ok(!sheet.includes("LET("),"Dynamic formula must not require Excel 365 LET");
 assert.ok(sheet.includes('r="V5004"')&&sheet.includes('r="X5004"'),"Newly added activity rows must also recalculate workload");
 assert.ok(loadSheet.includes('r="B7"')&&loadSheet.includes('r="B8"')&&loadSheet.includes('r="B9"'),"Hours, available capacity and free time must be present");
 assert.ok(loadSheet.includes('<conditionalFormatting'),"Weekly utilization colors must be automatic");
@@ -104,7 +105,7 @@ for(let i=0;i<WEEKLY_COLUMNS.length;i++){
  assert.ok(sheet.includes(WEEKLY_COLUMNS[i]),"Missing header "+WEEKLY_COLUMNS[i]);
 }
 assert.ok(sheet.includes('r="Q5"'),"Missing stable hidden planning row key");
-assert.ok(sheet.includes('min="17" max="25" hidden="1"'),"Metadata, year, duration-mode and week-list columns must be hidden");
+assert.ok(sheet.includes('min="17" max="26" hidden="1"'),"Metadata, year, duration-mode and week-list columns must be hidden");
 assert.ok(sheet.includes('r="U1"')&&sheet.includes("KALENDERDAGAR-7"),"New XLSX must declare seven-day calendar spans");
 assert.ok(sheet.includes('sqref="A5:A5004 M5:M5004"'),"Dropdown required for ISO week and first planned week");
 assert.ok(sheet.includes('$S$5:$S$265'),"Scrollable week list must be in hidden column S");
