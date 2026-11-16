@@ -123,7 +123,7 @@ export async function POST(req:Request){
    changes.push({value,before,action,oldStart:original.startDate,oldEnd:original.endDate,
     newStart:dates.start,newEnd:dates.end,updateDates,assignmentIds});
   }
-  const preview={created:changes.filter(x=>x.action==="new").length,updated:changes.filter(x=>x.action==="update").length,unchanged:changes.filter(x=>x.action==="unchanged").length,conflicts};
+  const preview={created:changes.filter(x=>x.action==="new").length,updated:changes.filter(x=>x.action==="update").length,unchanged:changes.filter(x=>x.action==="unchanged").length,...(conflicts.length?{conflicts}:{})};
   if(!body.commit)return Response.json({preview,committed:false});
   if(conflicts.length&&!body.acceptStaleRevisions)return Response.json({error:"Aktiviteter har nyare revisioner i verktyget. Bekräfta uttryckligen att Excel ska ersätta dem.",preview},{status:409});
   const q:D1PreparedStatement[]=[];
