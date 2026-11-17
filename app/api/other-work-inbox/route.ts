@@ -86,7 +86,7 @@ export async function POST(req:Request){
        WHERE s.activity_id=? AND p.start_date<?) historicPeriods,
     (SELECT COUNT(*) FROM weekly_plan_rows WHERE activity_id=? AND first_planned_week<?) olderWeekRows,
     (SELECT COUNT(*) FROM activities WHERE parent_activity_id=?) children,
-    (SELECT COUNT(*) FROM assignment_requests WHERE activity_id=? AND status='pending') requests`)
+    (SELECT COUNT(*) FROM assignment_requests WHERE activity_id=?) requests`)
    .bind(activityId,activityId,effectiveFrom,activityId,effectiveFrom.slice(0,4)+"-W"+isoWeekNumber(effectiveFrom),activityId,activityId)
    .first<{recorded:number;historicPeriods:number;olderWeekRows:number;children:number;requests:number}>();
   if(a.startDate<effectiveFrom||a.parentId!==null||a.workPackageId!==null||
