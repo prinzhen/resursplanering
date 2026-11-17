@@ -197,7 +197,7 @@ export default function WeeklyV2Page(){
      <span>Jag har granskat avvikelserna och vill att Excel-filens startvecka, startdag och varaktighet ska ersätta den sparade prognosen för dessa aktiviteter.</span></label>
    </div>}
    {registered.length>0&&<div className="mt-3 rounded-lg border border-emerald-300 bg-emerald-50 p-3 text-sm text-emerald-950">
-    <p className="font-semibold">Kontrollerat sparade projekt och aktiviteter ({registered.length})</p>
+    <p className="font-semibold">Kontrollerat nyregistrerade projekt och aktiviteter ({registered.length})</p><p className="mt-1 text-xs">De här är nya poster. Tidigare aktiviteter som uppdaterats ingår inte i antalet.</p>{registered.some(r=>r.projectCode==="INTERNAL-OVR")&&<a href="/other-work-inbox" className="mt-2 inline-block rounded border border-emerald-500 bg-white px-3 py-1 font-semibold text-emerald-900 underline">Visa importerade aktiviteter i Övrigt arbete →</a>}
     <ul className="mt-2 space-y-1">{registered.map((r,i)=><li key={i}>Projekt <b>{r.projectName}</b> ({r.projectCode}, ID {r.projectId}) · Aktivitet <b>{r.activityName}</b> (ID {r.activityId}) · {r.startDate}–{r.endDate}</li>)}</ul>
    </div>}
    {filePerson&&<p className="mt-3 rounded-lg bg-blue-50 p-3 text-sm text-blue-900">Filens medarbetare: <b>{filePerson.name}</b> · {filePerson.email} {people.some(p=>p.email.toLowerCase()===filePerson.email.toLowerCase())?"(finns registrerad)":"(ny medarbetare – kräver administratör/gruppchef)"}</p>}
