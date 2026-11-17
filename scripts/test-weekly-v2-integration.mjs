@@ -108,6 +108,13 @@ try{
  assert.equal(unknownCommit.status,200,JSON.stringify(unknownCommit.result));
  assert.equal(unknownCommit.result.verified,true,JSON.stringify(unknownCommit.result));
  assert.equal(unknownCommit.result.registered.length,2);
+ const unknownInbox=await call("/api/other-work-inbox");
+ assert.equal(unknownInbox.status,200,JSON.stringify(unknownInbox.result));
+ assert.equal(unknownInbox.result.readOnly,true);
+ for(const activityName of unassigned.rows.map(r=>r.task)){
+  assert.ok(unknownInbox.result.activities.some(a=>a.task===activityName&&a.employeeName===newEmployee.name),
+   "A newly imported blank-project task must be visible in the Övrigt arbete inbox");
+ }
  const unknownSaved=await call("/api/data");
  const catchAll=unknownSaved.result.projects.filter(p=>p.code==="INTERNAL-OVR");
  assert.equal(catchAll.length,1,"Only one internal catch-all is allowed per planning instance");
