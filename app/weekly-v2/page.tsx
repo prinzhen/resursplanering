@@ -167,7 +167,7 @@ export default function WeeklyV2Page(){
    const selectedPerson=allowed.find(p=>p.email.toLowerCase()===email.toLowerCase());
    if(selectedPerson){
     setSelected(selectedPerson.email);
-    setMessage("Import genomförd. Excel-filens aktuella prognos har sparats och Gantt har uppdaterats. Exportera en ny XLSX för senaste revisionsnummer och aktivitets-ID:n.");
+    setMessage("Import genomförd. "+(createdRecords.filter(r=>r.projectCode==="INTERNAL-OVR").length?createdRecords.filter(r=>r.projectCode==="INTERNAL-OVR").length+" nya aktiviteter utan projektkod finns under Övrigt arbete → Inkorg. ":"")+"Excel-filens prognos har sparats och Gantt har uppdaterats. Exportera en ny XLSX för senaste revisionsnummer och aktivitets-ID:n.");
    }else setMessage("Import genomförd. Ladda om sidan för att visa personen.");
   }catch(e){setError(e instanceof Error?e.message:String(e))}
   finally{setLoading(false)}
@@ -175,7 +175,7 @@ export default function WeeklyV2Page(){
  return <main className="min-h-screen bg-slate-50 p-5 text-slate-900"><div className="mx-auto max-w-6xl space-y-5">
   <header className="flex flex-wrap justify-between gap-4"><div><p className="text-sm font-medium text-blue-700">Resursplanering · Utvecklingsversion</p><h1 className="text-3xl font-semibold">Veckoplanering XLSX v2</h1>
    <p className="mt-2 text-sm text-slate-600">16 kolumner: vecka, valfri veckodag och varaktighet i kalenderdagar (1v = 7 dagar, 1v3d = 10 dagar, 10 eller 10d = 10 dagar). Beläggning beräknas normalt på måndag–fredag, 8 h/dag och 40 h/vecka. Exporterad XLSX har även fliken Beläggning: veckovis från föregående vecka till 26 veckor framåt. Den räknas om i Excel när aktiviteter ändras och läses aldrig tillbaka vid import.</p></div>
-   <a className="rounded-lg border bg-white px-4 py-2 text-sm" href="/individual">← Befintlig veckoplanering</a></header>
+   <div className="flex flex-wrap gap-2"><a className="rounded-lg border border-blue-200 bg-blue-50 px-4 py-2 text-sm font-semibold text-blue-800" href="/other-work-inbox">Övrigt arbete · Inkorg</a><a className="rounded-lg border bg-white px-4 py-2 text-sm" href="/individual">← Befintlig veckoplanering</a></div></header>
   {error&&<p role="alert" className="rounded-lg border border-red-300 bg-red-50 p-4 text-red-800">{error}</p>}
   {message&&<p className="rounded-lg border border-blue-200 bg-blue-50 p-4 text-blue-900">{message}</p>}
   <section className="rounded-xl border bg-white p-5"><h2 className="mb-4 font-semibold">Personlig Excel-planering – namn och e-post identifierar medarbetaren</h2>
@@ -197,7 +197,7 @@ export default function WeeklyV2Page(){
      <span>Jag har granskat avvikelserna och vill att Excel-filens startvecka, startdag och varaktighet ska ersätta den sparade prognosen för dessa aktiviteter.</span></label>
    </div>}
    {registered.length>0&&<div className="mt-3 rounded-lg border border-emerald-300 bg-emerald-50 p-3 text-sm text-emerald-950">
-    <p className="font-semibold">Kontrollerat sparade projekt och aktiviteter ({registered.length})</p>
+    <p className="font-semibold">Kontrollerat nyregistrerade projekt och aktiviteter ({registered.length})</p><p className="mt-1 text-xs">De här är nya poster. Tidigare aktiviteter som uppdaterats ingår inte i antalet.</p>{registered.some(r=>r.projectCode==="INTERNAL-OVR")&&<a href="/other-work-inbox" className="mt-2 inline-block rounded border border-emerald-500 bg-white px-3 py-1 font-semibold text-emerald-900 underline">Visa importerade aktiviteter i Övrigt arbete →</a>}
     <ul className="mt-2 space-y-1">{registered.map((r,i)=><li key={i}>Projekt <b>{r.projectName}</b> ({r.projectCode}, ID {r.projectId}) · Aktivitet <b>{r.activityName}</b> (ID {r.activityId}) · {r.startDate}–{r.endDate}</li>)}</ul>
    </div>}
    {filePerson&&<p className="mt-3 rounded-lg bg-blue-50 p-3 text-sm text-blue-900">Filens medarbetare: <b>{filePerson.name}</b> · {filePerson.email} {people.some(p=>p.email.toLowerCase()===filePerson.email.toLowerCase())?"(finns registrerad)":"(ny medarbetare – kräver administratör/gruppchef)"}</p>}

@@ -11,7 +11,10 @@ const nextDay=(date:string,days:number)=>{
 const sort=(items:EffortSlice[])=>items.slice().sort((a,b)=>a.startDate.localeCompare(b.startDate)||a.endDate.localeCompare(b.endDate));
 function signature(items:EffortSlice[]){
  const merged:EffortSlice[]=[];
- for(const item of sort(items)){
+ // Database rows can carry an internal `id`; only the actual allocation
+ // matters for idempotency. Never include persistence metadata in signatures.
+ for(const raw of sort(items)){
+  const item:EffortSlice={startDate:raw.startDate,endDate:raw.endDate,effortPercent:raw.effortPercent};
   const prev=merged.at(-1);
   if(prev&&prev.effortPercent===item.effortPercent&&nextDay(prev.endDate,1)===item.startDate)
    prev.endDate=item.endDate;
