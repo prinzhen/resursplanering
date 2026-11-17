@@ -110,7 +110,7 @@ try{
  assert.equal(unknownCommit.result.registered.length,2);
  const unknownInbox=await call("/api/other-work-inbox");
  assert.equal(unknownInbox.status,200,JSON.stringify(unknownInbox.result));
- assert.equal(unknownInbox.result.readOnly,true);
+ assert.equal(unknownInbox.result.readOnly,false);
  for(const activityName of unassigned.rows.map(r=>r.task)){
   assert.ok(unknownInbox.result.activities.some(a=>a.task===activityName&&a.employeeName===newEmployee.name),
    "A newly imported blank-project task must be visible in the Övrigt arbete inbox");
@@ -137,6 +137,44 @@ try{
  const afterRepeat=await call("/api/data");
  assert.equal(afterRepeat.result.projects.filter(p=>p.code==="INTERNAL-OVR").length,1);
  assert.equal(afterRepeat.result.activities.filter(a=>a.projectId===catchAll[0].id&&a.name===third.rows[0].task).length,1,"Re-import must not duplicate unassigned task");
+ // The inbox permits audited reclassification only for truly future-only
+ // work. In-progress / historical activities must never be silently moved.
+ const futureUnassigned={...unassigned,rows:[{
+  ...unassigned.rows[0],task:"Framtida aktivitet för projektklassificering",
+  week:"2027-V12",firstWeek:"2027-V12",duration:"2 veckor"
+ }]};
+ const futureSave=await call("/api/weekly-v2/bootstrap",{...futureUnassigned,commit:true});
+ assert.equal(futureSave.status,200,JSON.stringify(futureSave.result));
+ const futureActivityId=futureSave.result.registered[0].activityId;
+ const originalOld=unknownSaved.result.activities.find(x=>x.name==="Okänt projekt – första aktiviteten");
+ const historicalDenied=await call("/api/other-work-inbox",{
+  activityId:originalOld.id,targetProjectId:newProject.id
+ });
+ assert.equal(historicalDenied.status,422,"Past-dated work must not change project history");
+ const oldStill=await call("/api/data");
+ assert.equal(oldStill.result.activities.find(x=>x.id===originalOld.id).projectId,catchAll[0].id);
+ const classified=await call("/api/other-work-inbox",{
+  activityId:futureActivityId,targetProjectId:newProject.id
+ });
+ assert.equal(classified.status,200,JSON.stringify(classified.result));
+ assert.equal(classified.result.projectCode,newProject.code);
+ const classificationSnapshot=await call("/api/data");
+ assert.equal(classificationSnapshot.result.activities.find(x=>x.id===futureActivityId).projectId,newProject.id,
+  "Only the future activity changes project");
+ assert.equal(classificationSnapshot.result.activityProjectReclassifications.filter(x=>x.activityId===futureActivityId).length,1,
+  "Project transfer must leave a durable audit row");
+ assert.ok(classificationSnapshot.result.projectMembers.some(x=>x.projectId===newProject.id&&x.employeeId===newEmployee.id),
+  "Recipient project must include the assigned employee");
+ const replayClassification=await call("/api/other-work-inbox",{
+  activityId:futureActivityId,targetProjectId:newProject.id
+ });
+ assert.equal(replayClassification.status,409,"Reclassification cannot silently replay");
+ // A backup restore must retain the audit, not just the new project ID.
+ const classificationRestore=await call("/api/data",{action:"restore",backup:{version:4,data:classificationSnapshot.result}});
+ assert.equal(classificationRestore.status,200,JSON.stringify(classificationRestore.result));
+ const afterClassificationRestore=await call("/api/data");
+ assert.equal(afterClassificationRestore.result.activityProjectReclassifications.length,1,
+  "Restoring a planning backup must restore project classification history");
  const snap=await call("/api/data");assert.equal(snap.status,200,JSON.stringify(snap.result));
  const erik=snap.result.employees.find(x=>x.name==="Erik Holm");assert.ok(erik);
  const activity=snap.result.activities.find(x=>x.name==="Systemdesign");assert.ok(activity);
