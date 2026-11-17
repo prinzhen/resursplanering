@@ -167,7 +167,7 @@ export default function WeeklyV2Page(){
    const selectedPerson=allowed.find(p=>p.email.toLowerCase()===email.toLowerCase());
    if(selectedPerson){
     setSelected(selectedPerson.email);
-    setMessage("Import genomförd. Excel-filens aktuella prognos har sparats och Gantt har uppdaterats. Exportera en ny XLSX för senaste revisionsnummer och aktivitets-ID:n.");
+    setMessage("Import genomförd. "+(createdRecords.filter(r=>r.projectCode==="INTERNAL-OVR").length?createdRecords.filter(r=>r.projectCode==="INTERNAL-OVR").length+" nya aktiviteter utan projektkod finns under Övrigt arbete → Inkorg. ":"")+"Excel-filens prognos har sparats och Gantt har uppdaterats. Exportera en ny XLSX för senaste revisionsnummer och aktivitets-ID:n.");
    }else setMessage("Import genomförd. Ladda om sidan för att visa personen.");
   }catch(e){setError(e instanceof Error?e.message:String(e))}
   finally{setLoading(false)}
