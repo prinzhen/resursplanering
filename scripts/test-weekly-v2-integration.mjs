@@ -146,7 +146,13 @@ try{
  const futureSave=await call("/api/weekly-v2/bootstrap",{...futureUnassigned,commit:true});
  assert.equal(futureSave.status,200,JSON.stringify(futureSave.result));
  const futureActivityId=futureSave.result.registered[0].activityId;
- const originalOld=unknownSaved.result.activities.find(x=>x.name==="Okänt projekt – första aktiviteten");
+ const historicalRow={...unassigned,rows:[{
+  ...unassigned.rows[0],task:"Historisk aktivitet får ej omklassificeras",
+  week:"2026-V40",firstWeek:"2026-V40",duration:"1 vecka"
+ }]};
+ const historicalSave=await call("/api/weekly-v2/bootstrap",{...historicalRow,commit:true});
+ assert.equal(historicalSave.status,200,JSON.stringify(historicalSave.result));
+ const originalOld={id:historicalSave.result.registered[0].activityId};
  const historicalDenied=await call("/api/other-work-inbox",{
   activityId:originalOld.id,targetProjectId:newProject.id
  });
