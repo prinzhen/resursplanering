@@ -484,7 +484,20 @@ function PrintPlanningDialog({open,close,subject,kind,data}:{open:boolean;close:
  const[start,setStart]=useState(new Date().toISOString().slice(0,10)),[period,setPeriod]=useState<PrintPeriod>("4w");
  const allItems=kind==="employee"?employeeGantt(subject as Employee,data):projectGantt(subject as Project,data),sourceDates=allItems.flatMap(i=>[i.start,i.end]),rangeStart=period==="all"?(sourceDates.sort()[0]||start):start,rangeEnd=period==="all"?([...sourceDates].sort().at(-1)||start):periodEnd(start,period),items=allItems.filter(i=>overlaps(i.start,i.end,rangeStart,rangeEnd));
  let rows:PlanningRow[]=[];
- if(kind==="employee"){rows=data.assignments.filter(s=>s.employeeId===subject.id&&overlaps(s.startDate,s.endDate,rangeStart,rangeEnd)).flatMap(s=>{const a=data.activities.find(x=>x.id===s.activityId),p=data.projects.find(x=>x.id===a?.projectId),w=data.workPackages.find(x=>x.id===a?.workPackageId);return a?[{id:String(s.id),project:p?`${p.code} · ${p.name}`:"–",work:w?`${w.code} · ${w.name}`:"Direkt i projektet",activity:`${a.code?`${a.code} · `:""}${a.name}`,description:a.description||"Beskrivning saknas.",people:(subject as Employee).name,effort:`${s.effortPercent}%`,start:s.startDate,end:s.endDate}]:[]})}
+ if(kind==="employee"){rows=data.assignments.filter(s=>s.employeeId===subject.id&&overlaps(s.startDate,s.endDate,rangeStart,rangeEnd)).flatMap(s=>{
+  const a=data.activities.find(x=>x.id===s.activityId),w=data.workPackages.find(x=>x.id===a?.workPackageId);
+  if(!a)return [];
+  const from=s.startDate>rangeStart?s.startDate:rangeStart,to=s.endDate<rangeEnd?s.endDate:rangeEnd;
+  return projectSlices(a.projectId,a.id,from,to,data.activityProjectReclassifications||[]).map(slice=>{
+   const p=data.projects.find(x=>x.id===slice.projectId);
+   return{id:String(s.id)+"-"+slice.start,project:p?`${p.code} · ${p.name}`:"–",
+    work:w?`${w.code} · ${w.name}`:"Direkt i projektet",
+    activity:`${a.code?`${a.code} · `:""}${a.name}`,
+    description:a.description||"Beskrivning saknas.",people:(subject as Employee).name,
+    effort:`${s.effortPercent}%`,start:slice.start,end:slice.end};
+  });
+ })}
+
  else{rows=data.activities.filter(a=>overlaps(a.startDate,a.endDate,rangeStart,rangeEnd)).flatMap(a=>{
   const from=a.startDate>rangeStart?a.startDate:rangeStart,to=a.endDate<rangeEnd?a.endDate:rangeEnd;
   return projectSlices(a.projectId,a.id,from,to,data.activityProjectReclassifications||[])
