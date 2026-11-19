@@ -26,6 +26,7 @@ const mandatory=[
  ["Aktivitet: enradsexport och Gantt-datum", "scripts/test-weekly-single-row.mjs"],
  ["Beläggning och historik", "scripts/test-weekly-load.mjs"],
  ["Effort-historik och överlappande perioder", "scripts/test-effort-history.mjs"],
+ ["Historiskt projektansvar per datum", "scripts/test-project-attribution.mjs"],
 ];
 const extended=[
  ["Full integration: importer, databasmigrationer och återställning", "scripts/test-individual-integration.mjs"],
