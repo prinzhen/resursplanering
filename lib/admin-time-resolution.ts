@@ -28,7 +28,10 @@ export function timeResolutionStatements(
     targetP.id,targetP.code,targetP.name,target.id,target.code,target.name,
     t.work_date,t.duration_seconds,?,?,?
     FROM time_entries t JOIN activities a ON a.id=t.activity_id
-    JOIN projects p ON p.id=a.project_id
+    JOIN projects p ON p.id=COALESCE(
+      (SELECT r.source_project_id FROM activity_project_reclassifications r
+       WHERE r.activity_id=t.activity_id AND r.effective_from>t.work_date
+       ORDER BY r.effective_from ASC,r.id ASC LIMIT 1), a.project_id)
     CROSS JOIN activities target JOIN projects targetP ON targetP.id=target.project_id
     WHERE target.id=? AND ${filter}`).bind(actor,at,reason,targetId,sourceId),
    d.prepare(`UPDATE time_entries SET activity_id=?,updated_at=? WHERE activity_id IN (${scope})`)
