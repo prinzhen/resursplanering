@@ -667,8 +667,8 @@ function activitySelectionGantt(activities:WorkActivity[],d:Data):GanttItem[]{
   const p=d.projects.find(x=>x.id===a.projectId),w=d.workPackages.find(x=>x.id===a.workPackageId);
   const ass=d.assignments.filter(s=>s.activityId===a.id),group=(p?p.code+" · "+p.name:"Okänt projekt")+" — "+(w?w.code+" · "+w.name:"Direkt i projektet");
   const label=(a.parentActivityId?"↳ ":"")+(a.code?a.code+" · ":"")+a.name,color=p?.color||"#2563eb";
-  if(!ass.length)return[{id:"selection-"+a.id+"-empty",activityId:a.id,group,label,sub:"Ej bemannad",start:a.startDate,end:a.endDate,color}];
-  return ass.flatMap(s=>ganttPeriodRows(s,d,{id:"selection-"+a.id+"-"+s.id,activityId:a.id,group,label,sub:d.employees.find(e=>e.id===s.employeeId)?.name||"Okänd resurs",start:s.startDate,end:s.endDate,color,status:a.status}));
+  if(!ass.length)return datedGanttRows([{id:"selection-"+a.id+"-empty",activityId:a.id,group,label,sub:"Ej bemannad",start:a.startDate,end:a.endDate,color}],a,d).map(({projectId,...item})=>{const owner=d.projects.find(p=>p.id===projectId);return {...item,group:(owner?owner.code+" · "+owner.name:"Okänt projekt")+" — "+(w?w.code+" · "+w.name:"Direkt i projektet"),color:owner?.color||color}});
+  return ass.flatMap(s=>datedGanttRows(ganttPeriodRows(s,d,{id:"selection-"+a.id+"-"+s.id,activityId:a.id,group,label,sub:d.employees.find(e=>e.id===s.employeeId)?.name||"Okänd resurs",start:s.startDate,end:s.endDate,color,status:a.status}),a,d).map(({projectId,...item})=>{const owner=d.projects.find(p=>p.id===projectId);return {...item,group:(owner?owner.code+" · "+owner.name:"Okänt projekt")+" — "+(w?w.code+" · "+w.name:"Direkt i projektet"),color:owner?.color||color}}));
  }).sort((x,y)=>x.group.localeCompare(y.group,"sv")||x.start.localeCompare(y.start)||x.sub.localeCompare(y.sub));
 }
 function projectGantt(p:Project,d:Data):GanttItem[]{
