@@ -173,9 +173,9 @@ export default function WeeklyV2Page(){
   finally{setLoading(false)}
  };
  return <main className="min-h-screen bg-slate-50 p-5 text-slate-900"><div className="mx-auto max-w-6xl space-y-5">
-  <header className="flex flex-wrap justify-between gap-4"><div><p className="text-sm font-medium text-blue-700">Resursplanering · Utvecklingsversion</p><h1 className="text-3xl font-semibold">Veckoplanering XLSX v2</h1>
+  <header className="flex flex-wrap justify-between gap-4"><div><p className="text-sm font-medium text-blue-700">Resursplanering · Excel veckoplanering</p><h1 className="text-3xl font-semibold">Veckoplanering XLSX v2</h1>
    <p className="mt-2 text-sm text-slate-600">16 kolumner: vecka, valfri veckodag och varaktighet i kalenderdagar (1v = 7 dagar, 1v3d = 10 dagar, 10 eller 10d = 10 dagar). Beläggning beräknas normalt på måndag–fredag, 8 h/dag och 40 h/vecka. Exporterad XLSX har även fliken Beläggning: veckovis från föregående vecka till 26 veckor framåt. Den räknas om i Excel när aktiviteter ändras och läses aldrig tillbaka vid import.</p></div>
-   <div className="flex flex-wrap gap-2"><a className="rounded-lg border border-blue-200 bg-blue-50 px-4 py-2 text-sm font-semibold text-blue-800" href="/other-work-inbox">Övrigt arbete · Inkorg</a><a className="rounded-lg border bg-white px-4 py-2 text-sm" href="/individual">← Befintlig veckoplanering</a></div></header>
+   <div className="flex flex-wrap gap-2"><a className="rounded-lg border border-blue-200 bg-blue-50 px-4 py-2 text-sm font-semibold text-blue-800" href="/other-work-inbox">Övrigt arbete · Inkorg</a><a className="rounded-lg border bg-white px-4 py-2 text-sm hover:bg-slate-50" href="/">← Tillbaka till planeringen</a></div></header>
   {error&&<p role="alert" className="rounded-lg border border-red-300 bg-red-50 p-4 text-red-800">{error}</p>}
   {message&&<p className="rounded-lg border border-blue-200 bg-blue-50 p-4 text-blue-900">{message}</p>}
   <section className="rounded-xl border bg-white p-5"><h2 className="mb-4 font-semibold">Personlig Excel-planering – namn och e-post identifierar medarbetaren</h2>
