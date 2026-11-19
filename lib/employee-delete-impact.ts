@@ -1,5 +1,3 @@
-import type {D1Database} from "@cloudflare/workers-types";
-
 /** Only the employee's active and soft-deleted time rows are included.
  * Caller must authorize the administrator before exposing this preview.
  */
