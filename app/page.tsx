@@ -1,5 +1,6 @@
 "use client";
 import {weeklyOverridePercent,type WeeklyLoadRow} from "@/lib/weekly-load";
+import {projectSlices,type Reclassification} from "@/lib/project-attribution";
 import {useEffect,useMemo,useRef,useState} from "react";
 import {sortEmployeeProjects} from "@/lib/project-sort";
 import {exchangeRows,writePlanningXlsx,readPlanningXlsx,readMspdi,writeMspdi,readMpx,writeMpx,detectExchangeFile,type ExchangeRow} from "@/lib/planning-exchange";
@@ -16,7 +17,7 @@ type Employee={id:number;name:string;email:string;role:string;managerId:number|n
 type DeleteImpact={kind:"project"|"workPackage"|"activity";id:number;entryCount:number;activeEntryCount:number;deletedEntryCount:number;runningEntryCount:number;totalSeconds:number;fingerprint:string};
 type DeleteDestination={id:number;name:string;code:string|null;projectId:number;projectCode:string;projectName:string};
 type DeletePreview={impact:DeleteImpact;targets:DeleteDestination[]};
-type Data={weeklyPlanRows?:WeeklyLoadRow[];viewer?:Viewer;projectDirectory?:Project[];employees:Employee[];projects:Project[];workPackages:WorkPackage[];activities:WorkActivity[];assignments:Assignment[];assignmentPeriods:EffortPeriod[];activityPriorityHistory?:ActivityPriorityEvent[];projectMembers:ProjectMember[];employeeProjectOrders:EmployeeProjectOrder[];employeeGroups:EmployeeGroup[];employeeGroupMembers:EmployeeGroupMember[];
+type Data={weeklyPlanRows?:WeeklyLoadRow[];activityProjectReclassifications?:Reclassification[];viewer?:Viewer;projectDirectory?:Project[];employees:Employee[];projects:Project[];workPackages:WorkPackage[];activities:WorkActivity[];assignments:Assignment[];assignmentPeriods:EffortPeriod[];activityPriorityHistory?:ActivityPriorityEvent[];projectMembers:ProjectMember[];employeeProjectOrders:EmployeeProjectOrder[];employeeGroups:EmployeeGroup[];employeeGroupMembers:EmployeeGroupMember[];
  employeeDirectory?:{id:number;name:string}[];
  projectLeaders?:{projectId:number;employeeId:number;employeeName?:string}[];
  teamLeaders?:{teamId:number;employeeId:number;employeeName?:string}[];
@@ -614,15 +615,25 @@ function ganttPeriodRows(a:Assignment,d:Data,base:GanttItem):GanttItem[]{
   status:a.workStatus||base.status
  }));
 }
+function datedGanttRows(rows:GanttItem[],activity:WorkActivity,d:Data){
+ return rows.flatMap(item=>projectSlices(activity.projectId,activity.id,item.start,item.end,
+  d.activityProjectReclassifications||[]).map((slice,i)=>({
+   ...item,id:item.id+"-project-"+i,projectId:slice.projectId,start:slice.start,end:slice.end
+  })));
+}
 function employeeGantt(e:Employee,d:Data):GanttItem[]{
  const ordered=sortEmployeeProjects(e.id,d.projects,d.assignments,d.activities,d.employeeProjectOrders);
  const positions=new Map(ordered.map((p,i)=>[p.code+" · "+p.name,i]));
  return d.assignments.filter(s=>s.employeeId===e.id).flatMap(s=>{
   const a=d.activities.find(x=>x.id===s.activityId),p=d.projects.find(x=>x.id===a?.projectId),w=d.workPackages.find(x=>x.id===a?.workPackageId);
   if(!a||!p)return [];
-  return ganttPeriodRows(s,d,{id:String(s.id),activityId:a.id,group:p.code+" · "+p.name,
+  const rows=ganttPeriodRows(s,d,{id:String(s.id),activityId:a.id,group:p.code+" · "+p.name,
    label:(a.parentActivityId?"↳ ":"")+(a.code?a.code+" · ":"")+a.name,
    sub:w?w.code+" · "+w.name:"Resursperiod",start:s.startDate,end:s.endDate,color:p.color,status:a.status});
+  return datedGanttRows(rows,a,d).map(({projectId,...segment})=>{
+   const owner=d.projects.find(x=>x.id===projectId);
+   return {...segment,group:owner?owner.code+" · "+owner.name:"Okänt projekt",color:owner?.color||p.color};
+  });
  }).sort((x,y)=>(positions.get(x.group)??9999)-(positions.get(y.group)??9999)||x.group.localeCompare(y.group,"sv")||x.start.localeCompare(y.start));
 }
 function activitySelectionGantt(activities:WorkActivity[],d:Data):GanttItem[]{
@@ -635,11 +646,11 @@ function activitySelectionGantt(activities:WorkActivity[],d:Data):GanttItem[]{
  }).sort((x,y)=>x.group.localeCompare(y.group,"sv")||x.start.localeCompare(y.start)||x.sub.localeCompare(y.sub));
 }
 function projectGantt(p:Project,d:Data):GanttItem[]{
- return d.activities.filter(a=>a.projectId===p.id).flatMap(a=>{
+ return d.activities.flatMap(a=>{
   const w=d.workPackages.find(x=>x.id===a.workPackageId),ass=d.assignments.filter(s=>s.activityId===a.id),
   group=w?w.code+" · "+w.name:"Direkt i projektet",label=(a.parentActivityId?"↳ ":"")+(a.code?a.code+" · ":"")+a.name;
-  if(!ass.length)return[{id:String(a.id)+"-empty",activityId:a.id,group,label,sub:"Ej bemannad",start:a.startDate,end:a.endDate,color:p.color}];
-  return ass.flatMap(s=>ganttPeriodRows(s,d,{id:a.id+"-"+s.id,activityId:a.id,group,label,sub:d.employees.find(e=>e.id===s.employeeId)?.name||"Okänd resurs",start:s.startDate,end:s.endDate,color:p.color,status:a.status}));
+  if(!ass.length)return datedGanttRows([{id:String(a.id)+"-empty",activityId:a.id,group,label,sub:"Ej bemannad",start:a.startDate,end:a.endDate,color:p.color}],a,d).filter(x=>x.projectId===p.id).map(({projectId,...item})=>item);
+  return ass.flatMap(s=>datedGanttRows(ganttPeriodRows(s,d,{id:a.id+"-"+s.id,activityId:a.id,group,label,sub:d.employees.find(e=>e.id===s.employeeId)?.name||"Okänd resurs",start:s.startDate,end:s.endDate,color:p.color,status:a.status}),a,d).filter(x=>x.projectId===p.id).map(({projectId,...item})=>item));
  }).sort((x,y)=>x.group.localeCompare(y.group,"sv")||x.start.localeCompare(y.start)||x.sub.localeCompare(y.sub));
 }
 function activityGantt(a:WorkActivity,d:Data):GanttItem[]{
