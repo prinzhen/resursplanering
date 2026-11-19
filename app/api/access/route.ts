@@ -67,7 +67,7 @@ export async function POST(req:Request){
    if(!existing)return Response.json({error:"Kontot saknas."},{status:404});
    const email=String(b.email||"").trim().toLowerCase(),person=b.employeeId===null||b.employeeId===""?null:Number(b.employeeId);
    const isAdmin=Number(b.isAdmin===true),isGroupManager=Number(b.isGroupManager===true),isDisabled=Number(b.isDisabled===true);
-   if(!/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(email)||email.length>254)
+   if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)||email.length>254)
     return Response.json({error:"Ange en giltig e-postadress."},{status:400});
    if(person!==null&&(!Number.isSafeInteger(person)||person<=0||!await d.prepare("SELECT id FROM employees WHERE id=?").bind(person).first()))
     return Response.json({error:"Kopplad medarbetare saknas."},{status:400});
