@@ -19,6 +19,7 @@ if(process.env.TEST_DATA_SOURCE) {
 }
 const root=resolve(import.meta.dirname,"..");
 const mandatory=[
+ ["Endast Excel veckoplanering v2 i användargränssnittet", "scripts/test-weekly-v2-only-navigation.mjs"],
  ["Rollmatris: administratör, chef, teamledare, projektledare, medarbetare", "scripts/test-role-access.mjs"],
  ["Veckoimport v2: autentisering, skapande, datum, ändringar och backup", "scripts/test-weekly-v2-integration.mjs"],
  ["Vanlig import/export: XLSX, MSPDI/XML, MPX, CSV-spärr", "scripts/test-planning-exchange.mjs"],
