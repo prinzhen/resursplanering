@@ -156,9 +156,12 @@ try{
  const historicalDenied=await call("/api/other-work-inbox",{
   activityId:originalOld.id,targetProjectId:newProject.id
  });
- assert.equal(historicalDenied.status,422,"Past-dated work must not change project history");
+ assert.equal(historicalDenied.status,200,JSON.stringify(historicalDenied.result));
+ assert.equal(historicalDenied.result.effectiveFrom.length,10);
  const oldStill=await call("/api/data");
- assert.equal(oldStill.result.activities.find(x=>x.id===originalOld.id).projectId,catchAll[0].id);
+ assert.equal(oldStill.result.activities.find(x=>x.id===originalOld.id).projectId,newProject.id);
+ assert.equal(oldStill.result.activityProjectReclassifications.filter(x=>x.activityId===originalOld.id).length,1,
+  "Past work retains a dated project ownership history record");
  const classified=await call("/api/other-work-inbox",{
   activityId:futureActivityId,targetProjectId:newProject.id
  });
@@ -179,7 +182,7 @@ try{
  const classificationRestore=await call("/api/data",{action:"restore",backup:{version:4,data:classificationSnapshot.result}});
  assert.equal(classificationRestore.status,200,JSON.stringify(classificationRestore.result));
  const afterClassificationRestore=await call("/api/data");
- assert.equal(afterClassificationRestore.result.activityProjectReclassifications.length,1,
+ assert.equal(afterClassificationRestore.result.activityProjectReclassifications.length,2,
   "Restoring a planning backup must restore project classification history");
  const snap=await call("/api/data");assert.equal(snap.status,200,JSON.stringify(snap.result));
  const erik=snap.result.employees.find(x=>x.name==="Erik Holm");assert.ok(erik);
