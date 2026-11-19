@@ -39,10 +39,10 @@ assert.ok(script.indexOf('cp -a "$DATA" "$BACKUP/data"') < script.indexOf('mv "$
  "Backup must precede code activation");
 assert.ok(script.indexOf('SWAPPED=1') < script.indexOf('mv "$STAGE" "$APP"'),
  "Rollback must be armed before new stage is moved into service path");
-assert.ok(script.indexOf('chmod -R g+rX "$STAGE"') < script.indexOf('systemctl stop "$SERVICE"'),
+assert.ok(script.indexOf('chmod -R g+rX "$STAGE"') < script.indexOf('systemctl stop "$SERVICE"',script.indexOf('echo "[2/6] Stoppar produktion')),
  "Production service permissions must be verified BEFORE any downtime");
-assert.ok(script.indexOf('PREFLIGHT="$STAGE/.prod-migration-preflight"') < script.indexOf('systemctl stop "$SERVICE"'),
+assert.ok(script.indexOf('PREFLIGHT="$STAGE/.prod-migration-preflight"') < script.indexOf('systemctl stop "$SERVICE"',script.indexOf('echo "[2/6] Stoppar produktion')),
  "Migrations of the production online snapshot must pass before stopping the service");
-assert.ok(script.indexOf('mktemp -d "$STAGE/selfhost/.wrangler/tmp/dev-XXXXXXXX"') < script.indexOf('systemctl stop "$SERVICE"'),
+assert.ok(script.indexOf('mktemp -d "$STAGE/selfhost/.wrangler/tmp/dev-XXXXXXXX"') < script.indexOf('systemctl stop "$SERVICE"',script.indexOf('echo "[2/6] Stoppar produktion')),
  "Wrangler runtime write access must be verified before stopping production");
 console.log("PASS production release: bash -n, pinned verified code, offline DB backup, rollback, auth and integrity gates");
