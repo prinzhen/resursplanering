@@ -162,6 +162,12 @@ try{
  assert.equal(oldStill.result.activities.find(x=>x.id===originalOld.id).projectId,newProject.id);
  assert.equal(oldStill.result.activityProjectReclassifications.filter(x=>x.activityId===originalOld.id).length,1,
   "Past work retains a dated project ownership history record");
+ // A stale ID-less source Excel must not recreate an activity in Övrigt
+ // after the original has already been classified.
+ const staleSourceExcel=await call("/api/weekly-v2/bootstrap",{
+  ...historicalRow,commit:true
+ });
+ assert.equal(staleSourceExcel.status,409,"Stale XLSX must not recreate a moved task");
  const classified=await call("/api/other-work-inbox",{
   activityId:futureActivityId,targetProjectId:newProject.id
  });
