@@ -13,6 +13,7 @@ OWNER="prinzhen"
 BRANCH="feature/admin-account-edit-employee-purge-20261119"
 TARGET="26ea27a48cfa94133b27cdd1a8c42c2893b7e926"
 EXPECTED_CURRENT="87bcff2d50abc8d16f445cf7a6e2ed71eb53cab9"
+TEST_EXPECTED="10cb199e89c3a3c1978e1f2146490b0d104e7e32"
 STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
 STAGE="/opt/.resursplanering-prod-stage-$STAMP"
 OLD="/opt/resursplanering.before-$STAMP"
@@ -68,7 +69,7 @@ CURRENT="$(git -c safe.directory="$APP" -C "$APP" rev-parse HEAD)"
  { echo "Avbryter: produktion är $CURRENT, förväntar $EXPECTED_CURRENT." >&2;exit 1; }
 systemctl is-active --quiet "$SERVICE" || { echo "Produktion är inte aktiv." >&2;exit 1; }
 systemctl is-active --quiet "$TEST_SERVICE" || { echo "Testtjänsten är inte aktiv." >&2;exit 1; }
-[[ "$(git -c safe.directory=/opt/resursplanering-weekly-v2 -C /opt/resursplanering-weekly-v2 rev-parse HEAD)" == "$EXPECTED_CURRENT" ]] || { echo "Testmiljön matchar inte tidigare godkänd version $EXPECTED_CURRENT. Avbryter." >&2;exit 1; }
+[[ "$(git -c safe.directory=/opt/resursplanering-weekly-v2 -C /opt/resursplanering-weekly-v2 rev-parse HEAD)" == "$TEST_EXPECTED" ]] || { echo "Testmiljön matchar inte tidigare godkänd version $TEST_EXPECTED. Avbryter." >&2;exit 1; }
 [[ ! -e "$STAGE" && ! -e "$OLD" && ! -e "$BACKUP" ]] ||
  { echo "En releasekatalog finns redan; avbryter." >&2;exit 1; }
 
