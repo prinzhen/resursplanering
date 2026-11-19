@@ -733,6 +733,63 @@ try{
   assert.equal(unclassifiedSave.registered.length,1);
   assert.equal(unclassifiedSave.registered[0].projectCode,"INTERNAL-OVR");
  });
+ // Exercise account-edit authorization, session revocation, and uniqueness.
+ const accountsBefore=await ok(admin,"/api/access");
+ const account=accountsBefore.accounts.find(x=>x.email==="johan@example.se");
+ assert.ok(account);
+ const nonAdminEdit=await api(ordinary,"/api/access",{action:"editAccount",accountId:account.id,email:"new-johan@example.se",employeeId:johan,isAdmin:true,isGroupManager:false,isDisabled:false},{retryKnownDenied:true});
+ check("Staff cannot edit accounts",()=>assert.equal(nonAdminEdit.status,403));
+ const duplicateEmail=await api(admin,"/api/access",{action:"editAccount",accountId:account.id,email:"sara@example.se",employeeId:johan,isAdmin:false,isGroupManager:false,isDisabled:false},{retryKnownDenied:true});
+ check("Edited account email must remain unique",()=>assert.equal(duplicateEmail.status,409));
+ await ok(admin,"/api/access",{action:"editAccount",accountId:account.id,email:"johan-edited@example.se",employeeId:johan,isAdmin:false,isGroupManager:true,isDisabled:false});
+ const accountsAfter=await ok(admin,"/api/access");
+ check("Account edit preserves account ID and updates role",()=>{
+  assert.equal(accountsAfter.accounts.length,accountsBefore.accounts.length);
+  const changed=accountsAfter.accounts.find(x=>x.id===account.id);
+  assert.equal(changed.email,"johan-edited@example.se");assert.equal(changed.isGroupManager,1);
+ });
+ const revoked=await api(nonmember,"/api/access");
+ check("Account editing revokes existing login sessions",()=>assert.equal(revoked.status,401));
+ const reauth=await connected("johan-edited@example.se");
+ check("Edited email works for fresh login",()=>assert.ok(reauth));
+ const selfDemote=await api(admin,"/api/access",{action:"editAccount",accountId:accountsAfter.viewer.accountId,email:"role-admin@example.se",employeeId:adminPerson.id,isAdmin:false,isGroupManager:false,isDisabled:false},{retryKnownDenied:true});
+ check("Admin cannot demote their current account",()=>assert.equal(selfDemote.status,409));
+
+ // A soft-deleted report must not prevent an admin-confirmed staff removal.
+ const createdEmployee=await ok(admin,"/api/data",{action:"employee",name:"CI Purge User",email:"ci-purge@example.se",role:"Medarbetare",capacityPercent:100});
+ const removeId=createdEmployee.employees.find(x=>x.email==="ci-purge@example.se")?.id;
+ assert.ok(removeId);
+ await ok(admin,"/api/access",{action:"saveAccount",email:"ci-purge@example.se",employeeId:removeId,password,isAdmin:false,isGroupManager:false});
+ await ok(admin,"/api/data",{action:"assignment",activityId:1,employeeId:removeId,effortPercent:25});
+ const removeCookie=await connected("ci-purge@example.se");
+ const addedTime=await ok(removeCookie,"/api/time-entries",{action:"manual",activityId:1,workDate:"2026-11-14",durationMinutes:43,note:"ci-purge-time"});
+ const entry=addedTime.entries.find(x=>x.employeeId===removeId&&x.workDate==="2026-11-14"&&x.durationSeconds===2580);
+ assert.ok(entry?.id);
+ await ok(removeCookie,"/api/time-entries",{action:"delete",id:entry.id});
+ const withAccount=await ok(admin,`/api/delete-impact?type=employee&id=${removeId}`);
+ check("Preview counts soft-deleted hours and linked login",()=>{
+  assert.equal(withAccount.employeeImpact.entryCount,1);
+  assert.equal(withAccount.employeeImpact.deletedEntryCount,1);
+  assert.equal(withAccount.employeeImpact.linkedAccount,"ci-purge@example.se");
+ });
+ const linkedDenied=await fetch(base+"/api/data?"+new URLSearchParams({type:"employee",id:String(removeId),timeMode:"purge",confirm:"RADERA MEDARBETARE",expectedFingerprint:withAccount.employeeImpact.fingerprint}),{method:"DELETE",headers:{cookie:admin}});
+ check("Linked employee account blocks purge",()=>assert.equal(linkedDenied.status,409));
+ const removalAccount=(await ok(admin,"/api/access")).accounts.find(x=>x.email==="ci-purge@example.se");
+ await ok(admin,"/api/access",{action:"deleteAccount",accountId:removalAccount.id});
+ const latest=await ok(admin,`/api/delete-impact?type=employee&id=${removeId}`);
+ const path="/api/data?"+new URLSearchParams({type:"employee",id:String(removeId),timeMode:"purge",expectedFingerprint:latest.employeeImpact.fingerprint});
+ const missingConfirmation=await fetch(base+path,{method:"DELETE",headers:{cookie:admin}});
+ check("Purge requires exact typed confirmation",()=>assert.equal(missingConfirmation.status,409));
+ const purgeResult=await fetch(base+path+"&confirm=RADERA+MEDARBETARE",{method:"DELETE",headers:{cookie:admin}});
+ const purgeBody=await purgeResult.text();
+ check("Admin can remove soft-deleted time and employee in one transaction",()=>assert.equal(purgeResult.status,200,purgeBody.slice(0,900)));
+ const checkedPurge=new DatabaseSync(await onlyDatabase(join(dir,"data")),{readOnly:true});
+ try{check("Employee purge leaves no active time or broken foreign keys",()=>{
+  assert.equal(checkedPurge.prepare("SELECT COUNT(*) n FROM employees WHERE id=?").get(removeId).n,0);
+  assert.equal(checkedPurge.prepare("SELECT COUNT(*) n FROM time_entries WHERE employee_id=?").get(removeId).n,0);
+  assert.equal(checkedPurge.prepare("SELECT COUNT(*) n FROM time_entry_audit WHERE time_entry_id=?").get(entry.id).n,0);
+  assert.equal(checkedPurge.prepare("PRAGMA foreign_key_check").all().length,0);
+ });}finally{checkedPurge.close()}
  const db=new DatabaseSync(await onlyDatabase(join(dir,"data")),{readOnly:true});
  try{
   check("Time adjustments are audited, including delete",()=>{
