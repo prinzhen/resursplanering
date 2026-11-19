@@ -95,6 +95,13 @@ git clone --quiet --single-branch --branch "$BRANCH" https://github.com/prinzhen
 git -C "$STAGE" checkout --quiet --detach "$TARGET"
 [[ "$(git -C "$STAGE" rev-parse HEAD)" == "$TARGET" ]] || { echo "Fel kodversion.";exit 1; }
 chown -R "$OWNER:$(id -gn "$OWNER")" "$STAGE"
+# The stage directory inherits umask 077, so only OWNER can enter it
+# after cloning. The production service uses a different unprivileged user.
+# Grant its primary group read/execute (not write) BEFORE code activation.
+SERVICE_USER="$(systemctl show -P User "$SERVICE")"
+[[ -n "$SERVICE_USER" && "$SERVICE_USER" != root ]] || { echo "Okänd/osäker produktionsanvändare: $SERVICE_USER" >&2;exit 1; }
+SERVICE_GROUP="$(id -gn "$SERVICE_USER")"
+[[ -n "$SERVICE_GROUP" ]] || { echo "Kunde inte identifiera produktionsgruppen." >&2;exit 1; }
 runuser -u "$OWNER" -- env HOME="/home/$OWNER" CI=true pnpm --dir "$STAGE" install --frozen-lockfile
 (
  cd "$STAGE"
@@ -102,6 +109,16 @@ runuser -u "$OWNER" -- env HOME="/home/$OWNER" CI=true pnpm --dir "$STAGE" insta
  runuser -u "$OWNER" -- env HOME="/home/$OWNER" CI=true pnpm exec tsc --noEmit
  timeout --signal=TERM --kill-after=10s 300s runuser -u "$OWNER" -- env HOME="/home/$OWNER" CI=true node scripts/test-release-readiness.mjs --quick
 )
+
+# Grant service access to the built tree. Keep world permissions unchanged.
+# This also covers files emitted by pnpm/vinext during the build.
+chgrp -R "$SERVICE_GROUP" "$STAGE"
+chmod -R g+rX "$STAGE"
+runuser -u "$SERVICE_USER" -- test -x "$STAGE"
+runuser -u "$SERVICE_USER" -- test -r "$STAGE/scripts/start-selfhosted.mjs"
+runuser -u "$SERVICE_USER" -- bash -c 'cd "$1" && test -r ./selfhost/wrangler.jsonc && test -r ./dist/server/index.js' _ "$STAGE" ||
+ { echo "Tjänstens användare kan inte läsa den färdigbyggda releasen." >&2;exit 1; }
+echo "Behörighetskontroll OK: $SERVICE_USER ($SERVICE_GROUP) kan läsa nya programkatalogen."
 
 echo "[2/6] Stoppar produktion kort och tar konsekvent backup av hela DATA_DIR."
 STOPPED=1
@@ -131,6 +148,8 @@ echo "[3/6] Byter endast produktionskod. Startar migrationer på produktionsdata
 mv "$APP" "$OLD"
 SWAPPED=1
 mv "$STAGE" "$APP"
+runuser -u "$SERVICE_USER" -- bash -c 'cd "$1" && test -r ./scripts/start-selfhosted.mjs' _ "$APP" ||
+ { echo "Efter kodbyte: tjänstanvändaren kan inte öppna /opt/resursplanering." >&2;exit 1; }
 systemctl start "$SERVICE"
 
 echo "[4/6] Verifierar produktion och test."
