@@ -68,6 +68,7 @@ CURRENT="$(git -c safe.directory="$APP" -C "$APP" rev-parse HEAD)"
  { echo "Avbryter: produktion är $CURRENT, förväntar $EXPECTED_CURRENT." >&2;exit 1; }
 systemctl is-active --quiet "$SERVICE" || { echo "Produktion är inte aktiv." >&2;exit 1; }
 systemctl is-active --quiet "$TEST_SERVICE" || { echo "Testtjänsten är inte aktiv." >&2;exit 1; }
+[[ "$(git -c safe.directory=/opt/resursplanering-weekly-v2 -C /opt/resursplanering-weekly-v2 rev-parse HEAD)" == "$TARGET" ]] || { echo "Testmiljön använder inte den godkända produktionsversionen $TARGET. Avbryter." >&2;exit 1; }
 [[ ! -e "$STAGE" && ! -e "$OLD" && ! -e "$BACKUP" ]] ||
  { echo "En releasekatalog finns redan; avbryter." >&2;exit 1; }
 
@@ -87,7 +88,7 @@ done
 echo "PRODUKTION $CURRENT -> $TARGET. TEST och testdatabasen berörs inte."
 echo "Downtime för produktion uppstår vid backup, kodbyte och uppstart."
 read -r -p "Skriv JA UPPDATERA PRODUKTION: " answer
-[[ "$answer" == "JA UPPDATERA PRODUKTION" ]] || { echo "Avbrutet.";exit 0; }
+[[ "$answer" == "JA UPPDATERA PRODUKTION" ]] || { echo "Avbrutet.";SUCCESS=1;exit 0; }
 
 echo "[1/6] Hämtar och bygger låst kodversion i separat staging."
 git clone --quiet --single-branch --branch "$BRANCH" https://github.com/prinzhen/resursplanering.git "$STAGE"
@@ -128,8 +129,8 @@ PY
 
 echo "[3/6] Byter endast produktionskod. Startar migrationer på produktionsdatabasen."
 mv "$APP" "$OLD"
-mv "$STAGE" "$APP"
 SWAPPED=1
+mv "$STAGE" "$APP"
 systemctl start "$SERVICE"
 
 echo "[4/6] Verifierar produktion och test."
