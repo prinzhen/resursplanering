@@ -114,11 +114,19 @@ runuser -u "$OWNER" -- env HOME="/home/$OWNER" CI=true pnpm --dir "$STAGE" insta
 # This also covers files emitted by pnpm/vinext during the build.
 chgrp -R "$SERVICE_GROUP" "$STAGE"
 chmod -R g+rX "$STAGE"
+# Wrangler dev writes temporary files under selfhost/.wrangler. The entire
+# application tree must NOT be writable by the service account; allow only
+# this dedicated runtime directory. This prevents EACCES mkdtemp at startup.
+install -d -o "$SERVICE_USER" -g "$SERVICE_GROUP" -m 0700 "$STAGE/selfhost/.wrangler"
+install -d -o "$SERVICE_USER" -g "$SERVICE_GROUP" -m 0700 "$STAGE/selfhost/.wrangler/tmp"
+TEMP_CHECK="$(runuser -u "$SERVICE_USER" -- mktemp -d "$STAGE/selfhost/.wrangler/tmp/dev-XXXXXXXX")" ||
+ { echo "Wrangler kan inte skriva till selfhost/.wrangler/tmp." >&2;exit 1; }
+rmdir "$TEMP_CHECK"
 runuser -u "$SERVICE_USER" -- test -x "$STAGE"
 runuser -u "$SERVICE_USER" -- test -r "$STAGE/scripts/start-selfhosted.mjs"
 runuser -u "$SERVICE_USER" -- bash -c 'cd "$1" && test -r ./selfhost/wrangler.jsonc && test -r ./dist/server/index.js' _ "$STAGE" ||
  { echo "Tjänstens användare kan inte läsa den färdigbyggda releasen." >&2;exit 1; }
-echo "Behörighetskontroll OK: $SERVICE_USER ($SERVICE_GROUP) kan läsa nya programkatalogen."
+echo "Behörighetskontroll OK: $SERVICE_USER ($SERVICE_GROUP) kan läsa koden och skapa Wranglers temporära filer."
 
 echo "[2/6] Stoppar produktion kort och tar konsekvent backup av hela DATA_DIR."
 STOPPED=1
