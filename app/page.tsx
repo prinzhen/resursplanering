@@ -1,5 +1,6 @@
 "use client";
 import {weeklyOverridePercent,type WeeklyLoadRow} from "@/lib/weekly-load";
+import {projectSlices,type Reclassification} from "@/lib/project-attribution";
 import {useEffect,useMemo,useRef,useState} from "react";
 import {sortEmployeeProjects} from "@/lib/project-sort";
 import {exchangeRows,writePlanningXlsx,readPlanningXlsx,readMspdi,writeMspdi,readMpx,writeMpx,detectExchangeFile,type ExchangeRow} from "@/lib/planning-exchange";
@@ -16,7 +17,7 @@ type Employee={id:number;name:string;email:string;role:string;managerId:number|n
 type DeleteImpact={kind:"project"|"workPackage"|"activity";id:number;entryCount:number;activeEntryCount:number;deletedEntryCount:number;runningEntryCount:number;totalSeconds:number;fingerprint:string};
 type DeleteDestination={id:number;name:string;code:string|null;projectId:number;projectCode:string;projectName:string};
 type DeletePreview={impact:DeleteImpact;targets:DeleteDestination[]};
-type Data={weeklyPlanRows?:WeeklyLoadRow[];viewer?:Viewer;projectDirectory?:Project[];employees:Employee[];projects:Project[];workPackages:WorkPackage[];activities:WorkActivity[];assignments:Assignment[];assignmentPeriods:EffortPeriod[];activityPriorityHistory?:ActivityPriorityEvent[];projectMembers:ProjectMember[];employeeProjectOrders:EmployeeProjectOrder[];employeeGroups:EmployeeGroup[];employeeGroupMembers:EmployeeGroupMember[];
+type Data={weeklyPlanRows?:WeeklyLoadRow[];activityProjectReclassifications?:Reclassification[];viewer?:Viewer;projectDirectory?:Project[];employees:Employee[];projects:Project[];workPackages:WorkPackage[];activities:WorkActivity[];assignments:Assignment[];assignmentPeriods:EffortPeriod[];activityPriorityHistory?:ActivityPriorityEvent[];projectMembers:ProjectMember[];employeeProjectOrders:EmployeeProjectOrder[];employeeGroups:EmployeeGroup[];employeeGroupMembers:EmployeeGroupMember[];
  employeeDirectory?:{id:number;name:string}[];
  projectLeaders?:{projectId:number;employeeId:number;employeeName?:string}[];
  teamLeaders?:{teamId:number;employeeId:number;employeeName?:string}[];
@@ -483,8 +484,34 @@ function PrintPlanningDialog({open,close,subject,kind,data}:{open:boolean;close:
  const[start,setStart]=useState(new Date().toISOString().slice(0,10)),[period,setPeriod]=useState<PrintPeriod>("4w");
  const allItems=kind==="employee"?employeeGantt(subject as Employee,data):projectGantt(subject as Project,data),sourceDates=allItems.flatMap(i=>[i.start,i.end]),rangeStart=period==="all"?(sourceDates.sort()[0]||start):start,rangeEnd=period==="all"?([...sourceDates].sort().at(-1)||start):periodEnd(start,period),items=allItems.filter(i=>overlaps(i.start,i.end,rangeStart,rangeEnd));
  let rows:PlanningRow[]=[];
- if(kind==="employee"){rows=data.assignments.filter(s=>s.employeeId===subject.id&&overlaps(s.startDate,s.endDate,rangeStart,rangeEnd)).flatMap(s=>{const a=data.activities.find(x=>x.id===s.activityId),p=data.projects.find(x=>x.id===a?.projectId),w=data.workPackages.find(x=>x.id===a?.workPackageId);return a?[{id:String(s.id),project:p?`${p.code} · ${p.name}`:"–",work:w?`${w.code} · ${w.name}`:"Direkt i projektet",activity:`${a.code?`${a.code} · `:""}${a.name}`,description:a.description||"Beskrivning saknas.",people:(subject as Employee).name,effort:`${s.effortPercent}%`,start:s.startDate,end:s.endDate}]:[]})}
- else{rows=data.activities.filter(a=>a.projectId===subject.id&&overlaps(a.startDate,a.endDate,rangeStart,rangeEnd)).map(a=>{const p=subject as Project,w=data.workPackages.find(x=>x.id===a.workPackageId),ass=data.assignments.filter(s=>s.activityId===a.id&&overlaps(s.startDate,s.endDate,rangeStart,rangeEnd));return{id:String(a.id),project:`${p.code} · ${p.name}`,work:w?`${w.code} · ${w.name}`:"Direkt i projektet",activity:`${a.parentActivityId?"↳ ":""}${a.code?`${a.code} · `:""}${a.name}`,description:a.description||"Beskrivning saknas.",people:ass.length?ass.map(s=>data.employees.find(e=>e.id===s.employeeId)?.name||"Okänd resurs").join(", "):"Ej bemannad",effort:ass.length?`${ass.reduce((sum,s)=>sum+s.effortPercent,0)}% totalt`:"–",start:a.startDate,end:a.endDate}})}
+ if(kind==="employee"){rows=data.assignments.filter(s=>s.employeeId===subject.id&&overlaps(s.startDate,s.endDate,rangeStart,rangeEnd)).flatMap(s=>{
+  const a=data.activities.find(x=>x.id===s.activityId),w=data.workPackages.find(x=>x.id===a?.workPackageId);
+  if(!a)return [];
+  const from=s.startDate>rangeStart?s.startDate:rangeStart,to=s.endDate<rangeEnd?s.endDate:rangeEnd;
+  return projectSlices(a.projectId,a.id,from,to,data.activityProjectReclassifications||[]).map(slice=>{
+   const p=data.projects.find(x=>x.id===slice.projectId);
+   return{id:String(s.id)+"-"+slice.start,project:p?`${p.code} · ${p.name}`:"–",
+    work:w?`${w.code} · ${w.name}`:"Direkt i projektet",
+    activity:`${a.code?`${a.code} · `:""}${a.name}`,
+    description:a.description||"Beskrivning saknas.",people:(subject as Employee).name,
+    effort:`${s.effortPercent}%`,start:slice.start,end:slice.end};
+  });
+ })}
+
+ else{rows=data.activities.filter(a=>overlaps(a.startDate,a.endDate,rangeStart,rangeEnd)).flatMap(a=>{
+  const from=a.startDate>rangeStart?a.startDate:rangeStart,to=a.endDate<rangeEnd?a.endDate:rangeEnd;
+  return projectSlices(a.projectId,a.id,from,to,data.activityProjectReclassifications||[])
+   .filter(slice=>slice.projectId===subject.id).map(slice=>{
+    const p=subject as Project,w=data.workPackages.find(x=>x.id===a.workPackageId);
+    const ass=data.assignments.filter(s=>s.activityId===a.id&&overlaps(s.startDate,s.endDate,slice.start,slice.end));
+    return{id:String(a.id),project:`${p.code} · ${p.name}`,work:w?`${w.code} · ${w.name}`:"Direkt i projektet",
+     activity:`${a.parentActivityId?"↳ ":""}${a.code?`${a.code} · `:""}${a.name}`,
+     description:a.description||"Beskrivning saknas.",
+     people:ass.length?ass.map(s=>data.employees.find(e=>e.id===s.employeeId)?.name||"Okänd resurs").join(", "):"Ej bemannad",
+     effort:ass.length?`${ass.reduce((sum,s)=>sum+s.effortPercent,0)}% totalt`:"–",
+     start:slice.start,end:slice.end};
+   });
+ });}
  rows.sort((a,b)=>a.project.localeCompare(b.project,"sv")||a.start.localeCompare(b.start)||a.activity.localeCompare(b.activity,"sv"));
  const groups=[...new Set(rows.map(r=>kind==="employee"?r.project:r.work))],periodLabel=`${dateFmt.format(new Date(rangeStart))} – ${dateFmt.format(new Date(rangeEnd))}`,projectCount=new Set(rows.map(r=>r.project)).size,peopleCount=kind==="project"?new Set(data.assignments.filter(s=>rows.some(r=>Number(r.id)===s.activityId)).map(s=>s.employeeId)).size:1;
  const documentProps={kind,subject,rows,groups,items,rangeStart,rangeEnd,periodLabel,projectCount,peopleCount};
@@ -614,15 +641,25 @@ function ganttPeriodRows(a:Assignment,d:Data,base:GanttItem):GanttItem[]{
   status:a.workStatus||base.status
  }));
 }
+function datedGanttRows(rows:GanttItem[],activity:WorkActivity,d:Data){
+ return rows.flatMap(item=>projectSlices(activity.projectId,activity.id,item.start,item.end,
+  d.activityProjectReclassifications||[]).map((slice,i)=>({
+   ...item,id:item.id+"-project-"+i,projectId:slice.projectId,start:slice.start,end:slice.end
+  })));
+}
 function employeeGantt(e:Employee,d:Data):GanttItem[]{
  const ordered=sortEmployeeProjects(e.id,d.projects,d.assignments,d.activities,d.employeeProjectOrders);
  const positions=new Map(ordered.map((p,i)=>[p.code+" · "+p.name,i]));
  return d.assignments.filter(s=>s.employeeId===e.id).flatMap(s=>{
   const a=d.activities.find(x=>x.id===s.activityId),p=d.projects.find(x=>x.id===a?.projectId),w=d.workPackages.find(x=>x.id===a?.workPackageId);
   if(!a||!p)return [];
-  return ganttPeriodRows(s,d,{id:String(s.id),activityId:a.id,group:p.code+" · "+p.name,
+  const rows=ganttPeriodRows(s,d,{id:String(s.id),activityId:a.id,group:p.code+" · "+p.name,
    label:(a.parentActivityId?"↳ ":"")+(a.code?a.code+" · ":"")+a.name,
    sub:w?w.code+" · "+w.name:"Resursperiod",start:s.startDate,end:s.endDate,color:p.color,status:a.status});
+  return datedGanttRows(rows,a,d).map(({projectId,...segment})=>{
+   const owner=d.projects.find(x=>x.id===projectId);
+   return {...segment,group:owner?owner.code+" · "+owner.name:"Okänt projekt",color:owner?.color||p.color};
+  });
  }).sort((x,y)=>(positions.get(x.group)??9999)-(positions.get(y.group)??9999)||x.group.localeCompare(y.group,"sv")||x.start.localeCompare(y.start));
 }
 function activitySelectionGantt(activities:WorkActivity[],d:Data):GanttItem[]{
@@ -630,16 +667,16 @@ function activitySelectionGantt(activities:WorkActivity[],d:Data):GanttItem[]{
   const p=d.projects.find(x=>x.id===a.projectId),w=d.workPackages.find(x=>x.id===a.workPackageId);
   const ass=d.assignments.filter(s=>s.activityId===a.id),group=(p?p.code+" · "+p.name:"Okänt projekt")+" — "+(w?w.code+" · "+w.name:"Direkt i projektet");
   const label=(a.parentActivityId?"↳ ":"")+(a.code?a.code+" · ":"")+a.name,color=p?.color||"#2563eb";
-  if(!ass.length)return[{id:"selection-"+a.id+"-empty",activityId:a.id,group,label,sub:"Ej bemannad",start:a.startDate,end:a.endDate,color}];
-  return ass.flatMap(s=>ganttPeriodRows(s,d,{id:"selection-"+a.id+"-"+s.id,activityId:a.id,group,label,sub:d.employees.find(e=>e.id===s.employeeId)?.name||"Okänd resurs",start:s.startDate,end:s.endDate,color,status:a.status}));
+  if(!ass.length)return datedGanttRows([{id:"selection-"+a.id+"-empty",activityId:a.id,group,label,sub:"Ej bemannad",start:a.startDate,end:a.endDate,color}],a,d).map(({projectId,...item})=>{const owner=d.projects.find(p=>p.id===projectId);return {...item,group:(owner?owner.code+" · "+owner.name:"Okänt projekt")+" — "+(w?w.code+" · "+w.name:"Direkt i projektet"),color:owner?.color||color}});
+  return ass.flatMap(s=>datedGanttRows(ganttPeriodRows(s,d,{id:"selection-"+a.id+"-"+s.id,activityId:a.id,group,label,sub:d.employees.find(e=>e.id===s.employeeId)?.name||"Okänd resurs",start:s.startDate,end:s.endDate,color,status:a.status}),a,d).map(({projectId,...item})=>{const owner=d.projects.find(p=>p.id===projectId);return {...item,group:(owner?owner.code+" · "+owner.name:"Okänt projekt")+" — "+(w?w.code+" · "+w.name:"Direkt i projektet"),color:owner?.color||color}}));
  }).sort((x,y)=>x.group.localeCompare(y.group,"sv")||x.start.localeCompare(y.start)||x.sub.localeCompare(y.sub));
 }
 function projectGantt(p:Project,d:Data):GanttItem[]{
- return d.activities.filter(a=>a.projectId===p.id).flatMap(a=>{
+ return d.activities.flatMap(a=>{
   const w=d.workPackages.find(x=>x.id===a.workPackageId),ass=d.assignments.filter(s=>s.activityId===a.id),
   group=w?w.code+" · "+w.name:"Direkt i projektet",label=(a.parentActivityId?"↳ ":"")+(a.code?a.code+" · ":"")+a.name;
-  if(!ass.length)return[{id:String(a.id)+"-empty",activityId:a.id,group,label,sub:"Ej bemannad",start:a.startDate,end:a.endDate,color:p.color}];
-  return ass.flatMap(s=>ganttPeriodRows(s,d,{id:a.id+"-"+s.id,activityId:a.id,group,label,sub:d.employees.find(e=>e.id===s.employeeId)?.name||"Okänd resurs",start:s.startDate,end:s.endDate,color:p.color,status:a.status}));
+  if(!ass.length)return datedGanttRows([{id:String(a.id)+"-empty",activityId:a.id,group,label,sub:"Ej bemannad",start:a.startDate,end:a.endDate,color:p.color}],a,d).filter(x=>x.projectId===p.id).map(({projectId,...item})=>item);
+  return ass.flatMap(s=>datedGanttRows(ganttPeriodRows(s,d,{id:a.id+"-"+s.id,activityId:a.id,group,label,sub:d.employees.find(e=>e.id===s.employeeId)?.name||"Okänd resurs",start:s.startDate,end:s.endDate,color:p.color,status:a.status}),a,d).filter(x=>x.projectId===p.id).map(({projectId,...item})=>item));
  }).sort((x,y)=>x.group.localeCompare(y.group,"sv")||x.start.localeCompare(y.start)||x.sub.localeCompare(y.sub));
 }
 function activityGantt(a:WorkActivity,d:Data):GanttItem[]{

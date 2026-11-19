@@ -1,0 +1,25 @@
+name: Production release safeguards
+
+on:
+  pull_request:
+    paths:
+      - "scripts/update-production-3000.sh"
+      - "scripts/test-production-release-safety.mjs"
+      - "lib/project-attribution.ts"
+      - "scripts/test-project-attribution.mjs"
+      - ".github/workflows/production-release-safety.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  release-guard:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify production script syntax and safety gates
+        run: |
+          bash -n scripts/update-production-3000.sh
+          node scripts/test-production-release-safety.mjs
+          node scripts/test-project-attribution.mjs

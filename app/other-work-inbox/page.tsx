@@ -29,7 +29,7 @@ export default function OtherWorkInbox(){
  const classify=async(item:Item)=>{
   const targetProjectId=Number(chosen[item.activityId]);
   if(!targetProjectId){setError("Välj ett mottagande projekt.");return}
-  if(!window.confirm("Flytta "+item.task+" till valt projekt? Endast framtida aktiviteter utan historik kan flyttas."))return;
+  if(!window.confirm("Flytta "+item.task+" från och med idag? Äldre beläggning och rapporterad tid ska ligga kvar på Övrigt arbete."))return;
   setSaving(item.activityId);setError("");setNotice("");
   try{
    const response=await fetch("/api/other-work-inbox",{method:"POST",headers:{"content-type":"application/json"},
@@ -58,9 +58,10 @@ export default function OtherWorkInbox(){
     <a href="/" className="rounded-lg border bg-white px-4 py-2 text-sm">← Till planeringen</a>
    </header>
    <section className="rounded-xl border border-blue-200 bg-blue-50 p-4 text-sm text-blue-950">
-    <strong>Säker projektklassificering.</strong> Nya aktiviteter utan tidigare planeringsperioder,
-    rapporterade timmar eller beroenden kan flyttas direkt. Äldre aktiviteter blockeras
-    för att historisk beläggning och tidrapportering inte ska ändra projekt i efterhand.
+    <strong>Projektbyte från dagens datum.</strong> Äldre rapporterade timmar och historiska
+    beläggningsperioder behåller ursprunglig projektkoppling. Pågående och framtida arbete
+    kopplas till valt projekt. Aktiviteter med underaktiviteter, uppdrag eller arbetsförfrågningar
+    behöver hanteras separat.
    </section>
    {notice&&<p role="status" className="rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-emerald-900">{notice}</p>}
    {error&&<p role="alert" className="rounded-lg border border-red-200 bg-red-50 p-3 text-red-800">{error}</p>}
@@ -117,7 +118,7 @@ export default function OtherWorkInbox(){
          disabled={!chosen[x.activityId]||saving!==null} onClick={()=>classify(x)}>
          {saving===x.activityId?"Flyttar…":"Flytta"}</button>
        </div>
-       <p className="mt-2 text-xs text-slate-500">Historiska aktiviteter skyddas mot direktflytt.</p>
+       <p className="mt-2 text-xs text-slate-500">Historik före flyttdatumet stannar på ursprungsprojektet.</p>
       </div>
      </article>)}
     {loading?<p className="rounded-xl border bg-white p-5 text-slate-500">Hämtar aktiviteter…</p>:

@@ -16,11 +16,16 @@ type TimeRow={id:number;employeeId:number;activityId:number;projectId:number;emp
  activityCode:string|null;activityName:string;workDate:string;startedAt:number;endedAt:number|null;
  durationSeconds:number|null;note:string;source:string;updatedAt:number;deletedAt:number|null};
 const details=`SELECT t.id,t.employee_id employeeId,t.activity_id activityId,
- a.project_id projectId,e.email employeeEmail,p.code projectCode,a.code activityCode,a.name activityName,
+ p.id projectId,e.email employeeEmail,p.code projectCode,a.code activityCode,a.name activityName,
  t.work_date workDate,t.started_at startedAt,t.ended_at endedAt,
  t.duration_seconds durationSeconds,t.note,t.source,t.updated_at updatedAt,t.deleted_at deletedAt
  FROM time_entries t JOIN employees e ON e.id=t.employee_id
- JOIN activities a ON a.id=t.activity_id JOIN projects p ON p.id=a.project_id`;
+ JOIN activities a ON a.id=t.activity_id
+ JOIN projects p ON p.id=COALESCE(
+   (SELECT r.source_project_id FROM activity_project_reclassifications r
+      WHERE r.activity_id=t.activity_id AND r.effective_from>t.work_date
+      ORDER BY r.effective_from ASC,r.id ASC LIMIT 1),
+   a.project_id)`;
 const bad=(message:string,status=400)=>Response.json({error:message},{status});
 async function allowedActivity(d:D1Database,user:Identity,activityId:number){
  const a=await d.prepare("SELECT id,project_id projectId FROM activities WHERE id=?").bind(activityId).first<{id:number;projectId:number}>();

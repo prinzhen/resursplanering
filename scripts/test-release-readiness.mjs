@@ -19,6 +19,7 @@ if(process.env.TEST_DATA_SOURCE) {
 }
 const root=resolve(import.meta.dirname,"..");
 const mandatory=[
+ ["Produktion: granskat releaseskript med Bash-syntax och säkerhetsspärrar", "scripts/test-production-release-safety.mjs"],
  ["Rollmatris: administratör, chef, teamledare, projektledare, medarbetare", "scripts/test-role-access.mjs"],
  ["Veckoimport v2: autentisering, skapande, datum, ändringar och backup", "scripts/test-weekly-v2-integration.mjs"],
  ["Vanlig import/export: XLSX, MSPDI/XML, MPX, CSV-spärr", "scripts/test-planning-exchange.mjs"],
@@ -26,6 +27,7 @@ const mandatory=[
  ["Aktivitet: enradsexport och Gantt-datum", "scripts/test-weekly-single-row.mjs"],
  ["Beläggning och historik", "scripts/test-weekly-load.mjs"],
  ["Effort-historik och överlappande perioder", "scripts/test-effort-history.mjs"],
+ ["Historiskt projektansvar per datum", "scripts/test-project-attribution.mjs"],
 ];
 const extended=[
  ["Full integration: importer, databasmigrationer och återställning", "scripts/test-individual-integration.mjs"],
