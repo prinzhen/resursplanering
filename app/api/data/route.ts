@@ -1,6 +1,7 @@
 import {setAssignmentStatus,setWholeActivityStatus,reconcileActivityStatus,normalizeStatus,validStatuses} from "@/lib/assignment-status";
 import {activityIdsInScope,deletionImpact,type DeletableKind} from "@/lib/delete-time-impact";
 import {timeResolutionStatements} from "@/lib/admin-time-resolution";
+import {employeeDeletionImpact} from "@/lib/employee-delete-impact";
 import { env } from "cloudflare:workers";
 import {sessionIdentity,unauthorized,forbidden,sameOrigin,type Identity} from "@/lib/auth";
 import {accessScope,authorizePlanningAction,filteredSnapshot,projectOfActivity} from "@/lib/permissions";
