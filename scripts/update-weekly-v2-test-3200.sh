@@ -51,6 +51,21 @@ echo "Nuvarande version: $CURRENT"
 echo "Ny version: $VERSION"
 read -r -p "Skriv JA UPPDATERA TEST för att fortsätta: " answer
 [[ "$answer" == "JA UPPDATERA TEST" ]] || { echo "Avbrutet.";exit 0; }
+# Proxmox/ZFS guard: require enough free bytes and inodes to stage a full build.
+# Check BOTH the installation filesystem and the shared ZFS pool if present.
+free_bytes="$(df -PB1 /opt | awk 'NR==2{print $4}')"
+free_inodes="$(df -Pi /opt | awk 'NR==2{print $4}')"
+[[ "$free_bytes" =~ ^[0-9]+$ && "$free_inodes" =~ ^[0-9]+$ ]] || { echo "Kan inte kontrollera ledigt utrymme." >&2; exit 1; }
+if (( free_bytes < 5*1024*1024*1024 || free_inodes < 100000 ));then
+ echo "För lite utrymme för säkert testbygge: $free_bytes byte, $free_inodes inoder." >&2
+ exit 1
+fi
+if command -v zpool >/dev/null 2>&1 && zpool list -H -o name 2>/dev/null | grep -qx rpool;then
+ pool_free="$(zpool list -Hp -o free rpool)"
+ if [[ "$pool_free" =~ ^[0-9]+$ ]] && (( pool_free < 8*1024*1024*1024 ));then
+  echo "ZFS rpool har mindre än 8 GiB fritt. Avbryter före bygge." >&2;exit 1
+ fi
+fi
 echo "[1/5] Bygger ny testkod separat."
 git clone --quiet --single-branch --branch "$BRANCH" https://github.com/prinzhen/resursplanering.git "$STAGE"
 git -C "$STAGE" checkout --quiet --detach "$VERSION"
@@ -108,7 +123,28 @@ done
 [[ "$(curl --max-time 4 -sS -o /dev/null -w '%{http_code}' http://127.0.0.1:3000/api/auth)" == 200 ]] ||
  { echo "Produktionens hälsokontroll misslyckades." >&2;exit 1; }
 SUCCESS=1
-echo "[5/5] KLART – testversionen på port 3200 uppdaterad och verifierad."
+# After successful health checks the former build remains available for one
+# rollback generation. Remove stale staged directories and older code
+# backups for this TEST installation only. Never delete the current app, the
+# new rollback folder, user data or /var/backups.
+echo "[5/6] Städar gamla testbyggen (behåller senaste rollback)."
+shopt -s nullglob
+for path in /opt/.resursplanering-weekly-v2-stage-* /opt/resursplanering-weekly-v2.before-*;do
+ [[ -d "$path" && ! -L "$path" && "$path" != "$APP" && "$path" != "$OLD" && "$path" != "$STAGE" ]] || continue
+ case "$path" in
+  /opt/.resursplanering-weekly-v2-stage-*|/opt/resursplanering-weekly-v2.before-*) ;;
+  *) continue;;
+ esac
+ # Avoid deleting a directory held as a process working directory.
+ used=0
+ for cwd in /proc/[0-9]*/cwd;do
+  current_cwd="$(readlink "$cwd" 2>/dev/null || true)"
+  case "$current_cwd" in "$path"|"$path"/*) used=1;break;; esac
+ done
+ if (( used ));then echo "Hoppar över aktiv katalog: $path";continue;fi
+ rm -rf --one-file-system -- "$path" || echo "Varning: Kunde inte städa $path" >&2
+done
+echo "[6/6] KLART – testversionen på port 3200 uppdaterad och verifierad."
 echo "Gammal testkod: $OLD"
 echo "Säkerhetskopia av testdata: $BACKUP/data"
 echo "Koden använder Git-revision $VERSION"
