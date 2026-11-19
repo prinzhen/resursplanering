@@ -53,6 +53,18 @@ export async function POST(req:Request){
    if(!text(row.task)||text(row.task).length>200)throw Error("Aktivitetsnamn saknas eller är för långt.");
    normalizeISOWeek(row.week);
    const dates=scheduleDates(row);
+   // A stale, ID-less Excel export must never recreate a task in its old
+   // project after an audited move. Force a fresh export with stable IDs.
+   if(person){
+    const moved=await db.prepare(`SELECT a.id FROM activity_project_reclassifications r
+      JOIN activities a ON a.id=r.activity_id
+      JOIN assignments assigned ON assigned.activity_id=a.id
+      JOIN projects old ON old.id=r.source_project_id
+      WHERE assigned.employee_id=? AND old.code=? COLLATE NOCASE
+      AND lower(a.name)=lower(?) AND a.start_date<=? AND a.end_date>=?
+      LIMIT 1`).bind(person.id,code,text(row.task),dates.end,dates.start).first<{id:number}>();
+    if(moved)return Response.json({error:"Aktiviteten har redan flyttats till ett annat projekt. Exportera en ny Excel v2-fil innan du importerar den igen; den gamla filen skulle skapa en dubblett."},{status:409});
+   }
    const duration=parseDurationDays(row.duration);
    if(duration>3650)throw Error("För lång aktivitet.");
    const key=code+"|"+row.task.toLocaleLowerCase("sv-SE")+"|"+row.firstWeek;
