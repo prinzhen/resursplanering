@@ -1,6 +1,7 @@
 import {setAssignmentStatus,setWholeActivityStatus,reconcileActivityStatus,normalizeStatus,validStatuses} from "@/lib/assignment-status";
 import {activityIdsInScope,deletionImpact,type DeletableKind} from "@/lib/delete-time-impact";
 import {timeResolutionStatements} from "@/lib/admin-time-resolution";
+import {employeeDeletionImpact} from "@/lib/employee-delete-impact";
 import { env } from "cloudflare:workers";
 import {sessionIdentity,unauthorized,forbidden,sameOrigin,type Identity} from "@/lib/auth";
 import {accessScope,authorizePlanningAction,filteredSnapshot,projectOfActivity} from "@/lib/permissions";
@@ -468,8 +469,27 @@ export async function DELETE(request:Request){
    const linked=await d.prepare("SELECT email FROM user_accounts WHERE employee_id=?").bind(id).first<{email:string}>();
    if(linked)return Response.json({error:"Medarbetaren är kopplad till inloggningskontot "+linked.email+". Ta först bort kontot under Konton och behörigheter, eller behåll medarbetaren och koppla administratörskontot till den befintliga personen. Ingen planering har raderats."},{status:409});
    if(!await d.prepare("SELECT id FROM employees WHERE id=?").bind(id).first())return Response.json({error:"Medarbetaren saknas."},{status:404});
-   if(await d.prepare("SELECT id FROM time_entries WHERE employee_id=? LIMIT 1").bind(id).first())return Response.json({error:"Medarbetaren har rapporterad tid. Radera inte historiken; inaktivera eller ändra personens konto i stället."},{status:409});
+   const employeeImpact=await employeeDeletionImpact(d,id);
+   if(!employeeImpact)return Response.json({error:"Medarbetaren saknas."},{status:404});
+   if(employeeImpact.entryCount){
+    if(!user.isAdmin)return Response.json({error:"Endast administratör kan permanent radera medarbetare med rapporterad tid."},{status:403});
+    if(employeeImpact.linkedAccount)return Response.json({error:"Ta bort eller frikoppla kontot först."},{status:409});
+    if(employeeImpact.runningEntryCount)return Response.json({error:"Stoppa aktiva tidtagningar innan radering."},{status:409});
+    if(u.searchParams.get("timeMode")!=="purge"||
+       u.searchParams.get("confirm")!=="RADERA MEDARBETARE"||
+       u.searchParams.get("expectedFingerprint")!==employeeImpact.fingerprint)
+      return Response.json({error:"Förhandsgranska tidrapporterna och skriv RADERA MEDARBETARE för permanent borttagning. En ändrad rapport kräver ny granskning.",needsEmployeeResolution:true,employeeImpact},{status:409});
+   }
    await d.batch([
+    // Remove audit rows before time entries (both enforce RESTRICT FKs).
+    // Historical external reconciliation archives are independent snapshots.
+    ...(employeeImpact.entryCount?[
+     d.prepare("DELETE FROM time_entry_audit WHERE time_entry_id IN (SELECT id FROM time_entries WHERE employee_id=?)").bind(id),
+     d.prepare("DELETE FROM time_entries WHERE employee_id=?").bind(id)
+    ]:[]),
+    // v2 rows have employee RESTRICT foreign keys; independent revision
+    // snapshots remain available for auditing the planning history.
+    d.prepare("DELETE FROM weekly_plan_rows WHERE employee_id=?").bind(id),
     d.prepare("UPDATE employees SET manager_id=NULL WHERE manager_id=?").bind(id),
     d.prepare("UPDATE employee_groups SET owner_id=NULL WHERE owner_id=?").bind(id),
     d.prepare("DELETE FROM assignment_requests WHERE requested_by=? OR recipient_id=?").bind(id,id),

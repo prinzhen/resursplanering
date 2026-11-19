@@ -58,6 +58,35 @@ export async function POST(req:Request){
    }else{
     await d.prepare("INSERT INTO user_accounts(employee_id,email,password_salt,password_hash,is_admin,is_group_manager) VALUES(?,?,?,?,?,?)").bind(person,email,salt,hash,isAdmin,groupManager).run();
    }
+  }else if(action==="editAccount"){
+   if(!user.isAdmin)return forbidden();
+   const accountId=Number(b.accountId);
+   if(!Number.isSafeInteger(accountId)||accountId<=0)return Response.json({error:"Ogiltigt konto."},{status:400});
+   const existing=await d.prepare("SELECT id,email,employee_id employeeId,is_admin isAdmin,is_group_manager isGroupManager,is_disabled isDisabled FROM user_accounts WHERE id=?")
+    .bind(accountId).first<{id:number;email:string;employeeId:number|null;isAdmin:number;isGroupManager:number;isDisabled:number}>();
+   if(!existing)return Response.json({error:"Kontot saknas."},{status:404});
+   const email=String(b.email||"").trim().toLowerCase(),person=b.employeeId===null||b.employeeId===""?null:Number(b.employeeId);
+   const isAdmin=Number(b.isAdmin===true),isGroupManager=Number(b.isGroupManager===true),isDisabled=Number(b.isDisabled===true);
+   if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)||email.length>254)
+    return Response.json({error:"Ange en giltig e-postadress."},{status:400});
+   if(person!==null&&(!Number.isSafeInteger(person)||person<=0||!await d.prepare("SELECT id FROM employees WHERE id=?").bind(person).first()))
+    return Response.json({error:"Kopplad medarbetare saknas."},{status:400});
+   if(await d.prepare("SELECT id FROM user_accounts WHERE lower(email)=? AND id<>?").bind(email,accountId).first())
+    return Response.json({error:"E-postadressen används redan av ett annat konto."},{status:409});
+   if(person!==null&&await d.prepare("SELECT id FROM user_accounts WHERE employee_id=? AND id<>?").bind(person,accountId).first())
+    return Response.json({error:"Medarbetaren är redan kopplad till ett annat konto."},{status:409});
+   if(accountId===user.accountId&&(isDisabled||!isAdmin))
+    return Response.json({error:"Du får inte inaktivera eller ta bort administratörsrollen på ditt eget konto."},{status:409});
+   if(existing.isAdmin&&!existing.isDisabled&&(!isAdmin||isDisabled)&&!await activeOtherAdmins(d,accountId))
+    return adminRequired();
+   if(existing.email!==email||existing.employeeId!==person||existing.isAdmin!==isAdmin||existing.isGroupManager!==isGroupManager||existing.isDisabled!==isDisabled){
+    await d.batch([
+     d.prepare("UPDATE user_accounts SET email=?,employee_id=?,is_admin=?,is_group_manager=?,is_disabled=? WHERE id=?")
+      .bind(email,person,isAdmin,isGroupManager,isDisabled,accountId),
+     d.prepare("DELETE FROM user_sessions WHERE user_id=?").bind(accountId)
+    ]);
+   }
+   return Response.json({message:"Kontot uppdaterades. Tidigare inloggningssessioner har återkallats om något ändrades."});
   }else if(action==="createPersonalLogin"){
    // A separate day-to-day login for an existing staff member, while a
    // dedicated administrator login remains intact and active.
