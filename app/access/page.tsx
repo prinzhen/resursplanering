@@ -17,6 +17,13 @@ export default function AccessPage(){
  const [data,setData]=useState<Planning|null>(null),[access,setAccess]=useState<Access|null>(null),[error,setError]=useState(""),[notice,setNotice]=useState(""),[busy,setBusy]=useState(false);
  const [email,setEmail]=useState(""),[password,setPassword]=useState(""),[employeeId,setEmployeeId]=useState(""),[admin,setAdmin]=useState(false),[groupManager,setGroupManager]=useState(false);
  const [accountLinks,setAccountLinks]=useState<Record<number,string>>({});
+ const [editingAccount,setEditingAccount]=useState<Access["accounts"][number]|null>(null);
+ const [editEmail,setEditEmail]=useState(""),[editEmployee,setEditEmployee]=useState(""),[editAdmin,setEditAdmin]=useState(false),[editManager,setEditManager]=useState(false),[editDisabled,setEditDisabled]=useState(false);
+ const beginEdit=(a:Access["accounts"][number])=>{
+  setEditingAccount(a);setEditEmail(a.email);setEditEmployee(a.employeeId===null?"":String(a.employeeId));
+  setEditAdmin(Boolean(a.isAdmin));setEditManager(Boolean(a.isGroupManager));setEditDisabled(Boolean(a.isDisabled));
+ };
+
  const [workEmployee,setWorkEmployee]=useState(""),[workEmail,setWorkEmail]=useState(""),[workPassword,setWorkPassword]=useState(""),[workManager,setWorkManager]=useState(true),[workProjectLead,setWorkProjectLead]=useState(true),[workProjects,setWorkProjects]=useState<number[]>([]);
  const [leadEmployee,setLeadEmployee]=useState(""),[leadProject,setLeadProject]=useState(""),[leadTeam,setLeadTeam]=useState(""),[memberEmployee,setMemberEmployee]=useState(""),[memberProject,setMemberProject]=useState("");
  const reload=async()=>{
@@ -95,10 +102,26 @@ export default function AccessPage(){
  <p className="mb-3 text-sm text-slate-600">Här kan du skapa ett konto för varje medarbetare eller ändra lösenordet på ett befintligt konto. Konto och medarbetare kopplas ihop automatiskt via e-postadressen. Roller ändras inte när du byter lösenord. Tidigare inloggningar avslutas.</p>
  <div className="max-h-[55vh] space-y-2 overflow-y-auto">{data.employees.map(person=><EmployeeCredentialRow key={person.id} person={person} account={access?.accounts.find(a=>a.employeeId===person.id)} busy={busy} onSetPassword={async(id,password)=>post({action:"setEmployeePassword",employeeId:id,password})}/>)}</div>
  </div>
+ {editingAccount&&<form className="mt-4 space-y-3 rounded-xl border border-blue-300 bg-blue-50 p-4" onSubmit={async e=>{
+  e.preventDefault();
+  if(await post({action:"editAccount",accountId:editingAccount.id,email:editEmail,employeeId:editEmployee?Number(editEmployee):null,isAdmin:editAdmin,isGroupManager:editManager,isDisabled:editDisabled}))setEditingAccount(null);
+ }}>
+  <h3 className="font-semibold">Redigera konto: {editingAccount.email}</h3>
+  <p className="text-xs text-slate-600">Uppdaterar samma konto utan att ändra medarbetarens planering. Ändrade uppgifter återkallar aktiva sessioner. Lösenord ändras separat.</p>
+  <label className="block text-sm font-medium">Inloggningsadress<input required type="email" value={editEmail} onChange={e=>setEditEmail(e.target.value)} className="mt-1 w-full rounded border p-2"/></label>
+  <label className="block text-sm font-medium">Kopplad medarbetare<select value={editEmployee} onChange={e=>setEditEmployee(e.target.value)} className="mt-1 w-full rounded border p-2"><option value="">Ingen koppling</option>{data.employees.map(e=><option key={e.id} value={e.id}>{e.name} · {e.email}</option>)}</select></label>
+  <div className="flex flex-wrap gap-4 text-sm">
+   <label className="flex items-center gap-2"><input type="checkbox" checked={editAdmin} onChange={e=>setEditAdmin(e.target.checked)}/>Administratör</label>
+   <label className="flex items-center gap-2"><input type="checkbox" checked={editManager} onChange={e=>setEditManager(e.target.checked)}/>Gruppchef</label>
+   <label className="flex items-center gap-2"><input type="checkbox" checked={editDisabled} onChange={e=>setEditDisabled(e.target.checked)}/>Inaktiverat</label>
+  </div>
+  <div className="flex gap-2"><button disabled={busy} className="rounded bg-blue-700 px-4 py-2 text-white">Spara ändringar</button><button type="button" className="rounded border px-4 py-2" onClick={()=>setEditingAccount(null)}>Avbryt</button></div>
+ </form>}
  <div className="mt-4 space-y-3"><h3 className="text-sm font-semibold">Registrerade konton och administratörer</h3>
  <p className="text-xs text-slate-600">Koppla ett konto till en befintlig medarbetare för att kombinera administratörsbehörighet med egna aktiviteter, TEAM och projekt. Att ta bort ett konto raderar inte medarbetarens planering.</p>
  {access?.accounts.map(a=><div key={a.id} className="space-y-2 rounded-lg border bg-white p-3 text-sm">
   <div className="flex flex-wrap items-center justify-between gap-2"><div><strong>{a.email}</strong><p className="text-slate-500">{a.isAdmin?"Administratör":a.isGroupManager?"Gruppchef":"Medarbetare"} · {a.isDisabled?"Inaktiverat":"Aktivt"}{a.id===data.viewer.accountId?" · Ditt konto":""}</p></div>
+  <button type="button" disabled={busy} className="rounded border border-blue-300 px-3 py-1 text-blue-800" onClick={()=>beginEdit(a)}>Redigera konto</button>
   {a.id!==data.viewer.accountId&&<div className="flex flex-wrap gap-2">
    <button type="button" disabled={busy} className="rounded border px-3 py-1" onClick={()=>post({action:"setAccountRole",accountId:a.id,isAdmin:!a.isAdmin})}>{a.isAdmin?"Ta bort adminbehörighet":"Ge adminbehörighet"}</button>
    <button type="button" disabled={busy} className="rounded border px-3 py-1" onClick={()=>post({action:"setAccountDisabled",accountId:a.id,disabled:!a.isDisabled})}>{a.isDisabled?"Aktivera":"Inaktivera"}</button>
