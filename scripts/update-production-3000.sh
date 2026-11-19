@@ -128,6 +128,60 @@ runuser -u "$SERVICE_USER" -- bash -c 'cd "$1" && test -r ./selfhost/wrangler.js
  { echo "Tjänstens användare kan inte läsa den färdigbyggda releasen." >&2;exit 1; }
 echo "Behörighetskontroll OK: $SERVICE_USER ($SERVICE_GROUP) kan läsa koden och skapa Wranglers temporära filer."
 
+echo "[Förkontroll] Testar produktionsmigrationer mot en online-säkerhetskopia före tjänstestopp."
+PREFLIGHT="$STAGE/.prod-migration-preflight"
+python3 - "$DATA" "$PREFLIGHT" <<'PY'
+import pathlib,sqlite3,shutil,sys
+src,dst=map(pathlib.Path,sys.argv[1:])
+dst.mkdir(parents=True,exist_ok=False)
+dbs=[]
+for entry in src.rglob("*"):
+ if entry.is_symlink():raise RuntimeError("Symlink i DATA_DIR är inte tillåten i förkontrollen: "+str(entry))
+ relative=entry.relative_to(src)
+ target=dst/relative
+ if entry.is_dir():target.mkdir(parents=True,exist_ok=True)
+ elif entry.name.endswith(("-wal","-shm")):continue
+ elif entry.suffix==".sqlite":dbs.append((entry,target))
+ elif entry.is_file():
+  target.parent.mkdir(parents=True,exist_ok=True)
+  shutil.copy2(entry,target)
+for source,target in dbs:
+ target.parent.mkdir(parents=True,exist_ok=True)
+ old=sqlite3.connect("file:"+str(source)+"?mode=ro",uri=True,timeout=30)
+ new=sqlite3.connect(str(target),timeout=30)
+ try:
+  old.backup(new,pages=250,sleep=.1)
+  assert new.execute("PRAGMA integrity_check").fetchone()[0]=="ok"
+ finally:new.close();old.close()
+assert dbs, "Ingen SQLite-databas hittades i DATA_DIR"
+print("Online-kopia klar:",len(dbs),"SQLite-filer")
+PY
+chown -R "$SERVICE_USER:$SERVICE_GROUP" "$PREFLIGHT"
+(
+ cd "$STAGE"
+ runuser -u "$SERVICE_USER" -- env CI=true WRANGLER_SEND_METRICS=false \
+  node "$STAGE/node_modules/wrangler/bin/wrangler.js" d1 migrations apply DB \
+  --local --config "$STAGE/selfhost/wrangler.jsonc" --persist-to "$PREFLIGHT"
+)
+python3 - "$PREFLIGHT" <<'PY'
+import pathlib,sqlite3,sys
+found=0
+for p in pathlib.Path(sys.argv[1]).rglob("*.sqlite"):
+ db=sqlite3.connect("file:"+str(p)+"?mode=ro",uri=True)
+ try:
+  names={r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+  if {"employees","projects","activities","user_accounts"}.issubset(names):
+   found+=1
+   required={"time_entries","weekly_plan_rows","activity_project_reclassifications"}
+   assert required.issubset(names),"Saknar migrationsresultat: "+str(required-names)
+   assert db.execute("PRAGMA integrity_check").fetchone()[0]=="ok","Databasfel efter testmigration"
+   assert not db.execute("PRAGMA foreign_key_check").fetchone(),"Felaktiga främmande nycklar efter testmigration"
+ finally:db.close()
+assert found==1,"Förväntade en applikationsdatabas; fann "+str(found)
+print("PASS: Produktionsdatabasens testmigration och integritet.")
+PY
+rm -rf --one-file-system -- "$PREFLIGHT"
+
 echo "[2/6] Stoppar produktion kort och tar konsekvent backup av hela DATA_DIR."
 STOPPED=1
 systemctl stop "$SERVICE"
