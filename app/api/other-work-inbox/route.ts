@@ -44,9 +44,9 @@ export async function GET(req:Request){
  }
 }
 
-/** A true project move is safe without splitting historical allocations only
- * when the activity has never started and no time entry has ever been booked.
- * Everything else is rejected rather than rewriting past workload or hours.
+/** Project changes keep all original assignments and recorded hours intact.
+ * Dated project attribution is recorded in a separate immutable audit ledger.
+ * Consumers MUST resolve historic ownership by work date.
  */
 export async function POST(req:Request){
  try{
@@ -89,11 +89,13 @@ export async function POST(req:Request){
     (SELECT COUNT(*) FROM assignment_requests WHERE activity_id=?) requests`)
    .bind(activityId,activityId,effectiveFrom,activityId,effectiveFrom.slice(0,4)+"-W"+isoWeekNumber(effectiveFrom),activityId,activityId)
    .first<{recorded:number;historicPeriods:number;olderWeekRows:number;children:number;requests:number}>();
-  if(a.startDate<effectiveFrom||a.parentId!==null||a.workPackageId!==null||
-    resources.results.some(r=>r.startDate<effectiveFrom||r.completedAt!==null)||
-    (historical?.recorded||0)>0||(historical?.historicPeriods||0)>0||(historical?.olderWeekRows||0)>0||
+  // In the history-aware path, all legacy assignments and their effort
+  // periods remain immutable; dated project ownership is resolved by
+  // activity_project_reclassifications in all historic accounting views.
+  // Hierarchies and pending proposals still need a separate guided workflow.
+  if(a.parentId!==null||a.workPackageId!==null||
     (historical?.children||0)>0||(historical?.requests||0)>0)
-   return Response.json({error:"Aktiviteten har historik, rapporterad tid, äldre planering eller beroenden. Säker snabbflytt avbryts för att skydda historiken. Den behöver historikdelas i ett separat arbetsflöde."},{status:422});
+   return Response.json({error:"Aktiviteten har underaktiviteter, uppdrag eller arbetsförfrågningar. Flytten kräver separat hantering av beroendena."},{status:422});
   // One SQLite transaction: either the activity, membership and audit all move,
   // or none do. Never update historical time entries or assignment periods.
   const statements:D1PreparedStatement[]=[
