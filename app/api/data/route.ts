@@ -421,6 +421,16 @@ export async function DELETE(request:Request){
   let reconciliation:D1PreparedStatement[]=[];
   if(kind){
    const scope=activityIdsInScope(kind);
+   // Audited project classification cannot be destroyed by ordinary delete.
+   // Also protect the original and destination project (RESTRICT FKs).
+   const linked=await d.prepare(`SELECT id FROM activity_project_reclassifications
+    WHERE activity_id IN (${scope}) LIMIT 1`).bind(id).first();
+   const linkedProject=type==="project"?await d.prepare(
+    "SELECT id FROM activity_project_reclassifications WHERE source_project_id=? OR target_project_id=? LIMIT 1"
+   ).bind(id,id).first():null;
+   if(linked||linkedProject)return Response.json({
+    error:"Posten omfattas av historiska projektflyttar. Den kan inte raderas utan att den revisionssäkra projektkopplingen först arkiveras i ett särskilt arbetsflöde."
+   },{status:409});
    const current=await deletionImpact(d,kind,id);
    if(current.entryCount){
     if(!user.isAdmin)return Response.json({error:"Rapporterad tid måste hanteras av en administratör innan denna post kan tas bort."},{status:409});
