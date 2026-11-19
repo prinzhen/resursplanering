@@ -485,7 +485,20 @@ function PrintPlanningDialog({open,close,subject,kind,data}:{open:boolean;close:
  const allItems=kind==="employee"?employeeGantt(subject as Employee,data):projectGantt(subject as Project,data),sourceDates=allItems.flatMap(i=>[i.start,i.end]),rangeStart=period==="all"?(sourceDates.sort()[0]||start):start,rangeEnd=period==="all"?([...sourceDates].sort().at(-1)||start):periodEnd(start,period),items=allItems.filter(i=>overlaps(i.start,i.end,rangeStart,rangeEnd));
  let rows:PlanningRow[]=[];
  if(kind==="employee"){rows=data.assignments.filter(s=>s.employeeId===subject.id&&overlaps(s.startDate,s.endDate,rangeStart,rangeEnd)).flatMap(s=>{const a=data.activities.find(x=>x.id===s.activityId),p=data.projects.find(x=>x.id===a?.projectId),w=data.workPackages.find(x=>x.id===a?.workPackageId);return a?[{id:String(s.id),project:p?`${p.code} · ${p.name}`:"–",work:w?`${w.code} · ${w.name}`:"Direkt i projektet",activity:`${a.code?`${a.code} · `:""}${a.name}`,description:a.description||"Beskrivning saknas.",people:(subject as Employee).name,effort:`${s.effortPercent}%`,start:s.startDate,end:s.endDate}]:[]})}
- else{rows=data.activities.filter(a=>a.projectId===subject.id&&overlaps(a.startDate,a.endDate,rangeStart,rangeEnd)).map(a=>{const p=subject as Project,w=data.workPackages.find(x=>x.id===a.workPackageId),ass=data.assignments.filter(s=>s.activityId===a.id&&overlaps(s.startDate,s.endDate,rangeStart,rangeEnd));return{id:String(a.id),project:`${p.code} · ${p.name}`,work:w?`${w.code} · ${w.name}`:"Direkt i projektet",activity:`${a.parentActivityId?"↳ ":""}${a.code?`${a.code} · `:""}${a.name}`,description:a.description||"Beskrivning saknas.",people:ass.length?ass.map(s=>data.employees.find(e=>e.id===s.employeeId)?.name||"Okänd resurs").join(", "):"Ej bemannad",effort:ass.length?`${ass.reduce((sum,s)=>sum+s.effortPercent,0)}% totalt`:"–",start:a.startDate,end:a.endDate}})}
+ else{rows=data.activities.filter(a=>overlaps(a.startDate,a.endDate,rangeStart,rangeEnd)).flatMap(a=>{
+  const from=a.startDate>rangeStart?a.startDate:rangeStart,to=a.endDate<rangeEnd?a.endDate:rangeEnd;
+  return projectSlices(a.projectId,a.id,from,to,data.activityProjectReclassifications||[])
+   .filter(slice=>slice.projectId===subject.id).map(slice=>{
+    const p=subject as Project,w=data.workPackages.find(x=>x.id===a.workPackageId);
+    const ass=data.assignments.filter(s=>s.activityId===a.id&&overlaps(s.startDate,s.endDate,slice.start,slice.end));
+    return{id:String(a.id),project:`${p.code} · ${p.name}`,work:w?`${w.code} · ${w.name}`:"Direkt i projektet",
+     activity:`${a.parentActivityId?"↳ ":""}${a.code?`${a.code} · `:""}${a.name}`,
+     description:a.description||"Beskrivning saknas.",
+     people:ass.length?ass.map(s=>data.employees.find(e=>e.id===s.employeeId)?.name||"Okänd resurs").join(", "):"Ej bemannad",
+     effort:ass.length?`${ass.reduce((sum,s)=>sum+s.effortPercent,0)}% totalt`:"–",
+     start:slice.start,end:slice.end};
+   });
+ });}
  rows.sort((a,b)=>a.project.localeCompare(b.project,"sv")||a.start.localeCompare(b.start)||a.activity.localeCompare(b.activity,"sv"));
  const groups=[...new Set(rows.map(r=>kind==="employee"?r.project:r.work))],periodLabel=`${dateFmt.format(new Date(rangeStart))} – ${dateFmt.format(new Date(rangeEnd))}`,projectCount=new Set(rows.map(r=>r.project)).size,peopleCount=kind==="project"?new Set(data.assignments.filter(s=>rows.some(r=>Number(r.id)===s.activityId)).map(s=>s.employeeId)).size:1;
  const documentProps={kind,subject,rows,groups,items,rangeStart,rangeEnd,periodLabel,projectCount,peopleCount};
