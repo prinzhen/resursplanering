@@ -1,6 +1,7 @@
 import {env} from "cloudflare:workers";
 import {sessionIdentity,unauthorized,forbidden} from "@/lib/auth";
 import {deletableKind,activityIdsInScope,deletionImpact} from "@/lib/delete-time-impact";
+import {employeeDeletionImpact} from "@/lib/employee-delete-impact";
 export const dynamic="force-dynamic";
 export async function GET(req:Request){
  try{
@@ -9,6 +10,12 @@ export async function GET(req:Request){
   if(!user)return unauthorized();
   if(!user.isAdmin)return forbidden();
   const url=new URL(req.url),kind=url.searchParams.get("type"),id=Number(url.searchParams.get("id"));
+  if(kind==="employee"){
+   if(!Number.isSafeInteger(id)||id<=0)return Response.json({error:"Ogiltig medarbetare."},{status:400});
+   const impact=await employeeDeletionImpact(d,id);
+   if(!impact)return Response.json({error:"Medarbetaren finns inte."},{status:404});
+   return Response.json({employeeImpact:impact},{headers:{"cache-control":"no-store"}});
+  }
   if(!deletableKind(kind)||!Number.isSafeInteger(id)||id<=0)
    return Response.json({error:"Ogiltigt projekt, uppdrag eller aktivitet."},{status:400});
   const table=kind==="project"?"projects":kind==="workPackage"?"work_packages":"activities";
