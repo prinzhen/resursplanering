@@ -17,6 +17,7 @@ type Employee={id:number;name:string;email:string;role:string;managerId:number|n
 type DeleteImpact={kind:"project"|"workPackage"|"activity";id:number;entryCount:number;activeEntryCount:number;deletedEntryCount:number;runningEntryCount:number;totalSeconds:number;fingerprint:string};
 type DeleteDestination={id:number;name:string;code:string|null;projectId:number;projectCode:string;projectName:string};
 type DeletePreview={impact:DeleteImpact;targets:DeleteDestination[]};
+type EmployeeDeleteImpact={employee:{id:number;name:string;email:string};entryCount:number;deletedEntryCount:number;runningEntryCount:number;totalSeconds:number;fingerprint:string;linkedAccount:string|null};
 type Data={weeklyPlanRows?:WeeklyLoadRow[];activityProjectReclassifications?:Reclassification[];viewer?:Viewer;projectDirectory?:Project[];employees:Employee[];projects:Project[];workPackages:WorkPackage[];activities:WorkActivity[];assignments:Assignment[];assignmentPeriods:EffortPeriod[];activityPriorityHistory?:ActivityPriorityEvent[];projectMembers:ProjectMember[];employeeProjectOrders:EmployeeProjectOrder[];employeeGroups:EmployeeGroup[];employeeGroupMembers:EmployeeGroupMember[];
  employeeDirectory?:{id:number;name:string}[];
  projectLeaders?:{projectId:number;employeeId:number;employeeName?:string}[];
@@ -101,7 +102,7 @@ export default function Home(){const[data,setData]=useState<Data>(empty),[scope,
  [deleteLoading,setDeleteLoading]=useState(false),[deleteBusy,setDeleteBusy]=useState(false),
  [deleteMode,setDeleteMode]=useState<"transfer"|"purge">("transfer"),
  [deleteTarget,setDeleteTarget]=useState(""),[deleteConfirm,setDeleteConfirm]=useState(""),
- [deleteError,setDeleteError]=useState(""),[detail,setDetail]=useState<Detail|null>(null);const [quick,setQuick]=useState<QuickPreset|null>(null);const fileRef=useRef<HTMLInputElement>(null);
+ [deleteError,setDeleteError]=useState(""),[employeeDeleteImpact,setEmployeeDeleteImpact]=useState<EmployeeDeleteImpact|null>(null),[detail,setDetail]=useState<Detail|null>(null);const [quick,setQuick]=useState<QuickPreset|null>(null);const fileRef=useRef<HTMLInputElement>(null);
  const refresh=async()=>{try{const r=await fetch("/api/data",{cache:"no-store"}),j=await r.json() as Data&{error?:string};if(r.status===401){window.location.assign("/login");return}if(!r.ok)throw new Error(j.error);setData(j)}catch(e){setError(e instanceof Error?e.message:"Ett fel uppstod")}};useEffect(()=>{refresh()},[]);const post=async(payload:Record<string,unknown>,message:string)=>{setError("");const r=await fetch("/api/data",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(payload)}),j=await r.json() as Data&{error?:string};if(r.status===401){window.location.assign("/login");return false}if(!r.ok){setError(j.error||"Kunde inte spara");return false}setData(j);setDialog(null);setEditing(null);setNotice(message);setTimeout(()=>setNotice(""),3500);return true};const saveLeadership=async(payload:LeaderAction)=>{
   setError("");
   try{
@@ -117,13 +118,13 @@ export default function Home(){const[data,setData]=useState<Data>(empty),[scope,
  const months=useMemo(()=>createMonths(monthOffset),[monthOffset]);const managers=data.employees.filter(e=>data.employees.some(x=>x.managerId===e.id));const visible=useMemo(()=>filterChefEmployees(data.employees,data.employeeGroupMembers,scope),[data.employees,data.employeeGroupMembers,scope]);const utilization=(id:number,key:string)=>{const m=monthBounds(key);return workload(data,id,m.start,m.end)};const loads=visible.map(e=>utilization(e.id,new Date().toISOString().slice(0,7))),over=loads.filter((v,i)=>v>visible[i].capacityPercent).length,average=loads.length?Math.round(loads.reduce((a,b)=>a+b,0)/loads.length):0;
  const hasDeleteImpact=!!remove&&["project","workPackage","activity"].includes(remove.type);
  useEffect(()=>{
-  setDeletePreview(null);setDeleteMode("transfer");setDeleteTarget("");setDeleteConfirm("");setDeleteError("");
-  if(!remove||!["project","workPackage","activity"].includes(remove.type)||!data.viewer?.isAdmin){setDeleteLoading(false);return}
+  setDeletePreview(null);setEmployeeDeleteImpact(null);setDeleteMode("transfer");setDeleteTarget("");setDeleteConfirm("");setDeleteError("");
+  if(!remove||!["project","workPackage","activity","employee"].includes(remove.type)||!data.viewer?.isAdmin){setDeleteLoading(false);return}
   const ctl=new AbortController();
   setDeleteLoading(true);
   fetch(`/api/delete-impact?type=${encodeURIComponent(remove.type)}&id=${remove.id}`,{cache:"no-store",signal:ctl.signal})
-   .then(async r=>{const j=await r.json() as DeletePreview&{error?:string};if(!r.ok)throw Error(j.error||"Kunde inte läsa tidrapporter");return j})
-   .then(j=>{if(!ctl.signal.aborted){setDeletePreview(j);setDeleteTarget(j.targets.length?String(j.targets[0].id):"");setDeleteLoading(false)}})
+   .then(async r=>{const j=await r.json() as DeletePreview&{employeeImpact?:EmployeeDeleteImpact;error?:string};if(!r.ok)throw Error(j.error||"Kunde inte läsa tidrapporter");return j})
+   .then(j=>{if(!ctl.signal.aborted){if(remove.type==="employee")setEmployeeDeleteImpact(j.employeeImpact||null);else{setDeletePreview(j);setDeleteTarget(j.targets.length?String(j.targets[0].id):"")}setDeleteLoading(false)}})
    .catch(e=>{if(!ctl.signal.aborted){setDeleteError(e instanceof Error?e.message:"Kunde inte hämta tidrapporter.");setDeleteLoading(false)}});
   return ()=>ctl.abort();
  },[remove?.type,remove?.id,data.viewer?.isAdmin]);
@@ -131,7 +132,13 @@ export default function Home(){const[data,setData]=useState<Data>(empty),[scope,
   if(!remove||deleteBusy)return;
   const impact=deletePreview?.impact;
   if(hasDeleteImpact&&data.viewer?.isAdmin&&(!deletePreview||deleteLoading)){setDeleteError("Tidrapporterna måste kontrolleras innan radering.");return}
+  if(remove.type==="employee"&&data.viewer?.isAdmin&&(!employeeDeleteImpact||deleteLoading)){setDeleteError("Granska först medarbetarens rapporterade tid.");return}
   const params=new URLSearchParams({type:remove.type,id:String(remove.id)});
+  if(remove.type==="employee"&&employeeDeleteImpact?.entryCount){
+   if(employeeDeleteImpact.runningEntryCount){setDeleteError("Stoppa aktiva tidtagningar först.");return}
+   if(deleteConfirm!=="RADERA MEDARBETARE"){setDeleteError("Skriv RADERA MEDARBETARE exakt för att bekräfta.");return}
+   params.set("timeMode","purge");params.set("expectedFingerprint",employeeDeleteImpact.fingerprint);params.set("confirm",deleteConfirm);
+  }
   if(impact?.entryCount){
    if(impact.runningEntryCount){setDeleteError("Stoppa alla pågående tidtagningar innan du fortsätter.");return}
    params.set("timeMode",deleteMode);
@@ -152,6 +159,10 @@ export default function Home(){const[data,setData]=useState<Data>(empty),[scope,
     if(r.status===409&&hasDeleteImpact&&data.viewer?.isAdmin){
      const again=await fetch(`/api/delete-impact?type=${remove.type}&id=${remove.id}`,{cache:"no-store"});
      if(again.ok)setDeletePreview(await again.json() as DeletePreview);
+    }else if(r.status===409&&remove.type==="employee"&&data.viewer?.isAdmin){
+     const again=await fetch(`/api/delete-impact?type=employee&id=${remove.id}`,{cache:"no-store"});
+     if(again.ok)setEmployeeDeleteImpact((await again.json() as {employeeImpact:EmployeeDeleteImpact}).employeeImpact);
+     setDeleteConfirm("");
     }
     return
    }
@@ -248,9 +259,22 @@ export default function Home(){const[data,setData]=useState<Data>(empty),[scope,
      </fieldset>
     </>:<p>Inga registrerade tidposter finns på den här posten.</p>}
    </div>}
+   {remove?.type==="employee"&&data.viewer?.isAdmin&&<div className="space-y-2 rounded-xl border border-red-200 bg-red-50 p-4 text-sm">
+    {deleteLoading?<p>Läser medarbetarens tidrapporter…</p>:employeeDeleteImpact?<>
+     <p className="font-semibold">Tidrapporter: {employeeDeleteImpact.entryCount} poster, {(employeeDeleteImpact.totalSeconds/3600).toLocaleString("sv-SE",{maximumFractionDigits:2})} timmar.</p>
+     <p>{employeeDeleteImpact.deletedEntryCount} tidposter är redan markerade som raderade.</p>
+     {employeeDeleteImpact.linkedAccount&&<p className="font-semibold text-red-700">Frikoppla eller ta bort kontot {employeeDeleteImpact.linkedAccount} först.</p>}
+     {!!employeeDeleteImpact.runningEntryCount&&<p className="font-semibold text-red-700">Stoppa pågående tidtagningar först.</p>}
+     {!!employeeDeleteImpact.entryCount&&<>
+      <p>Permanent borttagning tar bort alla personens tidposter, även mjukt raderade, och tillhörande revisionsposter. Åtgärden går bara att återställa från backup.</p>
+      <label className="block font-semibold" htmlFor="confirm-employee-purge">Skriv RADERA MEDARBETARE</label>
+      <input id="confirm-employee-purge" autoComplete="off" value={deleteConfirm} onChange={e=>setDeleteConfirm(e.target.value)} className="w-full rounded border border-red-300 p-2" placeholder="RADERA MEDARBETARE"/>
+     </>}
+    </>:<p>Kontrollen kunde inte läsas. Avbryt och försök igen.</p>}
+   </div>}
    {deleteError&&<p role="alert" className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{deleteError}</p>}
    <AlertDialogFooter><AlertDialogCancel disabled={deleteBusy}>Avbryt</AlertDialogCancel>
-    <AlertDialogAction onClick={e=>{e.preventDefault();void del()}} disabled={deleteBusy||deleteLoading||!!(deletePreview?.impact.runningEntryCount)||!!(hasDeleteImpact&&data.viewer?.isAdmin&&!deletePreview)||!!(deletePreview?.impact.entryCount&&deleteMode==="transfer"&&!deleteTarget)||!!(deletePreview?.impact.entryCount&&deleteMode==="purge"&&deleteConfirm!=="RADERA TID")} className="bg-red-600 hover:bg-red-700">
+    <AlertDialogAction onClick={e=>{e.preventDefault();void del()}} disabled={deleteBusy||deleteLoading||!!(remove?.type==="employee"&&data.viewer?.isAdmin&&(!employeeDeleteImpact||employeeDeleteImpact.linkedAccount||employeeDeleteImpact.runningEntryCount||(employeeDeleteImpact.entryCount&&deleteConfirm!=="RADERA MEDARBETARE")))||!!(deletePreview?.impact.runningEntryCount)||!!(hasDeleteImpact&&data.viewer?.isAdmin&&!deletePreview)||!!(deletePreview?.impact.entryCount&&deleteMode==="transfer"&&!deleteTarget)||!!(deletePreview?.impact.entryCount&&deleteMode==="purge"&&deleteConfirm!=="RADERA TID")} className="bg-red-600 hover:bg-red-700">
      {deleteBusy?"Bearbetar…":deletePreview?.impact.entryCount?"Bekräfta och ta bort":"Ta bort"}
     </AlertDialogAction></AlertDialogFooter>
   </AlertDialogContent>
