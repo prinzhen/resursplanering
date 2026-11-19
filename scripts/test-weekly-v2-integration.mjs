@@ -249,6 +249,39 @@ try{
  assert.equal(estimatedTask.endDate,"2026-11-25","Excel 10d updates Gantt end inclusive");
  assert.equal(estimatedSnap.result.weeklyPlanRows.find(x=>x.activityId===activity.id).revision,4);
  assert.equal(estimatedSnap.result.weeklyPlanRowHistory.length,4,"Override is retained in revision audit log");
+ // Reported hours must resolve project by the *work date* after a
+ // historical reassignment, including subsequent edits and CSV exports.
+ const employeePw="CI-historic-account-passphrase";
+ const linked=spawnSync("python3",["scripts/provision-account.py","--data-dir",join(dir,"data"),
+  "--email",newPerson.email,"--employee-email",newPerson.email,"--password-stdin"],
+  {input:employeePw+"\n",encoding:"utf8"});
+ assert.equal(linked.status,0,linked.stderr);
+ const employeeAuth=await fetch(base+"/api/auth",{method:"POST",headers:{"content-type":"application/json"},
+  body:JSON.stringify({action:"login",email:newPerson.email,password:employeePw})});
+ assert.equal(employeeAuth.status,200,await employeeAuth.text());
+ const adminCookie=cookie;
+ cookie=(employeeAuth.headers.get("set-cookie")||"").split(";")[0];
+ const oldTime=await call("/api/time-entries",{action:"manual",activityId:originalOld.id,
+  workDate:"2026-10-01",durationMinutes:120,note:"Historisk tid"});
+ assert.equal(oldTime.status,200,JSON.stringify(oldTime.result));
+ const newTime=await call("/api/time-entries",{action:"manual",activityId:originalOld.id,
+  workDate:"2026-11-20",durationMinutes:60,note:"Ny tid"});
+ assert.equal(newTime.status,200,JSON.stringify(newTime.result));
+ const timeReport=await call("/api/time-entries");
+ assert.equal(timeReport.status,200,JSON.stringify(timeReport.result));
+ const oldEntry=timeReport.result.entries.find(x=>x.note==="Historisk tid");
+ const newEntry=timeReport.result.entries.find(x=>x.note==="Ny tid");
+ assert.equal(oldEntry.projectCode,"INTERNAL-OVR","Past reporting must retain its original project");
+ assert.equal(newEntry.projectCode,newProject.code,"Post-transfer time must attribute to new project");
+ assert.equal(oldEntry.projectId,catchAll[0].id);
+ assert.equal(newEntry.projectId,newProject.id);
+ // Edit a work date across the boundary. Attribution must follow the revised date.
+ const corrected=await call("/api/time-entries",{action:"update",id:oldEntry.id,
+  workDate:"2026-11-20",durationMinutes:120,note:"Korrigerat datum"});
+ assert.equal(corrected.status,200,JSON.stringify(corrected.result));
+ const correctedReport=await call("/api/time-entries");
+ assert.equal(correctedReport.result.entries.find(x=>x.id===oldEntry.id).projectCode,newProject.code);
+ cookie=adminCookie;
  console.log("PASS weekly-v2 integration: auth, preview, commit, audit revision, stale conflict, idempotency, Gantt start/end synchronization, duration edits, backup, explicit stale-confirmed estimate");
 } catch(e){console.error(e);console.error(logs);process.exitCode=1}
 finally{try{process.kill(-server.pid,"SIGTERM")}catch{server.kill("SIGTERM")}
