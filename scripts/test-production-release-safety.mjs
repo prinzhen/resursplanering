@@ -21,10 +21,18 @@ const checks=[
  'activity_project_reclassifications',
  'PRAGMA integrity_check','PRAGMA foreign_key_check',
  'PORT=3000', 'read -r -p "Skriv JA UPPDATERA PRODUKTION: " answer',
+ 'SERVICE_USER="$(systemctl show -P User "$SERVICE")"',
+ 'SERVICE_GROUP="$(id -gn "$SERVICE_USER")"',
+ 'chgrp -R "$SERVICE_GROUP" "$STAGE"',
+ 'chmod -R g+rX "$STAGE"',
+ 'runuser -u "$SERVICE_USER" -- test -x "$STAGE"',
+ 'runuser -u "$SERVICE_USER" -- test -r "$STAGE/scripts/start-selfhosted.mjs"',
 ];
 for(const check of checks)assert.ok(script.includes(check),"Mandatory release protection missing: "+check);
 assert.ok(script.indexOf('cp -a "$DATA" "$BACKUP/data"') < script.indexOf('mv "$APP" "$OLD"'),
  "Backup must precede code activation");
 assert.ok(script.indexOf('SWAPPED=1') < script.indexOf('mv "$STAGE" "$APP"'),
  "Rollback must be armed before new stage is moved into service path");
+assert.ok(script.indexOf('chmod -R g+rX "$STAGE"') < script.indexOf('systemctl stop "$SERVICE"'),
+ "Production service permissions must be verified BEFORE any downtime");
 console.log("PASS production release: bash -n, pinned verified code, offline DB backup, rollback, auth and integrity gates");
