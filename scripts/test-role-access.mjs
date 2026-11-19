@@ -762,8 +762,8 @@ try{
  await ok(admin,"/api/access",{action:"saveAccount",email:"ci-purge@example.se",employeeId:removeId,password,isAdmin:false,isGroupManager:false});
  await ok(admin,"/api/data",{action:"assignment",activityId:1,employeeId:removeId,effortPercent:25});
  const removeCookie=await connected("ci-purge@example.se");
- const addedTime=await ok(removeCookie,"/api/time-entries",{action:"manual",activityId:1,workDate:"2026-11-14",durationMinutes:43,note:"ci-purge-time"});
- const entry=addedTime.entries.find(x=>x.employeeId===removeId&&x.workDate==="2026-11-14"&&x.durationSeconds===2580);
+ await ok(removeCookie,"/api/time-entries",{action:"manual",activityId:1,workDate:"2026-11-14",durationMinutes:43,note:"ci-purge-time"});
+ const entry=(await ok(removeCookie,"/api/time-entries")).entries.find(x=>x.employeeId===removeId&&x.workDate==="2026-11-14"&&x.durationSeconds===2580);
  assert.ok(entry?.id);
  await ok(removeCookie,"/api/time-entries",{action:"delete",id:entry.id});
  const withAccount=await ok(admin,`/api/delete-impact?type=employee&id=${removeId}`);
