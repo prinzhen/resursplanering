@@ -15,7 +15,9 @@ export type WeeklyV2Row = {
   rowKey?:string; rowRevision?:number;
 };
 export const WEEK_DAYS = ["","Måndag","Tisdag","Onsdag","Torsdag","Fredag","Lördag","Söndag"] as const;
-const enc=(s:unknown)=>String(s??"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+// XML 1.0 forbids these control characters, including pasted NULs.
+// eslint-disable-next-line no-control-regex
+const enc=(s:unknown)=>String(s??"").replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\uFFFE\uFFFF]/g,"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
 const isodate=(date:Date)=>date.toISOString().slice(0,10);
 export function normalizeISOWeek(value:string):string{
  const m=/^(\d{4})-[VW](\d{1,2})$/i.exec(value.trim());
@@ -264,37 +266,29 @@ export function createWeeklyV2Xlsx(rows:WeeklyV2Row[],base=currentWeekKey(),pers
   '<row r="2">'+cell("A2","Namn",1)+cell("B2",person.name)+cell("D2","E-postadress",1)+cell("E2",person.email)+'</row>',
   '<row r="4">'+WEEKLY_COLUMNS.map((h,i)=>cell(column(i)+"4",h,1)).join("")+'</row>'
  ];
- rows.forEach((row,i)=>{
-  validateWeeklyV2(row);
-  const values=[formatWeekLabel(row.week,base),row.day,row.task,row.duration,row.effort,row.workType,
-   row.hours,row.status,row.priority,row.deadline,row.projectCode,row.projectName,row.firstWeek?formatWeekLabel(row.firstWeek,base):"",
-   row.comment,row.moveReason,row.activityId];
-  const ref=i+5;
-  body.push('<row r="'+ref+'">'+values.map((v,n)=>cell(column(n)+ref,v)).join("")+
-   cell("Q"+ref,row.rowKey||"")+cell("R"+ref,row.rowRevision??0)+'</row>');
- });
- // Hidden recalculated helpers are separate from importable columns A:P.
- // Pre-create all 5000 rows so estimates refresh even when users add rows.
- for(let row=5;row<=5004;row++){
-  const first=row===5;
-  const additional=sharedFormulaCell("V"+row,dateHelperFormula(row),0,first)+
-   sharedFormulaCell("Y"+row,normalizedDurationFormula(row),1,first)+
-   sharedFormulaCell("Z"+row,durationHelperFormula(row),4,first)+
-   sharedFormulaCell("W"+row,'IF(V'+row+'=0,0,V'+row+'+Z'+row+'-1)',2,first)+
-   sharedFormulaCell("X"+row,dailyLoadFormula(row),3,first);
-  const pos=body.findIndex(text=>text.startsWith('<row r="'+row+'">'));
-  if(pos>=0)body[pos]=body[pos].replace("</row>",additional+"</row>");
-  else body.push('<row r="'+row+'">'+additional+'</row>');
+ // Write each row once, with cells strictly ordered by column. Excel can
+ // repair/remove shared formulas when helper cells are appended as V,Y,Z,W,X,S.
+ // Keep import data A:R, dropdown S and calculated helpers V:Z in order.
+ const options=weekOptions(base);
+ for(let i=0;i<5000;i++){
+  const row=rows[i],ref=i+5,first=i===0;
+  let contents="";
+  if(row){
+   validateWeeklyV2(row);
+   const values=[formatWeekLabel(row.week,base),row.day,row.task,row.duration,row.effort,row.workType,
+    row.hours,row.status,row.priority,row.deadline,row.projectCode,row.projectName,row.firstWeek?formatWeekLabel(row.firstWeek,base):"",
+    row.comment,row.moveReason,row.activityId];
+   contents=values.map((v,n)=>cell(column(n)+ref,v)).join("")+
+    cell("Q"+ref,row.rowKey||"")+cell("R"+ref,row.rowRevision??0);
+  }
+  if(options[i])contents+=cell("S"+ref,formatWeekLabel(options[i],base));
+  contents+=sharedFormulaCell("V"+ref,dateHelperFormula(ref),0,first)+
+   sharedFormulaCell("W"+ref,'IF(V'+ref+'=0,0,V'+ref+'+Z'+ref+'-1)',1,first)+
+   sharedFormulaCell("X"+ref,dailyLoadFormula(ref),2,first)+
+   sharedFormulaCell("Y"+ref,normalizedDurationFormula(ref),3,first)+
+   sharedFormulaCell("Z"+ref,durationHelperFormula(ref),4,first);
+  body.push('<row r="'+ref+'">'+contents+'</row>');
  }
- // The dropdown starts at the CURRENT Swedish calendar week and includes
- // future and past weeks, including year boundaries. Hidden helper column S.
- weekOptions(base).forEach((week,i)=>{
-  const number=i+5,extra=cell("S"+number,formatWeekLabel(week,base));
-  const idx=body.findIndex(r=>r.startsWith('<row r="'+number+'">'));
-  if(idx>=0)body[idx]=body[idx].replace("</row>",extra+"</row>");
-  else body.push('<row r="'+number+'">'+extra+"</row>");
- });
- body.sort((a,b)=>Number(/<row r="(\d+)"/.exec(a)?.[1]||0)-Number(/<row r="(\d+)"/.exec(b)?.[1]||0));
  const validation=[
   '<dataValidation type="list" allowBlank="1" showErrorMessage="0" sqref="A5:A5004 M5:M5004"><formula1>$S$5:$S$265</formula1></dataValidation>',
   '<dataValidation type="list" allowBlank="1" sqref="B5:B5004"><formula1>"Måndag,Tisdag,Onsdag,Torsdag,Fredag,Lördag,Söndag"</formula1></dataValidation>',
