@@ -15,6 +15,8 @@ export type WeeklyV2Row = {
   rowKey?:string; rowRevision?:number;
 };
 export const WEEK_DAYS = ["","Måndag","Tisdag","Onsdag","Torsdag","Fredag","Lördag","Söndag"] as const;
+// XML 1.0 forbids these control characters, including pasted NULs.
+// eslint-disable-next-line no-control-regex
 const enc=(s:unknown)=>String(s??"").replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\uFFFE\uFFFF]/g,"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
 const isodate=(date:Date)=>date.toISOString().slice(0,10);
 export function normalizeISOWeek(value:string):string{

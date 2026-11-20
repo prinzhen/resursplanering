@@ -97,6 +97,7 @@ for(const match of sheet.matchAll(/<row r="(\d+)">([\s\S]*?)<\/row>/g)){
 }
 assert.ok(sheet,"Missing sheet");
 assert.ok(sheet.includes("Behov &amp; &lt;resurs&gt;\nNy rad"),"Comments must retain escaped text and line breaks");
+// eslint-disable-next-line no-control-regex
 assert.doesNotMatch(sheet,/[\u0000-\u0008\u000B\u000C\u000E-\u001F\uFFFE\uFFFF]/,"Export must not contain characters forbidden in XML 1.0");
 assert.ok(blob.size<8_000_000,"Exported workbook must remain within v2 import limit");
 assert.ok(new TextEncoder().encode(sheet).length<6_000_000,"Planning sheet must remain within import ZIP reader limit");
