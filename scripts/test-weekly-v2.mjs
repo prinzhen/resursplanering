@@ -61,7 +61,7 @@ assert.deepEqual(splitPeriodIntoWeeks("2026-12-31","2027-01-04",100),[
 ]);
 const row={week:"2026-V47",day:"Torsdag",task:"Systemdesign",duration:"3 dagar",effort:50,
 workType:"Projekt",hours:12,status:"Planerad",priority:"3",deadline:"2026-12-01",
-projectCode:"N.001",projectName:"Exempel",firstWeek:"2026-V46",comment:"Behov",
+projectCode:"N.001",projectName:"Exempel",firstWeek:"2026-V46",comment:"Behov\u0000\u000b & <resurs>\nNy rad",
 moveReason:"",activityId:"activity-42",rowKey:"row-42"};
 // Blank project is valid for a NEW activity and must survive XLSX export.
 const unassigned={...row,task:"Ej projektsatt arbete",projectCode:"",projectName:"",activityId:"",rowKey:"",rowRevision:0};
@@ -81,7 +81,23 @@ for(let offset=0;offset+30<=bytes.length&&view.getUint32(offset,true)===0x04034b
  if(name==="xl/workbook.xml")workbook=decoder.decode(bytes.slice(start,start+size));
  offset=start+size;
 }
+// Excel requires row and cell references to be in ascending order. Verify
+// every row, including dropdown-only rows and the final editable activity row.
+let previousRow=0;
+for(const match of sheet.matchAll(/<row r="(\d+)">([\s\S]*?)<\/row>/g)){
+ const number=Number(match[1]);
+ assert.ok(number>previousRow,"Rows must be strictly ordered");previousRow=number;
+ let previousColumn=0;
+ for(const c of match[2].matchAll(/<c r="([A-Z]+)(\d+)"/g)){
+  assert.equal(Number(c[2]),number,"Cell must belong to its containing row");
+  const column=[...c[1]].reduce((n,ch)=>n*26+ch.charCodeAt(0)-64,0);
+  assert.ok(column>previousColumn,"Cells must be strictly ordered: "+c[0]);
+  previousColumn=column;
+ }
+}
 assert.ok(sheet,"Missing sheet");
+assert.ok(sheet.includes("Behov &amp; &lt;resurs&gt;\nNy rad"),"Comments must retain escaped text and line breaks");
+assert.doesNotMatch(sheet,/[\u0000-\u0008\u000B\u000C\u000E-\u001F\uFFFE\uFFFF]/,"Export must not contain characters forbidden in XML 1.0");
 assert.ok(blob.size<8_000_000,"Exported workbook must remain within v2 import limit");
 assert.ok(new TextEncoder().encode(sheet).length<6_000_000,"Planning sheet must remain within import ZIP reader limit");
 assert.ok(workbook.includes('sheet name="Beläggning"'),"Workbook must include independent weekly load sheet");
