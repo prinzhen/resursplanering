@@ -4,6 +4,14 @@ on:
   push:
     branches:
       - feature/weekly-xlsx-v2-bf8e928-base
+      - fix/xlsx-workload-repair-20261120
+      - fix/xlsx-workload-production-87bcff2-20261120
+  pull_request:
+    paths:
+      - "lib/weekly-xlsx-v2.ts"
+      - "scripts/test-weekly-v2.mjs"
+      - "scripts/test-weekly-xlsx-recalculation.mjs"
+      - ".github/workflows/weekly-v2.yml"
   workflow_dispatch:
 
 permissions:
@@ -25,6 +33,10 @@ jobs:
         run: pnpm install --frozen-lockfile
       - name: Check XLSX layout and time rules
         run: node scripts/test-weekly-v2.mjs
+      - name: Install native spreadsheet engine
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libreoffice-calc
+      - name: Verify XLSX formulas in LibreOffice
+        run: node scripts/test-weekly-xlsx-recalculation.mjs
       - name: Build application
         run: pnpm build
       - name: Typecheck
